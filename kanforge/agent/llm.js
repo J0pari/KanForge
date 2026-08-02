@@ -7,7 +7,7 @@
 // OpenAI-compatible chat completions or the Anthropic messages API.
 
 export const LLM_PROVIDERS = Object.freeze([
-    'gemini', 'openai', 'anthropic', 'ollama', 'vllm', 'copilot', 'mock'
+    'gemini', 'openai', 'anthropic', 'ollama', 'vllm', 'copilot', 'openrouter', 'mock'
 ]);
 
 const DEFAULT_BASE_URL = Object.freeze({
@@ -16,7 +16,8 @@ const DEFAULT_BASE_URL = Object.freeze({
     anthropic: 'https://api.anthropic.com/v1',
     ollama:    'http://localhost:11434/v1',
     vllm:      'http://localhost:8000/v1',
-    copilot:   'https://api.githubcopilot.com'
+    copilot:   'https://api.githubcopilot.com',
+    openrouter: 'https://openrouter.ai/api/v1'
 });
 
 const DEFAULT_MODEL = Object.freeze({
@@ -26,6 +27,7 @@ const DEFAULT_MODEL = Object.freeze({
     ollama:    'qwen2.5-coder:7b',
     vllm:      'Qwen/Qwen2.5-Coder-7B-Instruct',
     copilot:   'gpt-4o-mini',
+    openrouter: 'cohere/north-mini-code:free',
     mock:      'mock-1'
 });
 
@@ -166,8 +168,10 @@ export class LLMClient {
     _parse(text, status) {
         const data = JSON.parse(text);
         const usage = normalizeUsage(data.usage);
-        const content = (data.choices?.[0]?.message?.content)
-            ?? (data.content?.filter?.(p => p.type === 'text').map(p => p.text).join(''))
+        const message = data.choices?.[0]?.message;
+        const content = message?.content
+            ?? message?.reasoning
+            ?? data.content?.filter?.(p => p.type === 'text').map(p => p.text).join('')
             ?? '';
         return {
             text: content,

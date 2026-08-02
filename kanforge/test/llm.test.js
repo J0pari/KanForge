@@ -102,6 +102,36 @@ test('copilot provider uses OpenAI-compatible wire with key', async () => {
     assert.equal(captured.init.headers.authorization, 'Bearer ck');
 });
 
+test('openrouter provider: OpenAI-compatible wire, requires key, default model', async () => {
+    let captured;
+    const client = createLLM({
+        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' }),
+        fetchImpl: async (url, init) => {
+            captured = { url, init };
+            return fakeResponse(200, openaiBody());
+        }
+    });
+    assert.equal(client.requiresApiKey(), true);
+    const out = await client.complete(MESSAGES);
+    assert.ok(captured.url.includes('openrouter.ai/api/v1/chat/completions'));
+    assert.equal(captured.init.headers.authorization, 'Bearer or-key');
+    assert.equal(client.model, 'cohere/north-mini-code:free');
+    assert.equal(out.text, 'ok');
+});
+
+test('reasoning model with null content falls back to reasoning text', async () => {
+    const client = createLLM({
+        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' }),
+        fetchImpl: async () => fakeResponse(200, {
+            choices: [{ message: { content: null, reasoning: 'draft proof steps...' } }],
+            usage: { prompt_tokens: 5, completion_tokens: 90 },
+            model: 'cohere/north-mini-code:free'
+        })
+    });
+    const out = await client.complete(MESSAGES);
+    assert.equal(out.text, 'draft proof steps...');
+});
+
 test('anthropic adapter: native messages wire + token normalization', async () => {
     let captured;
     const client = createLLM({
