@@ -1,0 +1,13 @@
+{
+  "name": "kanforge",
+  "version": "0.1.0",
+  "description": "Pull-based, lazily-evaluated, telemetry-instrumented agentic proof refinery for Lean 4",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

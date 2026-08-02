@@ -1,0 +1,116 @@
+# KanForge — Research Notes (state of the art, Aug 2026)
+
+**Canonical source for**: the systems landscape, the working tricks, the design warnings, and the
+source list. `blueprint.md` cites this as its evidence base; `build_order.md` and `architecture.md`
+derive constraints from it. Module paths do not belong here (see `architecture.md`).
+
+> Calibration note: most figures below come from a survey (cs.virginia.edu course page) and press
+> material fetched during this session, recalled here. The *shape* of the field — which tricks
+> work, which failure modes repeat — is stable and is what we design against. Individual numbers
+> (scores, sizes, dates) move fast and must be re-verified against primary sources before any
+> public claim. Where a number is load-bearing for a decision, it is marked below.
+
+---
+
+## 1. The systems landscape
+
+| System | Origin | Headline result | Mechanism that matters |
+|---|---|---|---|
+| AlphaProof | DeepMind | Silver IMO 2024; Nature 651:607 (Nov 2025) | RL in Lean; ~300k state-tactic pairs; test-time RL |
+| AlphaProof Nexus | DeepMind | 9/353 Erdős, 44/492 OEIS (May 2026) | LLM-in-charge agentic population search; **<3% on open problems** *(load-bearing)* |
+| AxiomProver | Axiom Math | 12/12 Putnam 2025; 4 open conjectures; 42/42 IMO 2026 | multi-agent ensemble: autoformalizer / conjecturer / prover / critic |
+| Seed-Prover / 1.5 | ByteDance | Gold IMO 2025; ~99.6% MiniF2F | lemma-style whole-proof generation; sketch + rubric RL |
+| DeepSeek-Prover-V2 | DeepSeek | 88.9% MiniF2F-test; 49/658 PutnamBench | recursive subgoal decomposition; GRPO; sketch/solution consistency |
+| Goedel-Prover-V2 | Princeton | open-source SOTA at ~80× smaller | repulsion sampling; premise-locked search; expert iteration + RL |
+| Aristotle | Harmonic | Gold IMO 2025; 10/12 Putnam | MCGS over a hypertree of proof states |
+| Kimina-Prover | Moonshot | 57.4% Putnam (Nov 2025) | large-scale RL; shipped a REST Lean verifier (Kimina Lean Server) |
+| Gauss | Math Inc | strong PNT formalized in ~3 weeks | agentic autoformalization over a stalled human effort |
+| FormaRL | Tsinghua | competitive open-source | GRPO with Lean compiler feedback |
+| LeanMarathon | open | paper-level autoformalization, 258 lemmas, 0 `sorry` | durable, resumable harness; blueprint DAG; drift detection |
+| APOLLO | open | 84.9% miniF2F at sub-8B scale | modular repair loop; sample complexity 25,600 → hundreds |
+| ALA | open | 52% autoformalization on 400-thm benchmark | two-model orchestration (generalist + Lean-tuned) |
+
+**Infrastructure**: Lean REPL (`leanprover-community/repl`), Lean Copilot, LeanDojo/LeanDojo-v2
+(premise retrieval, data extraction), `lean4web` (server-side Lean, Apache-2.0, TypeScript),
+Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
+
+### Design implications
+1. **Multi-agent separation is the proven path to *published* results** — AxiomProver's
+   autoformalizer / conjecturer / prover / critic split produced the peer-reviewed wins. We adopt
+   the roles, but only in Phase 7; the single-agent loop (P0–P6) is the same machinery without the
+   orchestration.
+2. **The reward loop is central.** Every frontier system trains the policy against kernel
+   verification. We therefore build telemetry, reward, and search biasing from P1 onward, not as a
+   bolt-on.
+3. **Open-problem hit rate is low even for DeepMind.** Targets the corpus as curated,
+   formalizable, auditable, and throughput-batched; expect partial results, not miracles.
+
+---
+
+## 2. The ten tricks (design constraints, not prescriptions)
+
+1. **Verifier-as-reward RL** — AlphaProof, Seed-Prover, DeepSeek-V2, FormaRL, Kimina converge on
+   GRPO/VAPO/expert-iteration with binary kernel verification + shaped progress.
+2. **Sketch → refine** — Seed-Prover (sketch model) and LeanMarathon (audited blueprint DAG):
+   produce the lemma skeleton first, prove bottom-up.
+3. **Repair loops beat raw sampling** — APOLLO: isolate the failing sub-lemma, retry at low
+   top-K, recompose, re-verify. 10–100× sample savings claimed.
+4. **Graph search with state merging** — Aristotle MCGS, AlphaProof Nexus: merge
+   transposition-equivalent goals (same context, def-eq) so they share a node and statistics.
+5. **Diversity mechanisms** — Goedel repulsion; low top-K independent attempts; AlphaProof
+   test-time RL on hard goals.
+6. **Premise retrieval** — LeanDojo-style relevance scoring; "premise-locked" search removes
+   spurious hypotheses.
+7. **Autoformalization is the bottleneck** — ALA: two-model orchestration lifts 22% → 52%.
+8. **Durable harnesses** — LeanMarathon: resumable transactions, parallel, checkpointed,
+   target-fidelity invariants. *(This is the closest prior art to our PullGraph port.)*
+9. **Assumption accounting** — Axiom's case studies: explicit-hypothesis discipline catches
+   mis-stated or vacuous problems.
+10. **Multi-agent ensemble with critic** — AxiomProver: separate roles; critic reviews before
+    publication.
+
+---
+
+## 3. The ten warnings (each maps to a guardrail in `architecture.md` §2.5)
+
+1. **The verification gap** — Lean verifies the *formalized* statement, not the natural-language
+   claim. Mitigate: statement-hash pinning, assumption accounting, human review of
+   formalizations.
+2. **Reward hacking in RLVR** — proving trivial weakenings, exploiting `simp`/`omega`/`aesop`,
+   leaking `axiom`/`unsafe`. The verification-horizon literature (METR, 2025–26) argues hacking
+   is *inevitable* under sustained optimization against an imperfect objective — monitor and
+   re-audit, don't assume it's patched.
+3. **Benchmark saturation** — MiniF2F is effectively saturated (~99.6%). Measure on PutnamBench,
+   ProverBench, ProofNet, Lean Workbook, uproof, and **held-out novel** targets.
+4. **Low absolute hit rate on open problems** — AlphaProof Nexus: <3% on Erdős, <10% on OEIS.
+   Plan around a curated corpus and batch throughput.
+5. **Long-horizon brittleness** — multi-hour autonomous runs drift and die. Checkpoint
+   everywhere; every lemma is a resumable unit.
+6. **Sample/compute cost** — frontier regimes use TB-scale RAM and thousands of agents. Our design
+   favors *low* sample complexity (repair loops, premise pruning, dedup, state merging).
+7. **Data contamination** — competition corpora leak into pretraining. Maintain clean held-out
+   splits.
+8. **Strategy starvation** — fixed tactics fail on sensitive deductive chains. Keep strategy
+   diversity + sub-proposition-level error feedback.
+9. **Digestion is still human** — formal proofs are unreadable. Ship prose translations,
+   blueprints, assumption accounts.
+10. **Mathlib dependency drift** — pin toolchain + `lakefile.lean` per workspace; isolate builds.
+
+---
+
+## 4. Sources
+
+- Survey of prover systems, cs.virginia.edu course page (covers Jan 2025–Jan 2026).
+- AlphaProof / AlphaProof Nexus (DeepMind; Nature 651:607, May 2026).
+- Seed-Prover & Seed-Prover/1.5 (ByteDance).
+- DeepSeek-Prover-V2 (DeepSeek).
+- Goedel-Prover-V2 (Princeton).
+- Aristotle (Harmonic).
+- Kimina-Prover (Moonshot; Kimina Lean Server).
+- FormaRL (Tsinghua).
+- LeanMarathon (open).
+- APOLLO (open).
+- ALA (open).
+- AxiomProver (Axiom Math).
+- Repos: github.com/leanprover-community/repl, github.com/leanprover-community/lean4web,
+  github.com/lean-dojo/LeanDojo, mathlib4.

@@ -1,0 +1,13 @@
+# Lean / Lake build artifacts
+kanforge/lean-project/.lake/
+
+# Extraction staging (regenerable via tools/extract_modules.py)
+kanforge/_extracted/
+
+# Node
+node_modules/
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
