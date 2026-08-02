@@ -44,7 +44,7 @@ kanforge/
     solve.js                 # universal-arrow stopping rule
     repair.js                # horn-filler repair
     prompts.js               # prompt builder from Lean terms
-    llm.js                   # OpenAI/Anthropic-compatible + local (vLLM/Ollama) clients
+    llm.js                   # provider-neutral client (env-driven): gemini/openai/anthropic/copilot + local ollama/vllm; secret only from KANFORGE_LLM_API_KEY or git-ignored .env
     roles/                   # P7 only (multi-agent ensemble)
       autoformalizer.js
       conjecturer.js

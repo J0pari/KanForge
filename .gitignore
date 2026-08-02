@@ -7,6 +7,11 @@ kanforge/_extracted/
 # Node
 node_modules/
 
+# Secrets: never commit env files (LLM keys, provider config)
+.env
+.env.*
+!.env.example
+
 # Editor / OS
 .vscode/
 .DS_Store
