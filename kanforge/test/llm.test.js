@@ -64,7 +64,7 @@ test('buildRequest: openrouter uses OpenAI-compatible wire with the pinned defau
     const { url, headers, body } = buildRequest(cfg, MESSAGES);
     assert.ok(url.includes('openrouter.ai/api/v1/chat/completions'));
     assert.equal(headers.authorization, 'Bearer or-key');
-    assert.equal(body.model, 'cohere/north-mini-code:free');
+    assert.equal(body.model, 'openai/gpt-oss-20b:free');
 });
 
 test('buildRequest: anthropic native wire — x-api-key, version, /messages, max_tokens default', () => {

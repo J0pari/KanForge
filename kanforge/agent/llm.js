@@ -32,7 +32,7 @@ const DEFAULT_MODEL = Object.freeze({
     ollama:    'qwen2.5-coder:7b',
     vllm:      'Qwen/Qwen2.5-Coder-7B-Instruct',
     copilot:   'gpt-4o-mini',
-    openrouter: 'cohere/north-mini-code:free'
+    openrouter: 'openai/gpt-oss-20b:free'
 });
 
 // Local providers speak OpenAI-compatible chat completions on localhost and need no secret.

@@ -14,6 +14,7 @@ export class Scheduler {
         this.timeoutMs = options.timeoutMs ?? 60_000;
         this.priority = options.priority ?? null; // override (nodeId, ctx) => number
         this.onProgress = options.onProgress ?? null;
+        this.maxFailures = options.maxFailures ?? null; // stop budget: halt once N nodes failed
 
         if (!this.check || typeof this.check !== 'function') {
             throw new Error('Scheduler requires an async check(nodeId) function');
@@ -75,6 +76,7 @@ export class Scheduler {
         const pending = [];
 
         while (this._queue.length || this._inFlight.length) {
+            if (this.maxFailures && this._failures.size >= this.maxFailures) break;
             let dispatched = false;
 
             while (this._inFlight.length < this.concurrency && this._queue.length) {
@@ -111,7 +113,16 @@ export class Scheduler {
             }
         }
 
-        return { ok: this._failures.size === 0, results, failures: this._failures };
+        // Let any still-running jobs (left by a stop budget break) settle so their failures are
+        // counted, then report whether the run halted early.
+        await Promise.allSettled(this._inFlight.map(job => job.result));
+
+        return {
+            ok: this._failures.size === 0,
+            results,
+            failures: this._failures,
+            stopped: !!(this.maxFailures && this._failures.size >= this.maxFailures)
+        };
     }
 
     _gate(nodeId) {

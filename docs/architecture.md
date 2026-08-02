@@ -44,6 +44,7 @@ kanforge/
     repair.js                # horn-filler repair
     prompts.js               # prompt builder from Lean terms
     llm.js                   # provider-neutral client (env-driven): gemini/openai/anthropic/copilot/openrouter + local ollama/vllm; secret only from KANFORGE_LLM_API_KEY or git-ignored .env
+    loop.js                  # P1 minimal loop: PullGraph + scheduler + backendRepl + one LLM adapter; node id = statement hash; oldest-sorry priority; stop budget; traced events
     roles/                   # P7 only (multi-agent ensemble)
       autoformalizer.js
       conjecturer.js
