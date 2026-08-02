@@ -9,6 +9,11 @@ not listed here.
 **Framing caveat:** these are engineering analogies that produced useful designs, not claims
 about the mathematics of the agent. Use them to justify structure, not to predict behavior.
 
+**Inspiration vs specification:** a mapping names a heuristic; it is not an algorithm and is never
+implemented literally. When a mapping would require building the categorical object (a Kan
+extension calculator, an adjunction solver), the module contract in `architecture.md` wins and the
+mapping is re-framed; the specification is never bent to fit the metaphor. (`blueprint.md` §4.2.)
+
 ---
 
 ## The load-bearing patterns

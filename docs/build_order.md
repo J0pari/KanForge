@@ -14,6 +14,38 @@ designed so that each phase ships and is *measurable* before the next starts.
 
 ---
 
+## Build, test, and integration ordering (de-risk first)
+
+The build retires risk in the order it can sink the project, and phases are gated by *measured
+results*, not by code volume. The product scope is unchanged — this is ordering, not descoping.
+
+1. **The loop must prove real lemmas before the machinery grows** (P0–P1 gate). Nothing past P1
+   is justified until the minimal loop — PullGraph + scheduler + `backendRepl` + one LLM
+   adapter — has verified a lemma through the kernel and emitted a traced event. Every later
+   phase assumes this is already robust, so its machinery always has something to learn from.
+2. **Reliability before breadth** (P3–P5). The last-20% reliability work — repair, premise
+   retrieval, autoformalization — is scheduled *after* the core loop and measured, because that
+   is what makes the loop robust, not because it is glamorous.
+3. **RL only after the deterministic loop saturates** (P6 gate). If pass@1 on the smoke set is
+   near zero, the fix is loop reliability, not more machinery. P6 does not start until repair +
+   search show diminishing returns.
+4. **Scaffolding is deferred by default.** Anything not load-bearing for the current phase ships
+   as a stub or is skipped. A stripped-down mode (`--minimal-loop`) runs the loop with console
+   logging only; telemetry, query, digest, and RL layers are optional decorations until the loop
+   works.
+
+### Stage gates
+
+| Review risk | Gate (phase) | Metric (decides) | Fail-forward |
+|---|---|---|---|
+| Loop never works | P0.3 + P1 | first-lemma time-to-verify (goal intake → kernel VERIFIED); pass@8 ≥ 1 / 20 miniF2F | fix loop reliability; do not add RL/query/digest |
+| Backend brittle at scale | P0.3 resilience suite | worker restarts = hangs = JSON parse-failures = 0 in CI runs | harden the pool before raising concurrency |
+| Nothing to learn from | P3 / P5 on the smoke set | repair sample-complexity; search budget use | extend the loop, not the RL stack |
+| Pass@1 stalls RL | P6 start gate | pass@1 trajectory reported before P6 work begins | reorder: reliability work before RL |
+| Guardrail paralysis | P4 (stub permission) | guardrail trips per attempt; permission-scope violations = 0 | tune the permission model; hard invariants never relax |
+
+---
+
 ## Phase 0 — Foundations: toolchain + the pure core
 **Est. 1–2 weeks.** No AI yet.
 
@@ -45,6 +77,10 @@ designed so that each phase ships and is *measurable* before the next starts.
   `{status, goals, error}` for each, and reports per-check duration. Scheduler: no cyclic
   dispatch, deterministic ordering, failed dep blocks dependents without dispatch. CI runs on the
   pinned toolchain.
+- **Resilience suite (same gate):** kill a warm worker mid-check → the pool replaces it and the
+  batch completes; a hung worker is killed on timeout and the batch recovers; a malformed
+  JSON-lines line is skipped, logged, and the batch continues; normal runs report
+  `restarts = hangs = parseErrors = 0`. (Pool contract: `architecture.md` §3.1.)
 
 ---
 
@@ -171,6 +207,10 @@ designed so that each phase ships and is *measurable* before the next starts.
 
 ## Phase 6 — RL sharpening
 **Est. 4 weeks.**
+
+> **P6 start gate:** P6 does not begin until the deterministic loop (P3–P5) is the measured
+> bottleneck. Report pass@1, repair sample-complexity, and search budget use on the smoke set
+> before starting; if pass@1 is near zero, the next iteration is loop reliability, not RL.
 
 ### 6.1 Reward function + GRPO
 - `sharpening/reward.js`: initial defaults per `architecture.md` §6 (tune, don't trust).

@@ -160,10 +160,27 @@ checkAll(graph, ctx) -> { ok, violations[] }
 // 5. resumable from any checkpoint (serialize/deserialize identity)
 // 6. incremental verification: invalidation touches only dependency descendants
 //    of a changed node (Wave2 §7), never unrelated cached nodes
+// 7. scoped relaxations (below) are recorded, expire, and never touch HARD invariants
 // plus: checkHermetic over the run
 ```
 The planner checks every proposed move against these before acting (guardrails-as-logic, not a
 rule list). `sharpening/patterns.js` feeds degeneracy observations here.
+
+**Permission model (scoped relaxation, not an off-switch).** Invariants are tiered so the agent
+is not paralyzed by its own guardrails:
+
+- **HARD — never relaxed:** kernel verification (2), no axiom/admit/unsafe leakage (3),
+  statement + interface pins (1), checkpoint identity (5).
+- **PHASE-SCOPED — relaxable within a named phase, always recorded:** `sorry` stubs during the
+  skeleton/refine phases (invariant 4 is "acyclic + dependency-complete", not "no stubs");
+  unverified `PROVING` states during search; unpinned exploratory goals.
+
+`ctx.permissions` grants scoped relaxations `{ kind, phases: [...], expiresAt }`; every grant and
+its expiry is an event on the causal bus, and `checkAll` verifies grants are in-scope and
+unexpired (invariant 7). VERIFIED and COMMITTED require the full hard set with no outstanding
+grants. "Never weaken" applies to statement/interface pins (hard), not to proof-state stubs
+(scoped) — allowing a stub during skeleton does not switch the guardrail system off, and a
+violation of even a scoped grant still trips.
 
 ### 2.6 `scheduler.js` — dependency-ordered dispatch (Wave2 §7–8)
 `pull()` is pull-driven; the scheduler adds the *concurrent* dimension: batch the goals `pull()`
@@ -229,6 +246,35 @@ Implementation notes:
 - **CLI**: `lake build` / `lean` for CI batch verification.
 - **Statement pinning** (`pin.js`): canonical `#print`-normalized string → sha256. Any mutation
   of goal text during search flips the hash → node `WEAKENED` + guardrail trip.
+
+### 3.1 Pool lifecycle and resilience
+
+The REPL pool is the correctness bottleneck, so its failure modes are specified up front, not
+discovered at scale.
+
+- **Lifecycle:** warm worker pool at startup; bounded concurrency (`scheduler.concurrency`);
+  a check is a single request/response over one worker; on success the worker returns to the
+  pool; on crash the worker is replaced and the job retried on a fresh worker (≤ 1 retry per
+  job, then it fails loudly).
+- **Kill-on-hang:** every check has a timeout (`scheduler.timeoutMs`); a worker that exceeds it
+  is killed and replaced, with exponential backoff on repeated kills of the same worker profile.
+- **Parsing resilience:** JSON-lines output is parsed per-line; a malformed line is skipped,
+  logged, and attributed to the current job as `parseError` (never silently dropped the whole
+  batch). stderr is captured separately and surfaced in `LeanError.detail` for repair.
+- **Single-flight:** identical statements checked concurrently are deduped to one kernel
+  invocation (cache hit for the rest) — a natural consequence of node identity in `pullgraph.js`.
+- **Graceful drain:** on shutdown, in-flight checks finish or are killed within `timeoutMs`;
+  partial results are checkpointed so resume does not redo them.
+- **Health counters** surfaced via `getInfos()`: `{ poolSize, restarts, hangs, timeouts,
+  parseErrors, poolUptime }`. Acceptance: normal runs hold `restarts = hangs = parseErrors = 0`
+  (P0.3 resilience suite, `build_order.md`).
+
+**Pin drift:** the canonical `#print`-normalized string is *version-sensitive* — a Lean/mathlib
+update can change the printed form without changing meaning. Therefore `pin()` returns
+`Pin = { toolchain, mathlibHash, leanVersion, normVersion, statementHash }`, and pin verification
+re-normalizes on the current toolchain and compares `normVersion`; a mismatch reports `DRIFT`
+(not `WEAKENED`), so the operator re-pins deliberately rather than silently or falsely. Never
+compare a hash computed under a different `normVersion`.
 
 ---
 

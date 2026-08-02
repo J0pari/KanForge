@@ -158,6 +158,23 @@ full 27-layer walk-through and a mapping table are in `patterns_from_hct.md`.
 - Presentability-flavored caching (compact eager, general lazy).
 - Kleisli composition of the whole loop.
 
+### 4.2 Inspiration vs specification
+The HCT mappings are heuristics that *named* the design; they are not the specification.
+Rule: wherever a mapping would require implementing the categorical object literally, the module
+contract in `architecture.md` wins.
+
+- "Kan extensions = the search primitive" names the lazy repair loop over the goal frontier. It
+  does **not** mean computing Kan extensions; `core/fix.js` is a coinductive lazy stream, nothing
+  more.
+- "Adjunctions = generator ⊣ verifier" names the LLM/Lean pairing with kernel-verified stopping
+  (`agent/solve.js`), not a theorem about adjoint functors.
+- "Monads = the loop" names Kleisli composition of stages (`core/pipeline.js`), not a
+  category-theory library.
+
+Implementors must not add a category-theory dependency or a "Kan-extension engine". If a mapping
+and a module contract disagree, the contract wins and the mapping is re-framed — never the
+reverse. (`patterns_from_hct.md` framing caveat states the same rule at the source.)
+
 ---
 
 ## 5. System architecture (overview)
@@ -219,6 +236,13 @@ Detailed contracts: `architecture.md`. This is the shape.
   a build-order phase.
 - **Open-target corpus**: curated Erdős/OEIS problems with *formalizable*, auditable statements;
   start at 20 targets.
+- **Gating**: evaluation is how phases *earn* progression, not a report card at the end. Each
+  phase's acceptance metric is a stage gate (`build_order.md` "Stage gates"); no later phase
+  starts until the earlier metric passes. Benchmarks are earned by the loop, not by the
+  infrastructure.
+- **Early-loop metrics** (before any benchmark is reachable): first-lemma time-to-verify;
+  minimal-loop reliability (fraction of runs that complete without hang/restart);
+  guardrail trips per attempt.
 - **Phase acceptance criteria** are the source of truth for "done": `build_order.md`.
 
 ---
@@ -238,3 +262,7 @@ The full warnings list is `research_notes_2026.md` §3; each maps to a guardrail
 | Low hit rate on open problems | batch throughput over curated corpus; publish partial lemmas |
 | Mathlib dependency drift | pinned toolchain + isolated workspaces |
 | Human digestion bottleneck | automated writeups, blueprint diffs, prose translations |
+| Complexity before a single lemma | de-risk ordering + stage gates (`build_order.md`); P0–P1 first-lemma gate before any machinery beyond the loop |
+| Category-theory over-specification | mappings are named heuristics; §4.2 boundary rule — never implement the metaphor |
+| Backend brittleness (hangs, crashes, parse) | pool lifecycle + resilience suite, `architecture.md` §3.1; P0.3 gate |
+| All-or-nothing guardrails paralyze the agent | scoped permission model, `architecture.md` §2.5; stubs are phase-scoped, hard invariants never relax |
