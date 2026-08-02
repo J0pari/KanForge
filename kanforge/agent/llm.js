@@ -1,101 +1,74 @@
-// Provider-neutral LLM client (architecture.md §1: agent/llm.js).
+// Sole LLM client (architecture.md §1: agent/llm.js).
 //
-// Configuration is read from the environment (or an explicit config object for tests).
-// Secrets never live in the repository and are never hardcoded: the API key comes from
-// KANFORGE_LLM_API_KEY or a git-ignored .env file. Swapping providers is an environment
-// change, not a code change (fungible): every provider speaks one of two wire formats,
-// OpenAI-compatible chat completions or the Anthropic messages API.
+// KanForge delegates ALL model interaction to opencode: the client runs the opencode CLI as a
+// subprocess (`opencode run --format json -m opencode/<model> "<prompt>"`) and reads the
+// JSON-lines event stream. big-pickle is served on the opencode free tier, so no secret is ever
+// needed; the model is fungible at the opencode layer (set KANFORGE_LLM_MODEL to any model ref
+// opencode can serve).
 //
-// No mocks or stubs: the client always talks to the real provider endpoint over the real
-// fetch. Request construction (`buildRequest`) and retry scheduling (`retryDelayMs`) are
-// exported as pure functions so their logic is unit-testable without a network; end-to-end
-// behavior is covered by the live suite, gated on a real key.
+// Isolation: every call runs in a per-user scratch project dir (`--dir <tmp>/kanforge-opencode`),
+// so kanforge sessions never collide with the desktop app's. (OPENCODE_DATA is NOT honored by the
+// CLI — verified empirically — so the scratch dir is the isolation boundary.)
+//
+// No mocks or stubs: the client always drives the real CLI. Request construction (buildRequest),
+// prompt serialization (messagesToPrompt), event parsing (parseOpenCodeOutput), and retry
+// scheduling (retryDelayMs) are exported as pure functions so their logic is unit-testable;
+// end-to-end behavior is covered by the live suite gated on the opencode CLI being installed.
+//
+// Strictness: there are no fallback paths. A missing CLI, a non-JSON stdout, a non-zero exit,
+// or a timeout all surface as loud, actionable errors. The only retried condition is a timeout
+// (transient); a hard CLI failure is never silently swallowed.
 
-export const LLM_PROVIDERS = Object.freeze([
-    'gemini', 'openai', 'anthropic', 'ollama', 'vllm', 'copilot', 'openrouter'
-]);
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const DEFAULT_BASE_URL = Object.freeze({
-    gemini:    'https://generativelanguage.googleapis.com/v1beta/openai',
-    openai:    'https://api.openai.com/v1',
-    anthropic: 'https://api.anthropic.com/v1',
-    ollama:    'http://localhost:11434/v1',
-    vllm:      'http://localhost:8000/v1',
-    copilot:   'https://api.githubcopilot.com',
-    openrouter: 'https://openrouter.ai/api/v1'
-});
+export const LLM_PROVIDERS = Object.freeze(['opencode']);
 
-const DEFAULT_MODEL = Object.freeze({
-    gemini:    'gemini-2.5-flash',
-    openai:    'gpt-4o-mini',
-    anthropic: 'claude-3-5-haiku-latest',
-    ollama:    'qwen2.5-coder:7b',
-    vllm:      'Qwen/Qwen2.5-Coder-7B-Instruct',
-    copilot:   'gpt-4o-mini',
-    openrouter: 'openai/gpt-oss-20b:free'
-});
-
-// Local providers speak OpenAI-compatible chat completions on localhost and need no secret.
-export const LOCAL_PROVIDERS = Object.freeze(['ollama', 'vllm']);
+const DEFAULT_MODEL = 'big-pickle';
 
 export class LLMError extends Error {
-    constructor(message, { status = 0, kind = 'http', retryAfter = 0, cause } = {}) {
+    constructor(message, { status = 0, kind = 'http', cause } = {}) {
         super(message);
         this.name = 'LLMError';
         this.status = status;
-        this.kind = kind; // 'http' | 'timeout' | 'rate-limit' | 'network' | 'config'
-        this.retryAfter = retryAfter;
+        this.kind = kind; // 'http' (CLI non-zero exit) | 'timeout' | 'network' (spawn failure)
         this.cause = cause;
     }
 }
 
 export function loadLLMConfig(env = process.env) {
-    const provider = (env.KANFORGE_LLM_PROVIDER ?? 'ollama').toLowerCase();
-    if (!LLM_PROVIDERS.includes(provider)) {
+    const provider = (env.KANFORGE_LLM_PROVIDER ?? 'opencode').toLowerCase();
+    if (provider !== 'opencode') {
         throw new Error(`unknown KANFORGE_LLM_PROVIDER: ${provider} (expected one of ${LLM_PROVIDERS.join(', ')})`);
     }
     return {
-        provider,
-        model: env.KANFORGE_LLM_MODEL ?? DEFAULT_MODEL[provider],
-        apiKey: env.KANFORGE_LLM_API_KEY ?? null,
-        baseUrl: env.KANFORGE_LLM_BASE_URL ?? DEFAULT_BASE_URL[provider],
+        provider: 'opencode',
+        model: env.KANFORGE_LLM_MODEL ?? DEFAULT_MODEL,
         timeoutMs: Number(env.KANFORGE_LLM_TIMEOUT_MS ?? 60_000),
-        temperature: env.KANFORGE_LLM_TEMPERATURE !== undefined ? Number(env.KANFORGE_LLM_TEMPERATURE) : 0.2,
-        retries: Number(env.KANFORGE_LLM_RETRIES ?? 2)
+        retries: Number(env.KANFORGE_LLM_RETRIES ?? 2),
+        opencodeBin: env.KANFORGE_LLM_OPENCODE_BIN ?? null
     };
 }
 
-// Pure request construction: returns { url, headers, body } for a config + messages + opts.
+// Pure request construction for the CLI transport.
 export function buildRequest(config, messages, opts = {}) {
-    const { provider, baseUrl, apiKey, model, temperature } = config;
-    const maxTokens = opts.maxTokens ?? 2048;
-    if (provider === 'anthropic') {
-        return {
-            url: `${baseUrl}/messages`,
-            headers: {
-                'content-type': 'application/json',
-                'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01'
-            },
-            body: { model, messages, max_tokens: maxTokens, temperature }
-        };
-    }
-    // OpenAI-compatible chat completions (gemini, openai, ollama, vllm, copilot, openrouter)
-    const headers = { 'content-type': 'application/json' };
-    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     return {
-        url: `${baseUrl}/chat/completions`,
-        headers,
-        body: { model, messages, max_tokens: maxTokens, temperature }
+        cli: true,
+        model: config.model,
+        prompt: messagesToPrompt(messages),
+        maxTokens: opts.maxTokens ?? 2048
     };
 }
 
-// Pure retry scheduling. Returns delay ms to wait before the next attempt, or null to give up.
+// Pure retry scheduling. Only a timeout is transient enough to retry; a hard CLI failure
+// (non-zero exit, spawn error) is a real condition that must be surfaced, not retried, and a
+// caller-driven abort is never retried either.
 export function retryDelayMs(err, attempt, maxAttempts) {
     if (attempt >= maxAttempts) return null;
+    if (err.kind === 'abort') return null;
     if (err.kind === 'timeout') return 250 * (attempt + 1);
-    if (err.kind === 'rate-limit') return (err.retryAfter > 0 ? err.retryAfter : 1000) * (attempt + 1);
-    if (err.status >= 500) return 500 * (attempt + 1);
     return null;
 }
 
@@ -104,10 +77,6 @@ export class LLMClient {
         this.config = config ?? loadLLMConfig();
         if (typeof this.config.provider !== 'string') {
             throw new Error('LLMClient requires a config with a provider');
-        }
-        this.fetch = globalThis.fetch;
-        if (typeof this.fetch !== 'function') {
-            throw new Error('No global fetch available in this runtime');
         }
     }
 
@@ -119,84 +88,183 @@ export class LLMClient {
         return this.config.model;
     }
 
-    requiresApiKey() {
-        // local providers need no secret; everything remote does
-        return !LOCAL_PROVIDERS.includes(this.config.provider);
-    }
-
     async complete(messages, opts = {}) {
-        if (this.requiresApiKey() && !this.config.apiKey) {
-            throw new LLMError(`${this.config.provider} requires KANFORGE_LLM_API_KEY`, { kind: 'config' });
-        }
-
         const attempts = Math.max(0, Number(this.config.retries ?? 2));
+        const { signal } = opts;
         let lastErr;
         for (let attempt = 0; attempt <= attempts; attempt++) {
             try {
-                return await this._request(messages, opts);
+                return await this._cliRequest(buildRequest(this.config, messages, opts), opts);
             } catch (err) {
                 lastErr = err;
                 const delay = retryDelayMs(err, attempt, attempts);
                 if (delay === null) throw err;
-                await new Promise(res => setTimeout(res, delay));
+                if (signal?.aborted) throw err; // caller gave up: never sleep-and-retry past an abort
+                await new Promise((resolve, reject) => {
+                    const onAbort = () => { clearTimeout(timer); reject(err); };
+                    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, delay);
+                    signal?.addEventListener('abort', onAbort, { once: true });
+                });
             }
         }
         throw lastErr;
     }
 
-    async _request(messages, opts) {
-        const { url, headers, body } = buildRequest(this.config, messages, opts);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
-        let resp;
+    async _cliRequest(req, opts = {}) {
+        const scratch = join(tmpdir(), 'kanforge-opencode');
+        mkdirSync(scratch, { recursive: true });
+        const modelRef = req.model.includes('/') ? req.model : `opencode/${req.model}`;
+        const args = ['run', '-m', modelRef, '--format', 'json', '--pure', '--dir', scratch, req.prompt];
+        let out;
         try {
-            resp = await this.fetch(url, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(body),
-                signal: controller.signal
-            });
+            out = await runOpenCodeProcess(this.config, args, opts.signal);
         } catch (cause) {
-            if (cause?.name === 'AbortError') {
-                throw new LLMError(`LLM request timed out after ${this.config.timeoutMs}ms`, { kind: 'timeout', cause });
+            if (cause.kind === 'timeout') {
+                throw new LLMError(`opencode CLI timed out after ${this.config.timeoutMs}ms`, { kind: 'timeout', cause });
             }
-            throw new LLMError(`LLM request failed: ${cause?.message ?? cause}`, { kind: 'network', cause });
-        } finally {
-            clearTimeout(timer);
+            if (cause.kind === 'spawn') {
+                throw new LLMError(`opencode CLI failed to start: ${cause.message}`, { kind: 'network', cause });
+            }
+            if (cause.kind === 'abort') {
+                throw new LLMError('opencode CLI aborted', { kind: 'abort', cause });
+            }
+            throw new LLMError(
+                `opencode CLI exited ${cause.code ?? cause.signal}: ${truncate(cause.stderr || cause.message, 300)}`,
+                { kind: 'http', cause }
+            );
         }
-
-        const text = await resp.text();
-        if (!resp.ok) {
-            const kind = resp.status === 429 ? 'rate-limit' : 'http';
-            const retryAfter = Number(resp.headers?.get?.('retry-after')) || 0;
-            throw new LLMError(`LLM HTTP ${resp.status}: ${truncate(text, 300)}`, {
-                status: resp.status, kind, retryAfter
-            });
-        }
-        return this._parse(text, resp.status);
-    }
-
-    _parse(text, status) {
-        return parseCompletion(text, status, this.config.provider, this.config.model);
+        const { text, usage } = parseOpenCodeOutput(out.stdout);
+        return { text, usage, provider: this.config.provider, model: modelRef, rawStatus: 200 };
     }
 }
 
-// Pure response parsing for the provider wire shapes.
-export function parseCompletion(text, status, provider, model) {
-    const data = JSON.parse(text);
-    const usage = normalizeUsage(data.usage);
-    const message = data.choices?.[0]?.message;
-    const content = message?.content
-        ?? message?.reasoning   // reasoning models (e.g. cohere north) can return null content
-        ?? data.content?.filter?.(p => p.type === 'text').map(p => p.text).join('')
-        ?? '';
-    return {
-        text: content,
-        usage,
-        provider,
-        model: data.model ?? model,
-        rawStatus: status
-    };
+// Pure: serialize a chat messages array into a single prompt for the opencode CLI (agent mode
+// takes one prompt, not role-tagged turns). The kanforge system prompt becomes inline
+// instructions, so the model still sees the full grounding.
+export function messagesToPrompt(messages) {
+    return (messages ?? []).map((m) => {
+        const label = m.role === 'system' ? 'System instructions'
+            : m.role === 'assistant' ? 'Assistant (history)'
+            : 'Task';
+        return `${label}:\n${String(m.content ?? '')}`;
+    }).join('\n\n---\n\n');
+}
+
+// Pure: parse the `opencode run --format json` event stream into { text, usage }.
+// `text` parts are assistant output; the terminal step_finish carries token counts.
+// The contract is JSON-lines on stdout; a non-JSON line means the CLI contract broke
+// (e.g. wrong mode, a crash banner) and must be surfaced, never silently dropped.
+export function parseOpenCodeOutput(stdout) {
+    let text = '';
+    let usage = { promptTokens: 0, completionTokens: 0 };
+    for (const raw of String(stdout).split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        let ev;
+        try {
+            ev = JSON.parse(line);
+        } catch {
+            throw new Error(`opencode --format json contract violated: expected JSON-lines stdout, got: ${truncate(line, 120)}`);
+        }
+        if (ev.type === 'text' && typeof ev.part?.text === 'string') {
+            text += ev.part.text;
+        } else if (ev.type === 'step_finish' && ev.part?.tokens) {
+            usage = normalizeUsage({
+                prompt_tokens: ev.part.tokens.input,
+                completion_tokens: ev.part.tokens.output
+            });
+        }
+    }
+    return { text, usage };
+}
+
+let _openCodeInvocation = null;
+// The opencode provider's contract: the CLI must exist at a known location. No silent
+// guessing or degradation — a missing binary throws a loud, actionable error so the
+// environment gets fixed instead of the caller quietly running on a wrong/inferred binary.
+export function resolveOpenCodeInvocation(config = {}) {
+    if (_openCodeInvocation) return _openCodeInvocation;
+    if (config.opencodeBin) {
+        if (!existsSync(config.opencodeBin)) {
+            throw new Error(`KANFORGE_LLM_OPENCODE_BIN points to a missing file: ${config.opencodeBin}`);
+        }
+        _openCodeInvocation = { command: config.opencodeBin };
+        return _openCodeInvocation;
+    }
+    let prefix = null;
+    let resolveError = null;
+    try {
+        const comSpec = process.env.ComSpec ?? 'cmd.exe';
+        prefix = execFileSync(comSpec, ['/d', '/s', '/c', 'npm prefix -g'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim();
+    } catch (err) {
+        resolveError = err?.message ?? String(err);
+    }
+    const exe = prefix ? join(prefix, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe') : null;
+    if (exe && existsSync(exe)) {
+        _openCodeInvocation = { command: exe };
+        return _openCodeInvocation;
+    }
+    const tried = exe ?? `npm prefix -g failed (${resolveError})`;
+    throw new Error(
+        `opencode CLI not found. Tried: ${tried}. ` +
+        'Install it (npm install -g opencode-ai) or set KANFORGE_LLM_OPENCODE_BIN to the opencode.exe path.'
+    );
+}
+
+function runOpenCodeProcess(config, args, signal) {
+    if (signal?.aborted) return Promise.reject({ kind: 'abort', message: 'aborted before spawn' });
+    let command;
+    try {
+        command = resolveOpenCodeInvocation(config).command;
+    } catch (cause) {
+        return Promise.reject({ kind: 'spawn', message: cause.message, stderr: '' });
+    }
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        const killTree = () => {
+            if (process.platform === 'win32') {
+                spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+            } else {
+                child.kill('SIGTERM');
+            }
+        };
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            killTree();
+            reject({ kind: 'timeout', stderr });
+        }, config.timeoutMs);
+        const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            killTree();
+            reject({ kind: 'abort', message: 'aborted', stderr });
+        };
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+        const cleanup = () => signal?.removeEventListener('abort', onAbort);
+        child.stdout.on('data', (d) => { stdout += d; });
+        child.stderr.on('data', (d) => { stderr += d; });
+        child.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            cleanup();
+            if (err.code === 'ENOENT') reject({ kind: 'spawn', message: err.message, stderr });
+            else reject({ kind: 'exit', code: err.code ?? 1, message: err.message, stderr });
+        });
+        child.on('close', (code, sig) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            cleanup();
+            if (code === 0) resolve({ stdout, stderr });
+            else reject({ kind: 'exit', code, signal: sig, message: `exited with code ${code}`, stderr });
+        });
+    });
 }
 
 export function createLLM(config = null) {

@@ -1,14 +1,14 @@
 // P1 gate (build_order.md): the minimal loop — PullGraph + scheduler + backendRepl + one LLM
 // adapter — proves a real lemma through the real kernel and emits a traced event.
-// Gated on the real repl binary (KANFORGE_REPL_BIN) AND a real LLM key (KANFORGE_LLM_API_KEY);
-// it skips, never fakes, when either is missing.
+// Gated on the real repl binary (KANFORGE_REPL_BIN) AND the opencode CLI; it skips, never fakes,
+// when either test-infra binary is missing.
 
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { BackendRepl } from '../lean/backendRepl.js';
 import { MinimalLoop } from '../agent/loop.js';
-import { loadLLMConfig, createLLM, LOCAL_PROVIDERS } from '../agent/llm.js';
+import { loadLLMConfig, createLLM, resolveOpenCodeInvocation } from '../agent/llm.js';
 import { ENV } from './loadEnv.js';
 
 function findReplBin() {
@@ -18,11 +18,14 @@ function findReplBin() {
 }
 
 const REPL_BIN = findReplBin();
-let llmConfig = null;
-try {
-    llmConfig = loadLLMConfig(ENV);
-} catch { /* invalid provider: skip */ }
-const llmReady = !!llmConfig && (LOCAL_PROVIDERS.includes(llmConfig.provider) || !!llmConfig.apiKey);
+// Invalid provider config is a loud failure (no silent skip): a typo'd KANFORGE_LLM_PROVIDER
+// must be fixed, not masked by the gate.
+const llmConfig = loadLLMConfig(ENV);
+// The opencode CLI is a test-infra dependency (like the repl binary): skip the gate if it is
+// absent; a broken config stays a loud failure. No LLM cost, no quota logic — any real failure
+// during the run surfaces as a real test failure.
+let opencodeBin = null;
+try { opencodeBin = resolveOpenCodeInvocation(llmConfig).command; } catch { /* skipped below */ }
 
 const pools = [];
 after(async () => {
@@ -33,7 +36,7 @@ after(async () => {
 
 describe('P1 minimal loop over real repl + real LLM', {
     skip: (!REPL_BIN && 'repl binary not found (set KANFORGE_REPL_BIN)') ||
-        (!llmReady && 'no LLM provider configured (set KANFORGE_LLM_PROVIDER / KANFORGE_LLM_API_KEY)')
+        (!opencodeBin && 'opencode CLI not found (npm i -g opencode-ai or set KANFORGE_LLM_OPENCODE_BIN)')
 }, () => {
     test('first-lemma time-to-verify: goal intake -> kernel VERIFIED with a traced event, counters 0', async () => {
         const pool = new BackendRepl({
@@ -46,7 +49,7 @@ describe('P1 minimal loop over real repl + real LLM', {
 
         const loop = new MinimalLoop({
             backend: pool,
-            llm: createLLM({ ...llmConfig, retries: 3 }), // free-tier models 429 transiently
+            llm: createLLM({ ...llmConfig, retries: 3 }), // transient CLI timeouts are retried; hard failures surface
             concurrency: 1,
             attemptsPerLemma: 8, // pass@8 gate metric
             timeoutMs: 300_000,  // backstop only: the pool bounds each kernel check

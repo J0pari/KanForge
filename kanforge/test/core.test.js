@@ -435,6 +435,25 @@ test('Scheduler timeout kills a hanging check', async () => {
     assert.match(out.failures.get('hang').message, /timeout/);
 });
 
+test('Scheduler delivers an abort signal to the check on timeout (kill-on-hang)', async () => {
+    const g = new PullGraph();
+    g.register('hang', () => 1);
+    let sawSignal = false;
+    const s = new Scheduler(g, {
+        concurrency: 1,
+        timeoutMs: 30,
+        check: (id, signal) => new Promise((resolve, reject) => {
+            assert.ok(signal instanceof AbortSignal, 'check must receive the job signal');
+            sawSignal = true;
+            signal.addEventListener('abort', () => reject(Object.assign(new Error('killed'), { kind: 'abort' })), { once: true });
+        })
+    });
+    s.enqueue(['hang']);
+    const out = await s.run();
+    assert.ok(sawSignal, 'the check must have seen the signal');
+    assert.ok(out.failures.has('hang'), 'the aborted job is recorded as failed');
+});
+
 test('Scheduler priority override is honored for tie-breaking', async () => {
     const g = new PullGraph();
     const order = [];

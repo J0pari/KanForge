@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    MinimalLoop, parseProof, composeProof, proposeProofMessages, buildLemmaId
+    MinimalLoop, parseProof, composeProof, proposeProofMessages, buildLemmaId, proofLooksLikeTactic
 } from '../agent/loop.js';
 
 const verifiedBackend = {
@@ -55,6 +55,14 @@ test('proposeProofMessages: carries prior failure feedback into the retry prompt
     assert.equal(messages[0].role, 'system');
     assert.ok(messages[1].content.includes('example : True := by sorry'));
     assert.ok(messages[1].content.includes('type mismatch'));
+});
+
+test('proposeProofMessages: renders optional per-lemma context into the prompt', () => {
+    const withContext = proposeProofMessages('example : True := by sorry', [], 'Prove by induction on n; the step closes with omega.');
+    assert.ok(withContext[1].content.includes('Context:'));
+    assert.ok(withContext[1].content.includes('Prove by induction on n'));
+    const without = proposeProofMessages('example : True := by sorry');
+    assert.ok(!without[1].content.includes('Context:'), 'no context block when none provided');
 });
 
 test('addLemma: node ids are statement hashes; re-adding dedupes', () => {
@@ -123,6 +131,37 @@ test('attempts budget: a lemma exhausts attemptsPerLemma then fails loudly', asy
     assert.ok(failed.lastError.includes('tactic failed'));
 });
 
+test('proofLooksLikeTactic: shapes the verify-form ordering so the common case costs one check', () => {
+    assert.equal(proofLooksLikeTactic('omega'), true);
+    assert.equal(proofLooksLikeTactic('simp [hf]'), true);
+    assert.equal(proofLooksLikeTactic('intro h; omega'), true, 'compound scripts are tactics');
+    assert.equal(proofLooksLikeTactic('exact Nat.le_of_lt h'), true);
+    assert.equal(proofLooksLikeTactic('Nat.add_comm a b'), false, 'bare terms verify as := <term>');
+    assert.equal(proofLooksLikeTactic('rfl'), false);
+    assert.equal(proofLooksLikeTactic(''), true);
+});
+
+test('term-first ordering: a bare proof term verifies via the := <term> form in ONE check', async () => {
+    const termOnlyBackend = {
+        getInfos: () => ({}),
+        check: async src => ({
+            status: src.includes(':= by ') ? 'error' : 'verified',
+            goals: [],
+            error: src.includes(':= by ') ? { message: 'unknown tactic' } : undefined
+        })
+    };
+    const termLlm = { complete: async () => ({ text: 'Nat.add_comm a b' }) };
+    const loop = new MinimalLoop({ backend: termOnlyBackend, llm: termLlm, concurrency: 1, attemptsPerLemma: 1 });
+    const events = captureEvents(loop);
+    loop.addLemma('example (a b : Nat) : a + b = b + a := by sorry');
+
+    const out = await loop.proveAll();
+    assert.equal(out.ok, true);
+    assert.equal(loop.verifyCalls, 1, 'a bare term must verify on the term form alone');
+    const verified = events.find(e => e.type === 'lemma_verified');
+    assert.equal(verified.form, 'term');
+});
+
 test('term fallback: a proof term verifies via the := <term> form when by <term> is invalid', async () => {
     // Control-flow only: the "kernel" here accepts the term form and rejects the tactic form.
     const termOnlyBackend = {
@@ -159,6 +198,38 @@ test('verified lemma: result recorded on the node, outcome ok, traced event emit
     assert.equal(verified.proof, 'omega');
     assert.equal(loop.graph.nodes.get(id).value.proof, 'omega', 'node value must carry the verified proof');
     assert.equal(loop.graph.nodes.get(id).cached, true);
+});
+
+test('scheduler kill-on-hang: a lemma aborted mid-flight still emits a terminal lemma_failed event', async () => {
+    // Regression: the scheduler's per-lemma timeout used to reject without cancelling the
+    // in-flight check, so an aborted lemma never emitted a terminal event and silently
+    // vanished from the run's accounting (s.total < 20 in the smoke gate).
+    const hangingLlm = {
+        complete: async (messages, opts = {}) => new Promise((resolve, reject) => {
+            if (opts.signal?.aborted) return reject(Object.assign(new Error('aborted'), { kind: 'abort' }));
+            opts.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { kind: 'abort' })), { once: true });
+        })
+    };
+    const loop = new MinimalLoop({
+        backend: verifiedBackend,
+        llm: hangingLlm,
+        concurrency: 1,
+        attemptsPerLemma: 8,
+        timeoutMs: 80 // backstop fires quickly in the test
+    });
+    const events = captureEvents(loop);
+    const id = loop.addLemma('example : True := by sorry');
+    const t0 = Date.now();
+    const out = await loop.proveAll();
+    const dt = Date.now() - t0;
+
+    assert.equal(out.ok, false);
+    assert.ok(out.failures.has(id), 'the aborted lemma must be recorded as failed');
+    assert.ok(dt < 5000, `an aborted lemma must settle promptly, took ${dt}ms`);
+    const failed = events.find(e => e.type === 'lemma_failed');
+    assert.ok(failed, 'an aborted lemma MUST emit a terminal lemma_failed event, never vanish');
+    assert.ok(/timed out|aborted/i.test(failed.lastError), `got: ${failed.lastError}`);
+    assert.equal(failed.attempts, 1, 'the aborted attempt is counted');
 });
 
 test('scheduler maxFailures: generic core stop budget', async () => {

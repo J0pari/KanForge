@@ -1,139 +1,111 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LLMError, loadLLMConfig, createLLM, LLM_PROVIDERS, LOCAL_PROVIDERS, buildRequest, retryDelayMs, parseCompletion } from '../agent/llm.js';
+import { LLMError, loadLLMConfig, createLLM, LLM_PROVIDERS, buildRequest, retryDelayMs, messagesToPrompt, parseOpenCodeOutput } from '../agent/llm.js';
 import { ENV } from './loadEnv.js';
 
 const MESSAGES = [{ role: 'user', content: 'prove: 2+2=4' }];
 
-const LIVE_PROVIDER = ENV.KANFORGE_LLM_PROVIDER ?? 'openrouter';
-const HAS_KEY = Boolean(ENV.KANFORGE_LLM_API_KEY);
-
-test('loadLLMConfig defaults to local ollama with no secret', () => {
+test('loadLLMConfig defaults to opencode, keyless, with no secret/baseUrl fields at all', () => {
     const cfg = loadLLMConfig({});
-    assert.equal(cfg.provider, 'ollama');
-    assert.equal(cfg.apiKey, null);
-    assert.equal(cfg.requiresApiKey ?? false, false);
-    assert.ok(cfg.baseUrl.includes('11434'));
-    assert.ok(LLM_PROVIDERS.includes('gemini'));
+    assert.equal(cfg.provider, 'opencode');
+    assert.equal(cfg.model, 'big-pickle');
+    assert.ok(!('apiKey' in cfg), 'an opencode-only layer must not carry a secret field');
+    assert.ok(!('baseUrl' in cfg), 'the CLI transport has no HTTP base URL');
+    assert.deepEqual(LLM_PROVIDERS, ['opencode'], 'opencode is the sole provider');
     assert.ok(!LLM_PROVIDERS.includes('mock'), 'no mock provider may exist');
 });
 
 test('loadLLMConfig reads env overrides', () => {
     const cfg = loadLLMConfig({
-        KANFORGE_LLM_PROVIDER: 'gemini',
-        KANFORGE_LLM_MODEL: 'gemini-2.0-flash-lite',
-        KANFORGE_LLM_API_KEY: 'env-key',
-        KANFORGE_LLM_BASE_URL: 'https://custom.example/v1'
+        KANFORGE_LLM_PROVIDER: 'opencode',
+        KANFORGE_LLM_MODEL: 'opencode/big-pickle',
+        KANFORGE_LLM_TIMEOUT_MS: '90000',
+        KANFORGE_LLM_RETRIES: '4',
+        KANFORGE_LLM_OPENCODE_BIN: 'C:\\opencode.exe'
     });
-    assert.equal(cfg.provider, 'gemini');
-    assert.equal(cfg.model, 'gemini-2.0-flash-lite');
-    assert.equal(cfg.apiKey, 'env-key');
-    assert.equal(cfg.baseUrl, 'https://custom.example/v1');
+    assert.equal(cfg.provider, 'opencode');
+    assert.equal(cfg.model, 'opencode/big-pickle');
+    assert.equal(cfg.timeoutMs, 90000);
+    assert.equal(cfg.retries, 4);
+    assert.equal(cfg.opencodeBin, 'C:\\opencode.exe');
 });
 
-test('loadLLMConfig rejects unknown providers', () => {
+test('loadLLMConfig rejects every provider other than opencode, including former ollama/openrouter', () => {
+    assert.throws(() => loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter' }), /unknown KANFORGE_LLM_PROVIDER.*openrouter/);
+    assert.throws(() => loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'ollama' }), /unknown KANFORGE_LLM_PROVIDER/);
+    assert.throws(() => loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }), /unknown KANFORGE_LLM_PROVIDER/);
     assert.throws(() => loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'not-a-provider' }), /unknown KANFORGE_LLM_PROVIDER/);
 });
 
-test('requiresApiKey: remote providers need a key, local providers do not', () => {
-    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }) }).requiresApiKey(), true);
-    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter' }) }).requiresApiKey(), true);
-    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'anthropic' }) }).requiresApiKey(), true);
-    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'ollama' }) }).requiresApiKey(), false);
-    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'vllm' }) }).requiresApiKey(), false);
-    assert.deepEqual(LOCAL_PROVIDERS, ['ollama', 'vllm']);
-});
-
-test('missing key on a remote provider fails fast with kind config', async () => {
-    const gemini = createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }) });
-    await assert.rejects(() => gemini.complete(MESSAGES), (err) => err.kind === 'config');
-});
-
-test('buildRequest: OpenAI-compatible wire (gemini) — url, bearer header, body', () => {
-    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini', KANFORGE_LLM_API_KEY: 'env-key' });
-    const { url, headers, body } = buildRequest(cfg, MESSAGES, { maxTokens: 512 });
-    assert.ok(url.endsWith('/chat/completions'));
-    assert.equal(headers.authorization, 'Bearer env-key');
-    assert.deepEqual(body.messages, MESSAGES);
-    assert.equal(body.max_tokens, 512);
-    assert.equal(body.model, cfg.model);
-});
-
-test('buildRequest: openrouter uses OpenAI-compatible wire with the pinned default model', () => {
-    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' });
-    const { url, headers, body } = buildRequest(cfg, MESSAGES);
-    assert.ok(url.includes('openrouter.ai/api/v1/chat/completions'));
-    assert.equal(headers.authorization, 'Bearer or-key');
-    assert.equal(body.model, 'openai/gpt-oss-20b:free');
-});
-
-test('buildRequest: anthropic native wire — x-api-key, version, /messages, max_tokens default', () => {
-    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'anthropic', KANFORGE_LLM_API_KEY: 'sk-ant' });
-    const { url, headers, body } = buildRequest(cfg, MESSAGES);
-    assert.ok(url.endsWith('/messages'));
-    assert.equal(headers['x-api-key'], 'sk-ant');
-    assert.equal(headers['anthropic-version'], '2023-06-01');
-    assert.equal(body.max_tokens, 2048);
-});
-
-test('buildRequest: custom baseUrl override is honored', () => {
-    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'vllm', KANFORGE_LLM_BASE_URL: 'http://localhost:8000/v1' });
-    const { url, headers } = buildRequest(cfg, MESSAGES);
-    assert.ok(url.includes('localhost:8000'));
-    assert.equal(headers.authorization, undefined, 'no key on local providers');
-});
-
-test('retryDelayMs: pure retry scheduling', () => {
+test('retryDelayMs: only transient timeouts are retried; hard CLI failures are surfaced', () => {
     assert.equal(retryDelayMs(new LLMError('t', { kind: 'timeout' }), 0, 2), 250);
-    assert.equal(retryDelayMs(new LLMError('r', { kind: 'rate-limit', retryAfter: 3 }), 0, 2), 3);
-    assert.equal(retryDelayMs(new LLMError('r', { kind: 'rate-limit' }), 1, 2), 2000);
-    assert.equal(retryDelayMs(new LLMError('s', { status: 503 }), 0, 2), 500);
-    assert.equal(retryDelayMs(new LLMError('4', { status: 400 }), 0, 2), null, '4xx is not retried');
     assert.equal(retryDelayMs(new LLMError('t', { kind: 'timeout' }), 2, 2), null, 'no retries left');
+    assert.equal(retryDelayMs(new LLMError('e', { kind: 'http' }), 0, 2), null, 'CLI non-zero exits are not retried');
+    assert.equal(retryDelayMs(new LLMError('s', { kind: 'network' }), 0, 2), null, 'spawn failures are not retried');
+    assert.equal(retryDelayMs(new LLMError('a', { kind: 'abort' }), 0, 2), null, 'caller-driven aborts are never retried');
 });
 
-test('parseCompletion: content, reasoning fallback, and usage normalization', () => {
-    const withContent = parseCompletion(JSON.stringify({
-        choices: [{ message: { content: 'done' } }],
-        usage: { prompt_tokens: 7, completion_tokens: 2 },
-        model: 'm'
-    }), 200, 'openrouter', 'fallback');
-    assert.equal(withContent.text, 'done');
-    assert.deepEqual(withContent.usage, { promptTokens: 7, completionTokens: 2 });
-    assert.equal(withContent.model, 'm');
-
-    // Reasoning models can return null content at max_tokens cut-off; fall back to reasoning.
-    const withReasoning = parseCompletion(JSON.stringify({
-        choices: [{ message: { content: null, reasoning: 'draft proof steps...' } }],
-        usage: { prompt_tokens: 5, completion_tokens: 90 },
-        model: 'cohere/north-mini-code:free'
-    }), 200, 'openrouter', 'fallback');
-    assert.equal(withReasoning.text, 'draft proof steps...');
-    assert.equal(withReasoning.model, 'cohere/north-mini-code:free');
+test('complete with an already-aborted signal rejects as abort without spawning the CLI', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const client = createLLM(loadLLMConfig({}));
+    await assert.rejects(
+        client.complete([{ role: 'user', content: 'x' }], { signal: controller.signal }),
+        err => err.kind === 'abort'
+    );
 });
 
-test('no secret is ever a default', () => {
-    const cfg = loadLLMConfig({});
-    assert.equal(cfg.apiKey, null);
-    for (const provider of LLM_PROVIDERS) {
-        const c = loadLLMConfig({ KANFORGE_LLM_PROVIDER: provider });
-        assert.equal(c.apiKey, null, `${provider} must never default a key`);
-    }
+test('messagesToPrompt: system instructions + task serialize into one prompt', () => {
+    const prompt = messagesToPrompt([
+        { role: 'system', content: 'Use omega first.' },
+        { role: 'user', content: 'prove 2+2=4' }
+    ]);
+    assert.match(prompt, /System instructions:\nUse omega first\./);
+    assert.match(prompt, /Task:\nprove 2\+2=4/);
+    assert.ok(prompt.indexOf('System instructions') < prompt.indexOf('Task:'));
 });
 
-test(
-    'live: real provider round-trip with the configured key',
-    { skip: !HAS_KEY && 'KANFORGE_LLM_API_KEY not set (add to kanforge/.env)' },
-    async () => {
-        const client = createLLM({ ...loadLLMConfig(ENV), timeoutMs: 90_000 });
-        assert.equal(client.requiresApiKey(), true);
-        const out = await client.complete(
-            [{ role: 'user', content: 'Reply with exactly one word: ok' }],
-            { maxTokens: 32 }
-        );
-        assert.ok(typeof out.text === 'string' && out.text.length > 0, 'expected a non-empty completion');
-        assert.equal(out.provider, LIVE_PROVIDER);
-        assert.ok(out.usage.promptTokens >= 0);
-        assert.ok(out.usage.completionTokens >= 0);
-    }
-);
+test('parseOpenCodeOutput: collects text parts and usage, ignores unknown event types', () => {
+    const out = parseOpenCodeOutput([
+        JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }),
+        JSON.stringify({ type: 'text', part: { type: 'text', text: 'exact ' } }),
+        JSON.stringify({ type: 'text', part: { type: 'text', text: 'Nat.add_comm' } }),
+        JSON.stringify({ type: 'step_finish', part: { type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 7, output: 3, reasoning: 0 } } })
+    ].join('\n'));
+    assert.equal(out.text, 'exact Nat.add_comm');
+    assert.deepEqual(out.usage, { promptTokens: 7, completionTokens: 3 });
+    assert.deepEqual(parseOpenCodeOutput('').usage, { promptTokens: 0, completionTokens: 0 });
+});
+
+test('parseOpenCodeOutput: a non-JSON line breaks the CLI contract and is surfaced, never dropped', () => {
+    assert.throws(
+        () => parseOpenCodeOutput('not-json at all\n' + JSON.stringify({ type: 'text', part: { type: 'text', text: 'x' } })),
+        /contract violated.*not-json at all/
+    );
+});
+
+test('buildRequest: opencode routes to the CLI transport with the serialized prompt', () => {
+    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'opencode' });
+    const req = buildRequest(cfg, [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'goal' }
+    ], { maxTokens: 128 });
+    assert.equal(req.cli, true);
+    assert.equal(req.model, 'big-pickle');
+    assert.equal(req.maxTokens, 128);
+    assert.match(req.prompt, /System instructions:\nsys/);
+});
+
+test('live: opencode round-trip through the real CLI (no key required)', {
+    skip: ENV.KANFORGE_LLM_PROVIDER !== 'opencode' && 'set KANFORGE_LLM_PROVIDER=opencode to run this gate'
+}, async () => {
+    const client = createLLM({ ...loadLLMConfig(ENV), timeoutMs: 120_000 });
+    const out = await client.complete(
+        [{ role: 'user', content: 'Reply with exactly one word: ok' }],
+        { maxTokens: 32 }
+    );
+    assert.equal(out.provider, 'opencode');
+    assert.ok(out.model.startsWith('opencode/'));
+    assert.ok(out.text.trim().length > 0, 'expected a non-empty completion');
+    assert.ok(out.usage.completionTokens >= 0);
+});

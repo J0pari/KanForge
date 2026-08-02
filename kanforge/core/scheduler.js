@@ -167,19 +167,24 @@ export class Scheduler {
     _spawn(nodeId) {
         const check = this.check;
         const timeoutMs = this.timeoutMs;
+        const controller = new AbortController();
         const start = Date.now();
         const result = new Promise((resolve, reject) => {
             let settled = false;
             const timer = setTimeout(() => {
                 if (!settled) {
                     settled = true;
+                    // kill-on-hang: rejecting alone would orphan the in-flight check (it would keep
+                    // burning LLM calls / workers after the scheduler has moved on). Abort the job's
+                    // signal so the check can settle promptly and still emit its terminal event.
+                    controller.abort();
                     reject(new Error(`timeout after ${timeoutMs}ms: ${nodeId}`));
                 }
             }, timeoutMs);
             timer.unref?.();
 
             Promise.resolve()
-                .then(() => check(nodeId))
+                .then(() => check(nodeId, controller.signal))
                 .then(value => {
                     if (!settled) {
                         settled = true;

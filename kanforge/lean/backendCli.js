@@ -9,17 +9,18 @@ import { spawn, spawnSync } from 'node:child_process';
 import { makePin, NORM_VERSION } from './pin.js';
 
 // Windows spawn does not do PATHEXT resolution (`lean` -> `lean.exe` fails), so resolve the
-// binary to a real path via where.exe before spawning.
+// binary to a real path via where.exe before spawning. Failures are surfaced, never swallowed:
+// either the binary resolves to a real path or the caller sees exactly why it cannot.
 export function resolveLeanBin(bin) {
     if (path.extname(bin)) return bin;
     if (process.platform !== 'win32') return bin;
-    try {
-        const r = spawnSync('where.exe', [bin], { encoding: 'utf8', timeout: 10_000 });
-        if (r.status === 0 && r.stdout) {
-            const first = r.stdout.split(/\r?\n/).find(l => l.trim());
-            if (first) return first.trim();
-        }
-    } catch { /* fall through */ }
+    const r = spawnSync('where.exe', [bin], { encoding: 'utf8', timeout: 10_000 });
+    if (r.error) {
+        throw new Error(`could not resolve '${bin}' via where.exe: ${r.error.message}`);
+    }
+    const first = (r.stdout ?? '').split(/\r?\n/).find(l => l.trim());
+    if (r.status === 0 && first) return first.trim();
+    // Not on PATH: keep the caller's explicit value so its own spawn fails loudly with ENOENT.
     return bin;
 }
 
