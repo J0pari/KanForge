@@ -5,9 +5,14 @@
 // KANFORGE_LLM_API_KEY or a git-ignored .env file. Swapping providers is an environment
 // change, not a code change (fungible): every provider speaks one of two wire formats,
 // OpenAI-compatible chat completions or the Anthropic messages API.
+//
+// No mocks or stubs: the client always talks to the real provider endpoint over the real
+// fetch. Request construction (`buildRequest`) and retry scheduling (`retryDelayMs`) are
+// exported as pure functions so their logic is unit-testable without a network; end-to-end
+// behavior is covered by the live suite, gated on a real key.
 
 export const LLM_PROVIDERS = Object.freeze([
-    'gemini', 'openai', 'anthropic', 'ollama', 'vllm', 'copilot', 'openrouter', 'mock'
+    'gemini', 'openai', 'anthropic', 'ollama', 'vllm', 'copilot', 'openrouter'
 ]);
 
 const DEFAULT_BASE_URL = Object.freeze({
@@ -27,16 +32,18 @@ const DEFAULT_MODEL = Object.freeze({
     ollama:    'qwen2.5-coder:7b',
     vllm:      'Qwen/Qwen2.5-Coder-7B-Instruct',
     copilot:   'gpt-4o-mini',
-    openrouter: 'cohere/north-mini-code:free',
-    mock:      'mock-1'
+    openrouter: 'cohere/north-mini-code:free'
 });
+
+// Local providers speak OpenAI-compatible chat completions on localhost and need no secret.
+export const LOCAL_PROVIDERS = Object.freeze(['ollama', 'vllm']);
 
 export class LLMError extends Error {
     constructor(message, { status = 0, kind = 'http', retryAfter = 0, cause } = {}) {
         super(message);
         this.name = 'LLMError';
         this.status = status;
-        this.kind = kind; // 'http' | 'timeout' | 'rate-limit' | 'network'
+        this.kind = kind; // 'http' | 'timeout' | 'rate-limit' | 'network' | 'config'
         this.retryAfter = retryAfter;
         this.cause = cause;
     }
@@ -54,11 +61,42 @@ export function loadLLMConfig(env = process.env) {
         baseUrl: env.KANFORGE_LLM_BASE_URL ?? DEFAULT_BASE_URL[provider],
         timeoutMs: Number(env.KANFORGE_LLM_TIMEOUT_MS ?? 60_000),
         temperature: env.KANFORGE_LLM_TEMPERATURE !== undefined ? Number(env.KANFORGE_LLM_TEMPERATURE) : 0.2,
-        retries: Number(env.KANFORGE_LLM_RETRIES ?? 2),
-        // test/override hooks (never read from env)
-        fetchImpl: null,
-        mockReply: null
+        retries: Number(env.KANFORGE_LLM_RETRIES ?? 2)
     };
+}
+
+// Pure request construction: returns { url, headers, body } for a config + messages + opts.
+export function buildRequest(config, messages, opts = {}) {
+    const { provider, baseUrl, apiKey, model, temperature } = config;
+    const maxTokens = opts.maxTokens ?? 2048;
+    if (provider === 'anthropic') {
+        return {
+            url: `${baseUrl}/messages`,
+            headers: {
+                'content-type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: { model, messages, max_tokens: maxTokens, temperature }
+        };
+    }
+    // OpenAI-compatible chat completions (gemini, openai, ollama, vllm, copilot, openrouter)
+    const headers = { 'content-type': 'application/json' };
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+    return {
+        url: `${baseUrl}/chat/completions`,
+        headers,
+        body: { model, messages, max_tokens: maxTokens, temperature }
+    };
+}
+
+// Pure retry scheduling. Returns delay ms to wait before the next attempt, or null to give up.
+export function retryDelayMs(err, attempt, maxAttempts) {
+    if (attempt >= maxAttempts) return null;
+    if (err.kind === 'timeout') return 250 * (attempt + 1);
+    if (err.kind === 'rate-limit') return (err.retryAfter > 0 ? err.retryAfter : 1000) * (attempt + 1);
+    if (err.status >= 500) return 500 * (attempt + 1);
+    return null;
 }
 
 export class LLMClient {
@@ -67,9 +105,9 @@ export class LLMClient {
         if (typeof this.config.provider !== 'string') {
             throw new Error('LLMClient requires a config with a provider');
         }
-        this.fetch = this.config.fetchImpl ?? globalThis.fetch;
+        this.fetch = globalThis.fetch;
         if (typeof this.fetch !== 'function') {
-            throw new Error('No fetch available; pass a fetchImpl in the LLM config');
+            throw new Error('No global fetch available in this runtime');
         }
     }
 
@@ -83,13 +121,10 @@ export class LLMClient {
 
     requiresApiKey() {
         // local providers need no secret; everything remote does
-        return !['ollama', 'vllm', 'mock'].includes(this.config.provider);
+        return !LOCAL_PROVIDERS.includes(this.config.provider);
     }
 
     async complete(messages, opts = {}) {
-        if (this.config.provider === 'mock') {
-            return this._mock(messages, opts);
-        }
         if (this.requiresApiKey() && !this.config.apiKey) {
             throw new LLMError(`${this.config.provider} requires KANFORGE_LLM_API_KEY`, { kind: 'config' });
         }
@@ -101,7 +136,7 @@ export class LLMClient {
                 return await this._request(messages, opts);
             } catch (err) {
                 lastErr = err;
-                const delay = this._retryDelay(err, attempt, attempts);
+                const delay = retryDelayMs(err, attempt, attempts);
                 if (delay === null) throw err;
                 await new Promise(res => setTimeout(res, delay));
             }
@@ -110,7 +145,7 @@ export class LLMClient {
     }
 
     async _request(messages, opts) {
-        const { url, headers, body } = this._wire(messages, opts);
+        const { url, headers, body } = buildRequest(this.config, messages, opts);
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
         let resp;
@@ -141,68 +176,27 @@ export class LLMClient {
         return this._parse(text, resp.status);
     }
 
-    _wire(messages, opts) {
-        const { provider, baseUrl, apiKey, model, temperature } = this.config;
-        const maxTokens = opts.maxTokens ?? 2048;
-        if (provider === 'anthropic') {
-            return {
-                url: `${baseUrl}/messages`,
-                headers: {
-                    'content-type': 'application/json',
-                    'x-api-key': apiKey,
-                    'anthropic-version': '2023-06-01'
-                },
-                body: { model, messages, max_tokens: maxTokens, temperature }
-            };
-        }
-        // OpenAI-compatible chat completions (gemini, openai, ollama, vllm, copilot)
-        const headers = { 'content-type': 'application/json' };
-        if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-        return {
-            url: `${baseUrl}/chat/completions`,
-            headers,
-            body: { model, messages, max_tokens: maxTokens, temperature }
-        };
-    }
-
     _parse(text, status) {
-        const data = JSON.parse(text);
-        const usage = normalizeUsage(data.usage);
-        const message = data.choices?.[0]?.message;
-        const content = message?.content
-            ?? message?.reasoning
-            ?? data.content?.filter?.(p => p.type === 'text').map(p => p.text).join('')
-            ?? '';
-        return {
-            text: content,
-            usage,
-            provider: this.config.provider,
-            model: data.model ?? this.config.model,
-            rawStatus: status
-        };
+        return parseCompletion(text, status, this.config.provider, this.config.model);
     }
+}
 
-    _mock(messages, opts) {
-        const reply = this.config.mockReply;
-        const text = typeof reply === 'function'
-            ? reply(messages, opts)
-            : (typeof reply === 'string' ? reply : `[mock ${this.config.model}] ${lastUserText(messages)}`);
-        return {
-            text,
-            usage: { promptTokens: 0, completionTokens: text.length },
-            provider: 'mock',
-            model: this.config.model,
-            rawStatus: 200
-        };
-    }
-
-    _retryDelay(err, attempt, maxAttempts) {
-        if (attempt >= maxAttempts) return null;
-        if (err.kind === 'timeout') return 250 * (attempt + 1);
-        if (err.kind === 'rate-limit') return (err.retryAfter > 0 ? err.retryAfter : 1000) * (attempt + 1);
-        if (err.status >= 500) return 500 * (attempt + 1);
-        return null;
-    }
+// Pure response parsing for the provider wire shapes.
+export function parseCompletion(text, status, provider, model) {
+    const data = JSON.parse(text);
+    const usage = normalizeUsage(data.usage);
+    const message = data.choices?.[0]?.message;
+    const content = message?.content
+        ?? message?.reasoning   // reasoning models (e.g. cohere north) can return null content
+        ?? data.content?.filter?.(p => p.type === 'text').map(p => p.text).join('')
+        ?? '';
+    return {
+        text: content,
+        usage,
+        provider,
+        model: data.model ?? model,
+        rawStatus: status
+    };
 }
 
 export function createLLM(config = null) {
@@ -214,13 +208,6 @@ function normalizeUsage(usage = {}) {
         promptTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
         completionTokens: usage.completion_tokens ?? usage.output_tokens ?? 0
     };
-}
-
-function lastUserText(messages) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i]?.role === 'user') return messages[i].content ?? '';
-    }
-    return '';
 }
 
 function truncate(s, n) {

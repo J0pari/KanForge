@@ -35,9 +35,8 @@ kanforge/
     guardrails.js            # invariant spec + guardrail logic (the Giraud axioms)
   lean/
     backend.js               # adapter interface + factory
-    backendLean4Web.js       # lean4web impl
     backendRepl.js           # leanprover-community/repl impl (JSON-lines, pool)
-    backendCli.js            # `lake build` / `lean` impl
+    backendCli.js            # `lean` CLI impl
     pin.js                   # toolchain + mathlib4 pin, statement hashing
   agent/
     agent.js                 # observe→propose→act→verify→repair→commit loop
@@ -220,7 +219,7 @@ text. `meta` carries model id, prompt ref, confidence (feeds scheduler priority 
 ## 3. Lean backend interface
 
 ```js
-// backend.js — createBackend({ type: 'lean4web' | 'repl' | 'cli', ...config })
+// backend.js — createBackend({ type: 'repl' | 'cli', ...config })
 interface LeanBackend {
   check(statement, opts) ->
     { status: 'verified'|'error'|'timeout', goals: Goal[], error?: LeanError, warnings: [] }
@@ -241,9 +240,11 @@ neighborhood for repair (never regenerate whole files; verified regions stay imm
 
 Implementation notes:
 - **REPL** (default for RL): JSON-lines over a process pool (like Kimina Lean Server); parallel
-  verification; warm workers; kill-on-hang timeout.
-- **lean4web**: REST/WebSocket to hosted or self-hosted instance; zero-install demos.
-- **CLI**: `lake build` / `lean` for CI batch verification.
+  verification; warm workers; kill-on-hang timeout. Driven against the *real* `repl` binary built
+  at the pinned toolchain — no mocks, stubs, or facsimiles anywhere in the backend stack.
+- **CLI**: real `lean` for CI batch verification.
+- **lean4web**: *deferred.* Ships only once a real instance is exercised end-to-end; its API
+  contract is not fabricated offline.
 - **Statement pinning** (`pin.js`): canonical `#print`-normalized string → sha256. Any mutation
   of goal text during search flips the hash → node `WEAKENED` + guardrail trip.
 
@@ -267,7 +268,8 @@ discovered at scale.
   partial results are checkpointed so resume does not redo them.
 - **Health counters** surfaced via `getInfos()`: `{ poolSize, restarts, hangs, timeouts,
   parseErrors, poolUptime }`. Acceptance: normal runs hold `restarts = hangs = parseErrors = 0`
-  (P0.3 resilience suite, `build_order.md`).
+  (P0.3 resilience suite, `build_order.md`), asserted in `test/backend.repl.live.test.js` against
+  the real `repl` binary.
 
 **Pin drift:** the canonical `#print`-normalized string is *version-sensitive* — a Lean/mathlib
 update can change the printed form without changing meaning. Therefore `pin()` returns

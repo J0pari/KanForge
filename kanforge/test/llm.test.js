@@ -1,35 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LLMClient, LLMError, loadLLMConfig, createLLM, LLM_PROVIDERS } from '../agent/llm.js';
+import { LLMError, loadLLMConfig, createLLM, LLM_PROVIDERS, LOCAL_PROVIDERS, buildRequest, retryDelayMs, parseCompletion } from '../agent/llm.js';
+import { ENV } from './loadEnv.js';
 
 const MESSAGES = [{ role: 'user', content: 'prove: 2+2=4' }];
 
-function fakeResponse(status, body, headers = {}) {
-    return {
-        ok: status >= 200 && status < 300,
-        status,
-        headers: new Headers(headers),
-        async text() {
-            return JSON.stringify(body);
-        }
-    };
-}
-
-function openaiBody(text = 'ok', usage = { prompt_tokens: 5, completion_tokens: 3 }) {
-    return {
-        choices: [{ message: { content: text } }],
-        usage,
-        model: 'test-model'
-    };
-}
-
-function anthropicBody(text = 'ok', usage = { input_tokens: 5, output_tokens: 3 }) {
-    return {
-        content: [{ type: 'text', text }],
-        usage,
-        model: 'test-model'
-    };
-}
+const LIVE_PROVIDER = ENV.KANFORGE_LLM_PROVIDER ?? 'openrouter';
+const HAS_KEY = Boolean(ENV.KANFORGE_LLM_API_KEY);
 
 test('loadLLMConfig defaults to local ollama with no secret', () => {
     const cfg = loadLLMConfig({});
@@ -38,7 +15,7 @@ test('loadLLMConfig defaults to local ollama with no secret', () => {
     assert.equal(cfg.requiresApiKey ?? false, false);
     assert.ok(cfg.baseUrl.includes('11434'));
     assert.ok(LLM_PROVIDERS.includes('gemini'));
-    assert.ok(LLM_PROVIDERS.includes('mock'));
+    assert.ok(!LLM_PROVIDERS.includes('mock'), 'no mock provider may exist');
 });
 
 test('loadLLMConfig reads env overrides', () => {
@@ -58,154 +35,81 @@ test('loadLLMConfig rejects unknown providers', () => {
     assert.throws(() => loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'not-a-provider' }), /unknown KANFORGE_LLM_PROVIDER/);
 });
 
-test('remote providers require a key; local providers do not', async () => {
-    const gemini = createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }) });
-    assert.equal(gemini.requiresApiKey(), true);
-    await assert.rejects(() => gemini.complete(MESSAGES), (err) => err.kind === 'config');
-
-    const ollama = createLLM({ ...loadLLMConfig({}), fetchImpl: async () => fakeResponse(200, openaiBody()) });
-    assert.equal(ollama.requiresApiKey(), false);
-    const out = await ollama.complete(MESSAGES);
-    assert.equal(out.text, 'ok');
+test('requiresApiKey: remote providers need a key, local providers do not', () => {
+    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }) }).requiresApiKey(), true);
+    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter' }) }).requiresApiKey(), true);
+    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'anthropic' }) }).requiresApiKey(), true);
+    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'ollama' }) }).requiresApiKey(), false);
+    assert.equal(createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'vllm' }) }).requiresApiKey(), false);
+    assert.deepEqual(LOCAL_PROVIDERS, ['ollama', 'vllm']);
 });
 
-test('openai-compatible wire: URL, bearer header, body, parsing', async () => {
-    let captured;
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini', KANFORGE_LLM_API_KEY: 'env-key' }),
-        fetchImpl: async (url, init) => {
-            captured = { url, init };
-            return fakeResponse(200, openaiBody('the proof', { prompt_tokens: 10, completion_tokens: 4 }));
-        }
-    });
-    const out = await client.complete(MESSAGES, { maxTokens: 512 });
-    assert.ok(captured.url.endsWith('/chat/completions'));
-    assert.equal(captured.init.headers.authorization, 'Bearer env-key');
-    const body = JSON.parse(captured.init.body);
+test('missing key on a remote provider fails fast with kind config', async () => {
+    const gemini = createLLM({ ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini' }) });
+    await assert.rejects(() => gemini.complete(MESSAGES), (err) => err.kind === 'config');
+});
+
+test('buildRequest: OpenAI-compatible wire (gemini) — url, bearer header, body', () => {
+    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'gemini', KANFORGE_LLM_API_KEY: 'env-key' });
+    const { url, headers, body } = buildRequest(cfg, MESSAGES, { maxTokens: 512 });
+    assert.ok(url.endsWith('/chat/completions'));
+    assert.equal(headers.authorization, 'Bearer env-key');
     assert.deepEqual(body.messages, MESSAGES);
     assert.equal(body.max_tokens, 512);
-    assert.equal(out.text, 'the proof');
-    assert.deepEqual(out.usage, { promptTokens: 10, completionTokens: 4 });
+    assert.equal(body.model, cfg.model);
 });
 
-test('copilot provider uses OpenAI-compatible wire with key', async () => {
-    let captured;
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'copilot', KANFORGE_LLM_API_KEY: 'ck' }),
-        fetchImpl: async (url, init) => {
-            captured = { url, init };
-            return fakeResponse(200, openaiBody());
-        }
-    });
-    await client.complete(MESSAGES);
-    assert.ok(captured.url.includes('api.githubcopilot.com'));
-    assert.equal(captured.init.headers.authorization, 'Bearer ck');
+test('buildRequest: openrouter uses OpenAI-compatible wire with the pinned default model', () => {
+    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' });
+    const { url, headers, body } = buildRequest(cfg, MESSAGES);
+    assert.ok(url.includes('openrouter.ai/api/v1/chat/completions'));
+    assert.equal(headers.authorization, 'Bearer or-key');
+    assert.equal(body.model, 'cohere/north-mini-code:free');
 });
 
-test('openrouter provider: OpenAI-compatible wire, requires key, default model', async () => {
-    let captured;
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' }),
-        fetchImpl: async (url, init) => {
-            captured = { url, init };
-            return fakeResponse(200, openaiBody());
-        }
-    });
-    assert.equal(client.requiresApiKey(), true);
-    const out = await client.complete(MESSAGES);
-    assert.ok(captured.url.includes('openrouter.ai/api/v1/chat/completions'));
-    assert.equal(captured.init.headers.authorization, 'Bearer or-key');
-    assert.equal(client.model, 'cohere/north-mini-code:free');
-    assert.equal(out.text, 'ok');
-});
-
-test('reasoning model with null content falls back to reasoning text', async () => {
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openrouter', KANFORGE_LLM_API_KEY: 'or-key' }),
-        fetchImpl: async () => fakeResponse(200, {
-            choices: [{ message: { content: null, reasoning: 'draft proof steps...' } }],
-            usage: { prompt_tokens: 5, completion_tokens: 90 },
-            model: 'cohere/north-mini-code:free'
-        })
-    });
-    const out = await client.complete(MESSAGES);
-    assert.equal(out.text, 'draft proof steps...');
-});
-
-test('anthropic adapter: native messages wire + token normalization', async () => {
-    let captured;
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'anthropic', KANFORGE_LLM_API_KEY: 'sk-ant' }),
-        fetchImpl: async (url, init) => {
-            captured = { url, init };
-            return fakeResponse(200, anthropicBody('done', { input_tokens: 7, output_tokens: 2 }));
-        }
-    });
-    const out = await client.complete(MESSAGES);
-    assert.ok(captured.url.endsWith('/messages'));
-    assert.equal(captured.init.headers['x-api-key'], 'sk-ant');
-    assert.equal(captured.init.headers['anthropic-version'], '2023-06-01');
-    const body = JSON.parse(captured.init.body);
+test('buildRequest: anthropic native wire — x-api-key, version, /messages, max_tokens default', () => {
+    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'anthropic', KANFORGE_LLM_API_KEY: 'sk-ant' });
+    const { url, headers, body } = buildRequest(cfg, MESSAGES);
+    assert.ok(url.endsWith('/messages'));
+    assert.equal(headers['x-api-key'], 'sk-ant');
+    assert.equal(headers['anthropic-version'], '2023-06-01');
     assert.equal(body.max_tokens, 2048);
-    assert.equal(out.text, 'done');
-    assert.deepEqual(out.usage, { promptTokens: 7, completionTokens: 2 });
 });
 
-test('request timeout surfaces as LLMError kind timeout', async () => {
-    const client = createLLM({
-        ...loadLLMConfig({}),
-        timeoutMs: 20,
-        fetchImpl: (url, init) => new Promise((res, rej) => {
-            init.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-        })
-    });
-    await assert.rejects(() => client.complete(MESSAGES), (err) => err.kind === 'timeout');
+test('buildRequest: custom baseUrl override is honored', () => {
+    const cfg = loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'vllm', KANFORGE_LLM_BASE_URL: 'http://localhost:8000/v1' });
+    const { url, headers } = buildRequest(cfg, MESSAGES);
+    assert.ok(url.includes('localhost:8000'));
+    assert.equal(headers.authorization, undefined, 'no key on local providers');
 });
 
-test('429 rate limit retries with retry-after then succeeds', async () => {
-    const calls = [];
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openai', KANFORGE_LLM_API_KEY: 'k', KANFORGE_LLM_RETRIES: '2' }),
-        fetchImpl: async () => {
-            calls.push(calls.length);
-            if (calls.length === 1) {
-                return fakeResponse(429, { error: { message: 'quota' } }, { 'retry-after': '0' });
-            }
-            return fakeResponse(200, openaiBody());
-        }
-    });
-    const out = await client.complete(MESSAGES);
-    assert.equal(out.text, 'ok');
-    assert.equal(calls.length, 2);
+test('retryDelayMs: pure retry scheduling', () => {
+    assert.equal(retryDelayMs(new LLMError('t', { kind: 'timeout' }), 0, 2), 250);
+    assert.equal(retryDelayMs(new LLMError('r', { kind: 'rate-limit', retryAfter: 3 }), 0, 2), 3);
+    assert.equal(retryDelayMs(new LLMError('r', { kind: 'rate-limit' }), 1, 2), 2000);
+    assert.equal(retryDelayMs(new LLMError('s', { status: 503 }), 0, 2), 500);
+    assert.equal(retryDelayMs(new LLMError('4', { status: 400 }), 0, 2), null, '4xx is not retried');
+    assert.equal(retryDelayMs(new LLMError('t', { kind: 'timeout' }), 2, 2), null, 'no retries left');
 });
 
-test('5xx retries then gives up with the last error', async () => {
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'openai', KANFORGE_LLM_API_KEY: 'k', KANFORGE_LLM_RETRIES: '1' }),
-        fetchImpl: async () => fakeResponse(503, { error: 'down' })
-    });
-    await assert.rejects(
-        () => client.complete(MESSAGES),
-        (err) => err instanceof LLMError && err.status === 503 && err.kind === 'http'
-    );
-});
+test('parseCompletion: content, reasoning fallback, and usage normalization', () => {
+    const withContent = parseCompletion(JSON.stringify({
+        choices: [{ message: { content: 'done' } }],
+        usage: { prompt_tokens: 7, completion_tokens: 2 },
+        model: 'm'
+    }), 200, 'openrouter', 'fallback');
+    assert.equal(withContent.text, 'done');
+    assert.deepEqual(withContent.usage, { promptTokens: 7, completionTokens: 2 });
+    assert.equal(withContent.model, 'm');
 
-test('network failure surfaces as LLMError kind network', async () => {
-    const client = createLLM({
-        ...loadLLMConfig({}),
-        fetchImpl: async () => { throw new Error('ECONNREFUSED'); }
-    });
-    await assert.rejects(() => client.complete(MESSAGES), (err) => err.kind === 'network');
-});
-
-test('mock provider returns configured reply without any network', async () => {
-    const client = createLLM({
-        ...loadLLMConfig({ KANFORGE_LLM_PROVIDER: 'mock' }),
-        mockReply: (messages) => `canned response for ${messages.at(-1).content}`
-    });
-    const out = await client.complete(MESSAGES);
-    assert.equal(out.text, 'canned response for prove: 2+2=4');
-    assert.equal(out.provider, 'mock');
+    // Reasoning models can return null content at max_tokens cut-off; fall back to reasoning.
+    const withReasoning = parseCompletion(JSON.stringify({
+        choices: [{ message: { content: null, reasoning: 'draft proof steps...' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 90 },
+        model: 'cohere/north-mini-code:free'
+    }), 200, 'openrouter', 'fallback');
+    assert.equal(withReasoning.text, 'draft proof steps...');
+    assert.equal(withReasoning.model, 'cohere/north-mini-code:free');
 });
 
 test('no secret is ever a default', () => {
@@ -216,3 +120,20 @@ test('no secret is ever a default', () => {
         assert.equal(c.apiKey, null, `${provider} must never default a key`);
     }
 });
+
+test(
+    'live: real provider round-trip with the configured key',
+    { skip: !HAS_KEY && 'KANFORGE_LLM_API_KEY not set (add to kanforge/.env)' },
+    async () => {
+        const client = createLLM({ ...loadLLMConfig(ENV), timeoutMs: 90_000 });
+        assert.equal(client.requiresApiKey(), true);
+        const out = await client.complete(
+            [{ role: 'user', content: 'Reply with exactly one word: ok' }],
+            { maxTokens: 32 }
+        );
+        assert.ok(typeof out.text === 'string' && out.text.length > 0, 'expected a non-empty completion');
+        assert.equal(out.provider, LIVE_PROVIDER);
+        assert.ok(out.usage.promptTokens >= 0);
+        assert.ok(out.usage.completionTokens >= 0);
+    }
+);

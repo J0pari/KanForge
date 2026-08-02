@@ -51,12 +51,15 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 
 ### 0.1 Toolchain
 - Install `elan` + pinned `lean`/`mathlib4` toolchain; `lake` project with `lakefile.lean`.
-- Stand up the Lean backend options (`lean/backend.js` + three impls, per `architecture.md` §3):
-  - `lean4web` self-hosted (Apache-2.0) for web demos;
+- Stand up the Lean backend options (`lean/backend.js` + the two real impls, per
+  `architecture.md` §3):
   - `leanprover-community/repl` built for the pinned toolchain (preferred, JSON-lines);
   - `lean` CLI for batch.
-- **Deliverable:** `lean/backend.js` adapter interface + all three implementations passing a
-  round-trip test: `example : 1 + 1 = 2 := by omega`.
+  - `lean4web` is *deferred* — it ships only once a real instance is exercised end-to-end
+    (no fabricated adapters).
+- **Deliverable:** `lean/backend.js` adapter interface + the implemented backends passing a
+  round-trip test against the real kernel: `example : 1 + 1 = 2 := by rfl` (CLI) and
+  `by omega` over the real `repl` binary.
 
 ### 0.2 Build the core
 - Implement `Lazy`, `LazyTemplate`, `LazyFunctor`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
@@ -77,10 +80,11 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `{status, goals, error}` for each, and reports per-check duration. Scheduler: no cyclic
   dispatch, deterministic ordering, failed dep blocks dependents without dispatch. CI runs on the
   pinned toolchain.
-- **Resilience suite (same gate):** kill a warm worker mid-check → the pool replaces it and the
-  batch completes; a hung worker is killed on timeout and the batch recovers; a malformed
-  JSON-lines line is skipped, logged, and the batch continues; normal runs report
-  `restarts = hangs = parseErrors = 0`. (Pool contract: `architecture.md` §3.1.)
+- **Resilience suite (same gate, `test/backend.repl.live.test.js`):** all failure modes are
+  exercised against the **real** `repl` binary — kill a warm worker mid-check → the pool
+  replaces it and the batch completes; a hung worker is killed on timeout and the batch recovers;
+  normal runs report `restarts = hangs = parseErrors = 0`. (Pool contract: `architecture.md` §3.1.
+  No mock/fake/stub: the suite skips, never fakes, when the binary is unavailable.)
 
 ---
 
