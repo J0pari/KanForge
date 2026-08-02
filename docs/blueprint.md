@@ -1,7 +1,9 @@
 # KanForge — Blueprint
 
-A pull-based, lazily-evaluated, telemetry-instrumented **agentic proof refinery** for Lean 4,
-built by adapting the internals of `J0pari/Builder` (the HCT lazy build system).
+A pull-based, lazily-evaluated, telemetry-instrumented **agentic proof refinery** for Lean 4.
+The design is self-contained: every module below exists because the goal in §1 or a pattern in §4
+demands it. Implementation lineage (which existing libraries the foundational primitives adapt) is
+a provenance matter, documented in `research_notes_2026.md` §4, not argued here.
 
 **Working title:** *KanForge* — "a forge of Kan extensions: find the best extension of a partial
 proof." (The Kan-extension framing is elaborated in `patterns_from_hct.md`; it is a heuristic
@@ -49,57 +51,55 @@ consensus. The systems table, the ten working tricks, and the ten warnings are i
 
 ---
 
-## 3. What `J0pari/Builder` gives us — module inventory and reuse map
+## 3. Module inventory and design rationale
 
-The seeded repo (`scripts/builder.js` ~8k lines, `scripts/query.js` ~1.2k lines) is a lazy
-pull-based build system for math documents with deep runtime telemetry. The following modules are
-the reusable machinery. Line refs are to the seeded files (they will drift as we port; the mapping
-is the stable part).
+Everything in `kanforge/` exists because one of the goals in §1 or one of the patterns in §4
+demands it. The table below is the *why* map — module → role in the system → the requirement it
+satisfies. Contracts, file names, and interfaces are authoritative in `architecture.md`; this
+section only argues the shape.
 
-| Builder module | Line ref | What it does | How we adapt it |
-|---|---|---|---|
-| `Lazy` | builder.js:79 | memoized thunk (monad: `map`/`flatMap`) | deferred computation of proof goals/lemmas → `core/lazy.js` |
-| `LazyTemplate` | builder.js:158 | string only on `toString()` | lazy prompt/tactic templating → `core/template.js` |
-| `LazyFunctor` | builder.js:195 | map/extract/lift over lazy structures | work with "possibly-lazy" result trees → `core/functor.js` |
-| `Pipeline.kleisli/compose` | builder.js:222 | monadic stage composition | the agent loop as Kleisli composition → `core/pipeline.js` |
-| `ConfigContext` | builder.js:281 | environment-passing | per-run config threading (budget, model, lib) → `core/context.js` |
-| `LazyStream` | builder.js:324 | head-strict/tail-lazy infinite streams | search frontiers, event streams, telemetry windows → `core/stream.js` |
-| `lazify` / `fix` | builder.js:444/475 | proxies; coinductive fixed points | self-referential search streams → `core/lazy.js`, `core/fix.js` |
-| `PullGraph` | builder.js:481 | pull-based dependency DAG, invalidation, serialize/deserialize, error boundaries | **the proof DAG** — lemmas as nodes, tactics as morphisms, checkpoint/resume → `core/pullgraph.js` |
-| `PullPromise` | builder.js:789 | async-thunk pull | async Lean round-trips → `core/promise.js` |
-| `PullCache` | builder.js:821 | lazy keyed cache | lemma/mathlib caches → `core/cache.js` |
-| `LazyGit` | builder.js:1108 | stage→commit→push pipeline | **library growth**: commit each verified lemma → `growth/commit.js` |
-| `StateSerializer` | builder.js:1250 | pluggable serialization | telemetry snapshots, checkpoints → `core/serialize.js` |
-| `ConfigPatternValidator` | builder.js:1389 | config hygiene, magic-number detection | prompt/param hygiene; weird-constant detection → `core/guardrails.js` |
-| `EventStore` | builder.js:2922 | bounded event store, LRU maps, causal parent links | full causal trace of the agent → `sharpening/store.js` |
-| `CausalAnalysis` | builder.js:2993 | Markov transition matrix, failure predictors, bottlenecks, anomalies, critical path | **the RL feature layer** — which actions lead to FAIL → `sharpening/causal.js` |
-| `MetricsCalculator` | builder.js:3244 | rates, memory pressure, task success, perf profile | agent KPIs (success rate, tokens/proof) → `sharpening/metrics.js` |
-| `PatternDetection` | builder.js:3362 | memory-leak/degradation/cluster/spike detection | reward-hacking / loop-degeneracy monitors → `sharpening/patterns.js` |
-| `TelemetryExporter` | builder.js:3443 | Prometheus/Datadog/JSON, lazy telemetry tree | metrics feed for the RL loop and dashboards → `sharpening/exporter.js` |
-| `InvariantChecker` | builder.js:3720 | hermeticity, cache validity, incremental correctness | folded into the guardrail invariant spec → `core/guardrails.js` |
-| `TraceOrchestrator` | builder.js:3787 | facade wiring everything; `trace()`, `error()`, `performance()` | central event bus → `sharpening/bus.js` |
-| `ConflictDetector` | builder.js:4123 | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits → `growth/multibody.js` |
-| `Hasher` | builder.js:4211 | absorbing hash chains, integrity verify | statement pinning + tamper-evident audit → `core/hasher.js` |
-| `DocumentProcessor` / `LaTeXProcessor` | builder.js:4336/4748 | parse → sections → math blocks | digesting theorem statements and proof writeups → `digest/writeup.js` |
-| `HTML/PDF/MarkdownModality` | builder.js:5113+ | multi-format rendering with KaTeX | **digestion layer** output (human-readable proofs) → `digest/writeup.js` |
-| `ProcessLockManager` | builder.js:6470 | single-instance lock | one agent per workspace → `core/guardrails.js` |
-| `watch()` + dedup | builder.js:7179 | incremental rebuild on change | react to library/statement changes → `core/pullgraph.js` |
-| `QueryServer` | builder.js:7570 | signed, rate-limited TCP query API over telemetry | **"why is the agent failing" API** → `query/server.js` |
-| query.js formatters | query.js:141+ | semantic text formatters (transition matrix, predictors, critical path) | CLI/GUI explanations → `query/formatters.js` |
-| `QuerySession` + GUI | query.js:360+/674+ | interactive session, WebSocket dashboard | the operator cockpit → `query/gui/` |
+| Module | Role in KanForge | Why it exists |
+|---|---|---|
+| `core/lazy.js` | memoized thunk; `map`/`flatMap` monad | goals/lemmas are expensive; compute each at most once, only when forced (§4.6) |
+| `core/template.js` | strings materialize only on `toString()` | build prompts/tactic templates without paying for unneeded text |
+| `core/functor.js` | `map`/`extract` over "possibly-lazy" structures | work uniformly over results that may or may not be computed yet |
+| `core/pipeline.js` | Kleisli stage composition | the agent loop is a monadic effect stack; stages compose with traced events (§4.5) |
+| `core/context.js` | environment-passing | thread per-run config (budget, model, library) without globals |
+| `core/stream.js` | head-strict / tail-lazy streams | search frontiers, event streams, telemetry windows are unbounded but cheaply forced |
+| `core/fix.js`, `lazify` | coinductive fixed points; memoized proxied calls | self-referential search streams: an infinite frontier as a fixpoint (§4.1) |
+| `core/pullgraph.js` | pull-based dependency DAG; invalidation; serialize/deserialize; error boundaries | **the proof DAG** — lemmas as nodes, dependency edges, checkpoint/resume, error containment (§4.6) |
+| `core/promise.js` | async-thunk pull | async Lean round-trips without leaking partial state |
+| `core/cache.js` | lazy keyed cache | lemma/mathlib caches; compact-eager vs general-lazy split (§4.6) |
+| `core/hasher.js` | absorbing hash chains; integrity verify | statement pinning + tamper-evident audit trail |
+| `core/state.js` | straighten/unstraighten (tree ↔ script) | lossless dual representation — the backbone (§4.2) |
+| `core/patch.js` | typed patch envelope | candidates as reorderable/mergeable/discardable graph mutations |
+| `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
+| `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously (Giraud-axiom style, §4.10) |
+| `sharpening/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
+| `sharpening/store.js` | bounded event store, causal parent links | full causal trace of the agent |
+| `sharpening/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
+| `sharpening/metrics.js` | KPI calculator | agent KPIs: pass@1/k, tokens/lemma, reuse, guardrail trips |
+| `sharpening/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
+| `sharpening/exporter.js` | telemetry export | metrics feed for RL and dashboards |
+| `growth/commit.js` | commit-per-lemma | content-addressed library growth; statement hash in the message |
+| `growth/lemmaStore.js` | content-addressed lemma store | reproducible lemma reuse |
+| `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
+| `digest/writeup.js` | parse → render (Markdown/HTML/PDF, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
+| `query/server.js` | signed, rate-limited query API over telemetry | "why is the agent failing" API for humans |
+| `query/formatters.js` + `gui/` | semantic formatters; WebSocket dashboard | CLI/GUI explanations and the operator cockpit |
 
-### 3.1 Reuse strategy
-- **Port verbatim (style adjusted):** the pure machinery — `Lazy`, `LazyStream`, `PullPromise`,
-  `PullCache`, `Pipeline`, `fix`, `lazify`, `PullGraph`, `StateSerializer`. These have no domain
-  assumptions and full unit-test coverage in the seeded repo.
-- **Rebind the domain types:** "document/section" → "development/lemma"; "file hash" →
-  "statement hash"; "format pipeline" → "proof pipeline"; "build" → "prove-and-verify".
-- **Extend `TraceOrchestrator`'s event vocabulary** with proof events (canonical list in
-  `architecture.md` §4).
-- **Reuse `Hasher` + query.js's hash-chained logger** as the audit trail for reproducibility.
-- **Port, don't re-architect:** `ConflictDetector`, `ProcessLockManager`, `MetricsCalculator`,
-  `CausalAnalysis`, `PatternDetection` have behavior we need; we port them and add proof-specific
-  event types on top.
+### 3.1 Layering
+- **Foundations** — no proof-specific assumptions; generic lazy/pull primitives, fully
+  unit-tested: `lazy`, `stream`, `promise`, `cache`, `pipeline`, `context`, `fix`, `functor`,
+  `template`, `serialize`, `hasher`.
+- **Proof domain** — what makes this a *proof* refinery rather than a generic build system:
+  `pullgraph` (proof DAG), `state` (tree↔script), `patch`, `scheduler`, `guardrails`, plus
+  `lean/*`, `agent/*`, `blueprint/*`, `search/*`.
+- **Instrumentation, growth, presentation** — `sharpening/*`, `growth/*`, `query/*`,
+  `digest/*`, `bench/*`.
+
+Order of construction (which module lands in which phase) is `build_order.md`; precedence of
+contracts is `architecture.md`.
 
 ---
 
@@ -173,10 +173,10 @@ Detailed contracts: `architecture.md`. This is the shape.
                      Lean Backend: lean4web | REPL | CLI  (kernel = the only truth)
                           │
                           ▼
-                     Sharpening: EventStore/CausalAnalysis → reward → GRPO / search bias
+                     Sharpening: causal analysis → reward → GRPO / search bias
                           │
                           ▼
-                     Digestion (writeups) · LazyGit commits · Hasher audit · QueryServer
+                     Digestion (writeups) · per-lemma git commits · Hasher audit · query API
 ```
 
 ### 5.1 Component notes (behavior, not contracts)
@@ -185,7 +185,12 @@ Detailed contracts: `architecture.md`. This is the shape.
   carry a hash; mutation = `WEAKENED` + guardrail trip.
 - **`core/pullgraph.js`** — nodes are goals/lemmas, edges are typed dependency roles, `pull()`
   proves on demand, `serialize()` is the checkpoint. Error boundary per node:
-  `retry → repair → skip (never weaken)`.
+  `retry → repair → skip (never weaken)`. Node identity is normalized so alpha-equivalent /
+  definitionally-equal goals share a node (transposition merging; the adopted core of Wave2's
+  e-graph dedup — `architecture.md` §10).
+- **`core/patch.js` + `core/scheduler.js`** — candidates are typed patches (Wave2 §4; the
+  Lean-relevant operator subset: tactic / lemma / rewrite / replace), and dispatch is a
+  dependency-ordered scheduler with a 7-state lifecycle (Wave2 §7–8; `architecture.md` §2.6–2.7).
 - **`agent/agent.js`** — the six-stage Kleisli loop; every stage emits a traced event.
 - **`blueprint/skeleton.js` + `refine.js`** — the modality pair; stub statements are typechecked
   so the DAG is kernel-valid even before proving.
@@ -205,8 +210,10 @@ Detailed contracts: `architecture.md`. This is the shape.
 
 - **Benchmarks** (held-out splits): miniF2F (smoke), then PutnamBench, ProverBench, ProofNet,
   Lean Workbook, uproof. Rationale: saturation — `research_notes_2026.md` warning 3.
-- **Internal KPIs** (from `MetricsCalculator`): pass@1/k, tokens per verified lemma, attempts per
-  lemma, repair-loop efficiency, lemma reuse rate, guardrail trips.
+- **Internal KPIs** (`sharpening/metrics.js`): pass@1/k, tokens per verified lemma, attempts per
+  lemma, repair-loop efficiency, lemma reuse rate, guardrail trips. Plus the four Wave2 §15
+  dimensions (verification throughput, compilation efficiency, search efficiency, correctness
+  preservation) — `build_order.md` "Evaluation dimensions".
 - **Ablations** (log, don't pre-commit): best-of-N vs BFS vs MCGS; no-repair vs repair;
   no-RL vs GRPO; no-blueprint vs blueprint; no-premise-retrieval vs premise-locked. Each maps to
   a build-order phase.

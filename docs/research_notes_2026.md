@@ -63,7 +63,7 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
    spurious hypotheses.
 7. **Autoformalization is the bottleneck** — ALA: two-model orchestration lifts 22% → 52%.
 8. **Durable harnesses** — LeanMarathon: resumable transactions, parallel, checkpointed,
-   target-fidelity invariants. *(This is the closest prior art to our PullGraph port.)*
+    target-fidelity invariants. *(Closest prior art to our PullGraph design.)*
 9. **Assumption accounting** — Axiom's case studies: explicit-hypothesis discipline catches
    mis-stated or vacuous problems.
 10. **Multi-agent ensemble with critic** — AxiomProver: separate roles; critic reviews before
@@ -114,3 +114,13 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
 - AxiomProver (Axiom Math).
 - Repos: github.com/leanprover-community/repl, github.com/leanprover-community/lean4web,
   github.com/lean-dojo/LeanDojo, mathlib4.
+
+### 4.1 Implementation lineage (provenance, not design)
+
+The foundational lazy/pull primitives in `kanforge/core/` (`lazy`, `stream`, `promise`, `cache`,
+`pipeline`, `context`, `fix`, `functor`, `template`, `serialize`, `hasher`) and the
+telemetry/instrumentation modules (`sharpening/*`, `query/*`) are adaptations of the lazy
+build-system machinery in the `J0pari/Builder` repository (MIT licensed). The adaptation is a
+re-implementation under KanForge's domain (proofs, not documents); correctness is enforced by the
+unit-test suite, not by trust in the source. This provenance is recorded here — the evidence doc —
+so that `architecture.md` and `blueprint.md` can state contracts without external attribution.

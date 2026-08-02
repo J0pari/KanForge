@@ -14,7 +14,7 @@ designed so that each phase ships and is *measurable* before the next starts.
 
 ---
 
-## Phase 0 — Foundations: toolchain + port the pure core
+## Phase 0 — Foundations: toolchain + the pure core
 **Est. 1–2 weeks.** No AI yet.
 
 ### 0.1 Toolchain
@@ -26,19 +26,25 @@ designed so that each phase ships and is *measurable* before the next starts.
 - **Deliverable:** `lean/backend.js` adapter interface + all three implementations passing a
   round-trip test: `example : 1 + 1 = 2 := by omega`.
 
-### 0.2 Port the core (verbatim where possible)
-- Port `Lazy`, `LazyTemplate`, `LazyFunctor`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
-  `fix`, `PullPromise`, `PullCache`, `PullGraph`, `StateSerializer`, `Hasher` into `core/` with
+### 0.2 Build the core
+- Implement `Lazy`, `LazyTemplate`, `LazyFunctor`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
+  `fix`, `PullPromise`, `PullCache`, `PullGraph`, `StateSerializer`, `Hasher` in `core/` with
   unit tests (file mapping: `architecture.md` §1).
+- Add `core/patch.js` (typed patch envelope, `architecture.md` §2.7) and `core/scheduler.js`
+  (dependency-ordered dispatch, `architecture.md` §2.6) with unit tests.
 - **Deliverable:** `core/` with tests; `PullGraph.serialize/deserialize` round-trips a nontrivial
-  DAG; `invalidate()` transitively clears dependents.
+  DAG; `invalidate()` transitively clears dependents; scheduler verifies the locality property
+  (only descendants re-verify).
 
-### 0.3 Smoke REPL client
+### 0.3 Smoke REPL client + scheduler
 - `lean/backendRepl.js` spools JSON-lines; `lean/pin.js` provides `check()` + `extractGoals()` +
-  statement hashing.
+  statement hashing; `core/scheduler.js` dispatches statements to the pool dependency-ordered
+  (Wave2 §7–8): 7-state lifecycle, priority tuple, no cyclic dispatch, bounded concurrency,
+  timeout/kill-on-hang.
 - **Acceptance:** a script checks `n` statements concurrently, returns
-  `{status, goals, error}` for each, and reports per-check duration. CI runs on the pinned
-  toolchain.
+  `{status, goals, error}` for each, and reports per-check duration. Scheduler: no cyclic
+  dispatch, deterministic ordering, failed dep blocks dependents without dispatch. CI runs on the
+  pinned toolchain.
 
 ---
 
@@ -46,22 +52,27 @@ designed so that each phase ships and is *measurable* before the next starts.
 **Est. 2 weeks.**
 
 ### 1.1 Telemetry bus
-- Port `EventStore`, `TraceOrchestrator`, `MetricsCalculator`, `PatternDetection`,
-  `TelemetryExporter` into `sharpening/`, `Hasher` into `core/`, and the invariant wiring into
+- Implement `sharpening/bus.js` (central event bus), `store.js` (bounded event store, causal
+  parent links), `metrics.js` (KPI calculator), `patterns.js` (degeneracy monitors),
+  `exporter.js` (telemetry export), `core/hasher.js` (hash chains), and the invariant wiring in
   `core/guardrails.js` (names per `architecture.md` §1).
 - Add the proof event vocabulary (`architecture.md` §4).
 - **Deliverable:** every REPL call and LLM call is a traced causal event with `parent`.
 
 ### 1.2 LLM adapter + best-of-N
 - `agent/llm.js`: OpenAI/Anthropic-compatible + local (vLLM/Ollama) clients; streaming optional.
-- `search/bestofn.js`: for a goal, sample N candidate tactics, verify each, keep passers.
+- `search/bestofn.js`: for a goal, sample N candidate patches, verify each, keep passers. Pre-filter
+  stage before verification (Wave2 cost-model idea, CPU-side): drop known-failing patterns (causal
+  predictors), premise-lock violations, and near-duplicate patches.
 - **Acceptance (provisional):** on a 20-problem miniF2F smoke set with a frontier model,
-  pass@8 ≥ 1 problem; `MetricsCalculator.getMetrics()` reports success rate, tokens/attempt,
+  pass@8 ≥ 1 problem; `sharpening/metrics.js` reports success rate, tokens/attempt,
   attempts/lemma. Re-set the threshold from the first run.
+- **Search efficiency KPI:** compiler invocations eliminated by the pre-filter (Wave2 §15),
+  logged per run.
 
 ### 1.3 Query API (vertical slice)
-- Port `QueryServer`; add `/proof/*` endpoints returning events, transition matrix (even if
-  sparse), health (endpoints per `architecture.md` §8).
+- Implement `query/server.js` (signed, rate-limited) + `/proof/*` endpoints returning events,
+  transition matrix (even if sparse), health (endpoints per `architecture.md` §8).
 - **Acceptance:** `node kanforge/query/server.js health` and `/proof/events` work over TCP + GUI.
 
 ---
@@ -73,7 +84,7 @@ designed so that each phase ships and is *measurable* before the next starts.
 - Wire `PullGraph` to goals: node = goal/lemma with `statementHash`, `proof`, `deps`, cache.
 - Error boundaries per node: fallback policy `retry→repair→skip (never weaken)`.
 - **Deliverable:** proof of a theorem with 3+ lemmas produces a serializable forest; re-running
-  hits the cache (cache-hit stats via `MetricsCalculator`).
+  hits the cache (cache-hit stats via `sharpening/metrics.js`).
 
 ### 2.2 Resumability
 - `PullGraph.serialize()` to `kanforge/runs/<runId>/state.json` after every verified lemma
@@ -82,7 +93,7 @@ designed so that each phase ships and is *measurable* before the next starts.
   cached lemmas are not re-proved and dependents continue.
 
 ### 2.3 Git growth
-- Port `LazyGit`; `growth/commit.js` commits each verified lemma to a scratch repo with the
+- `growth/commit.js` commits each verified lemma to a scratch repo with the
   statement hash in the commit message.
 - **Acceptance:** after a run, `git log` shows one commit per verified lemma; `core/hasher.js`
   audit reproduces the run's event hash chain.
@@ -95,9 +106,11 @@ designed so that each phase ships and is *measurable* before the next starts.
 ### 3.1 Error-driven repair
 - `agent/repair.js`: on `VERIFY_FAIL`, classify error (syntax vs type vs missing-lemma), isolate
   the failing sub-goal, produce a structured repair prompt; low top-K (8) retries; recompose and
-  re-verify up to a budget.
+  re-verify up to a budget. Error telemetry is structured per Wave2 §11 —
+  `{ location, constraint, expected, actual, dependencies }` — mapping to the failed graph
+  neighborhood; verified regions stay immutable across repair rounds.
 - **Acceptance (provisional):** sample complexity on the miniF2F smoke set drops ≥ 5× vs Phase 1
-  best-of-N at equal accuracy (report both via `MetricsCalculator`). The ≥ 5× figure is a first
+  best-of-N at equal accuracy (report both via `sharpening/metrics.js`). The ≥ 5× figure is a first
   guess; the measured comparison is the fixed criterion.
 
 ### 3.2 Sub-proposition error feedback
@@ -126,7 +139,7 @@ designed so that each phase ships and is *measurable* before the next starts.
   is invariant across the run (statement set unchanged).
 
 ### 4.3 Digestion (first cut)
-- Port `DocumentProcessor` + `HTML/Markdown/PDFModality` into `digest/writeup.js`; render proof
+- Implement `digest/writeup.js`: parse statements/writeups → render proof
   writeups with KaTeX + per-lemma cards + assumption account + dependency graph.
 - **Acceptance:** each completed development produces readable `*.md` / `*.html` / `*.pdf`.
 
@@ -137,8 +150,9 @@ designed so that each phase ships and is *measurable* before the next starts.
 
 ### 5.1 BFS + MCGS with transposition merging
 - `search/bfs.js`, `search/mcgs.js`: best-first over proof states; merge nodes whose goals are
-  alpha-equivalent or definitionally equal (share value/visit stats). Reuse `PullGraph` edge
-  structure.
+  alpha-equivalent or definitionally equal (share value/visit stats). Node identity is normalized
+  in `pullgraph.js` (the adopted core of Wave2's e-graph dedup, `architecture.md` §10) so every
+  search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
   reported. Compare, then decide.
 
@@ -168,7 +182,7 @@ designed so that each phase ships and is *measurable* before the next starts.
 ### 6.2 Guardrails (anti-reward-hacking)
 - Enforce the invariant spec in `core/guardrails.js` (per `architecture.md` §2.5): pinned
   statement hash unchanged (no weakening); no `axiom`/`admit`/`unsafe` leakage; tactic-strength
-  caps; `checkHermetic` over runs. `PatternDetection` monitors degenerate loops.
+  caps; `checkHermetic` over runs. `sharpening/patterns.js` monitors degenerate loops.
 - **Acceptance:** *hacking probes* pass — when prompted to "prove" a weakened/trivial variant, the
   system refuses (guardrail trip logged, no reward).
 
@@ -197,7 +211,8 @@ designed so that each phase ships and is *measurable* before the next starts.
   human-reviewed and statement-pinned before search begins.
 
 ### 7.2 Multi-agent ensemble
-- Port `ConflictDetector` + `ProcessLockManager` into `growth/multibody.js`; run parallel prover
+- Implement `growth/multibody.js` (one-owner-per-region lemma edits, processing lanes) + the
+  single-agent-workspace lock in `core/guardrails.js`; run parallel prover
   agents over the corpus with single-owner lemma edits (AxiomProver-style: autoformalizer /
   conjecturer / prover / critic under `agent/roles/`).
 - **Acceptance:** 2+ agents run concurrently on disjoint targets without file conflicts; critic
@@ -210,7 +225,7 @@ designed so that each phase ships and is *measurable* before the next starts.
   git commits all consistent and queryable via `/integrity/verify`.
 
 ### 7.4 Ongoing RL loop
-- Fold every mission run back into 6.4; refresh reward/guardrails from `PatternDetection`
+- Fold every mission run back into 6.4; refresh reward/guardrails from `sharpening/patterns.js`
   findings. Long-horizon runs use resumable transactions throughout (Phase 2 machinery).
 
 ---
@@ -245,3 +260,13 @@ P0 (toolchain + core) ─▶ P1 (loop + telemetry) ─▶ P2 (state machine + re
    (measured, not asserted).
 3. Reward-hacking probes consistently fail (guardrails hold).
 4. Every result is reproducible: pinned toolchain + full event trace + hashes.
+
+## Evaluation dimensions (Wave2 §15)
+Independent of per-phase acceptance, the project is measured along four axes — the argument is
+that this is an *incremental verification system*, so the KPIs are verification-system KPIs:
+- **Verification throughput** — verified patches per compiler invocation.
+- **Compilation efficiency** — incremental rebuild time vs full recompilation (locality
+  property; scales with affected depth, not project size).
+- **Search efficiency** — compiler invocations eliminated by the pre-filter / dedup stages.
+- **Correctness preservation** — rate of interface violations and specification drift (guardrail
+  trips per lemma).

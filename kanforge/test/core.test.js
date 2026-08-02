@@ -14,6 +14,8 @@ import { PullPromise } from '../core/promise.js';
 import { PullCache } from '../core/cache.js';
 import { StateSerializer } from '../core/serialize.js';
 import { Hasher } from '../core/hasher.js';
+import { Patch, PATCH_OPS } from '../core/patch.js';
+import { Scheduler } from '../core/scheduler.js';
 
 test('Lazy memoizes and evaluates once', () => {
     let calls = 0;
@@ -255,4 +257,208 @@ test('Hasher.verify compares hashes', () => {
     const hash = h.contentHash('pin').value;
     assert.equal(h.verify(hash, hash), true);
     assert.equal(h.verify(hash, hash.slice(0, 10)), false);
+});
+
+test('Patch validates the typed envelope', () => {
+    const good = new Patch({ node: 'n1', op: 'tactic', replacement: 'simp' });
+    assert.equal(good.validate().ok, true);
+    assert.equal(good.validate().errors.length, 0);
+
+    const badOp = new Patch({ node: 'n1', op: 'magic' });
+    const r = badOp.validate();
+    assert.equal(r.ok, false);
+    assert.match(r.errors[0], /magic/);
+
+    const noNode = new Patch({ node: null, op: 'tactic' });
+    assert.equal(noNode.validate().ok, false);
+
+    const lemmaNoReplacement = new Patch({ node: 'n1', op: 'lemma' });
+    assert.equal(lemmaNoReplacement.validate().ok, false);
+});
+
+test('Patch.withMeta merges without mutating', () => {
+    const p = new Patch({ node: 'n1', op: 'rewrite', meta: { from: 'v1' } });
+    const p2 = p.withMeta({ confidence: 0.9 });
+    assert.equal(p2.meta.confidence, 0.9);
+    assert.equal(p2.meta.from, 'v1');
+    assert.equal(p.meta.confidence, undefined);
+});
+
+test('Patch ops are the Lean-relevant subset', () => {
+    assert.deepEqual(PATCH_OPS, ['tactic', 'lemma', 'rewrite', 'replace']);
+});
+
+test('Scheduler verifies a batch with deps gated before dependents', async () => {
+    const g = new PullGraph();
+    const order = [];
+    const check = async id => { order.push(id); return `ok:${id}`; };
+    g.register('a', () => 1);
+    g.register('b', () => 2);
+    g.register('c', () => 3);
+    g.dependsOn('c', 'b');
+    g.dependsOn('b', 'a');
+
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    s.enqueue(['c', 'b', 'a']); // shuffled order; dispatch must be dependency-ordered
+    const out = await s.run();
+
+    assert.equal(out.ok, true);
+    assert.deepEqual(order, ['a', 'b', 'c']);
+    assert.deepEqual([...out.results.keys()], ['a', 'b', 'c']);
+});
+
+test('Scheduler bounded concurrency runs leaves in parallel', async () => {
+    const g = new PullGraph();
+    const running = new Set();
+    let maxRunning = 0;
+    const check = async id => {
+        running.add(id);
+        maxRunning = Math.max(maxRunning, running.size);
+        await new Promise(r => setTimeout(r, 20));
+        running.delete(id);
+        return `ok:${id}`;
+    };
+    for (const id of ['x', 'y', 'z', 'w']) g.register(id, () => id);
+
+    const s = new Scheduler(g, { check, concurrency: 2 });
+    s.enqueue(['x', 'y', 'z', 'w']);
+    const out = await s.run();
+    assert.equal(out.ok, true);
+    assert.equal(maxRunning, 2);
+});
+
+test('Scheduler failed dependency blocks the dependent without dispatch', async () => {
+    const g = new PullGraph();
+    const checked = [];
+    const check = async id => {
+        checked.push(id);
+        if (id === 'a') throw new Error('a does not verify');
+        return 'ok';
+    };
+    g.register('a', () => 1);
+    g.register('b', () => 2);
+    g.dependsOn('b', 'a');
+
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    s.enqueue(['a', 'b']);
+    const out = await s.run();
+
+    assert.equal(out.ok, false);
+    assert.ok(out.failures.has('a'));
+    assert.ok(out.failures.has('b'));
+    assert.deepEqual(checked, ['a']); // b never dispatched
+    assert.equal(s.status('b'), 'FAILED');
+});
+
+test('Scheduler skips already-verified nodes and re-verifies only the affected subtree', async () => {
+    const g = new PullGraph();
+    const calls = { a: 0, b: 0, c: 0 };
+    const check = async id => { calls[id]++; return `ok:${id}`; };
+    g.register('a', () => 1);
+    g.register('b', () => 2);
+    g.register('c', () => 3);
+    g.dependsOn('b', 'a');
+    g.dependsOn('c', 'b');
+
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    s.enqueue(['a', 'b', 'c']);
+    const first = await s.run();
+    assert.equal(first.ok, true);
+    assert.deepEqual(calls, { a: 1, b: 1, c: 1 });
+
+    // Locality: invalidate only 'a' (local, non-transitive), re-run the batch.
+    // Only 'a' re-dispatches; 'b' and 'c' stay CACHED.
+    s.invalidate('a');
+    const second = await s.run(); // nothing enqueued: no-op
+    assert.equal(second.ok, true);
+    s.enqueue(['a', 'b', 'c']);
+    const third = await s.run();
+    assert.equal(third.ok, true);
+    assert.deepEqual(calls, { a: 2, b: 1, c: 1 });
+});
+
+test('Scheduler re-verifies after transitive graph invalidation', async () => {
+    const g = new PullGraph();
+    const calls = { a: 0, b: 0, c: 0 };
+    const check = async id => { calls[id]++; return `ok:${id}`; };
+    g.register('a', () => 1);
+    g.register('b', () => 2);
+    g.register('c', () => 3);
+    g.dependsOn('b', 'a');
+    g.dependsOn('c', 'b');
+
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    s.enqueue(['a', 'b', 'c']);
+    assert.equal((await s.run()).ok, true);
+    assert.deepEqual(calls, { a: 1, b: 1, c: 1 });
+
+    g.invalidate('a'); // transitive: a, b, c all dirty again
+    s.enqueue(['a', 'b', 'c']);
+    assert.equal((await s.run()).ok, true);
+    assert.deepEqual(calls, { a: 2, b: 2, c: 2 });
+});
+
+test('Scheduler detects unresolvable dependency cycles without dispatching into them', async () => {
+    const g = new PullGraph();
+    const checked = [];
+    const check = async id => { checked.push(id); return 'ok'; };
+    g.register('a', () => 1);
+    g.register('b', () => 2);
+    g.register('c', () => 3);
+    // Edges reference nodes; simulate a cycle by making b depend on c and c on b.
+    g.dependsOn('b', 'c');
+    g.dependsOn('c', 'b');
+
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    s.enqueue(['a', 'b', 'c']);
+    const out = await s.run();
+
+    // 'a' verifies; 'b' and 'c' are stuck in a cycle and must fail without dispatch.
+    assert.equal(out.ok, false);
+    assert.ok(out.results.has('a'));
+    assert.ok(out.failures.has('b'));
+    assert.ok(out.failures.has('c'));
+    assert.deepEqual(checked, ['a']);
+});
+
+test('Scheduler timeout kills a hanging check', async () => {
+    const g = new PullGraph();
+    g.register('hang', () => 1);
+    const s = new Scheduler(g, {
+        check: () => new Promise(() => {}),
+        concurrency: 1,
+        timeoutMs: 30
+    });
+    s.enqueue(['hang']);
+    const out = await s.run();
+    assert.equal(out.ok, false);
+    assert.match(out.failures.get('hang').message, /timeout/);
+});
+
+test('Scheduler priority override is honored for tie-breaking', async () => {
+    const g = new PullGraph();
+    const order = [];
+    const check = async id => { order.push(id); return 'ok'; };
+    for (const id of ['p', 'q', 'r']) g.register(id, () => id);
+
+    const s = new Scheduler(g, {
+        check,
+        concurrency: 1,
+        priority: id => ({ r: 0, q: 1, p: 2 })[id]
+    });
+    s.enqueue(['p', 'q', 'r']);
+    await s.run();
+    assert.deepEqual(order, ['r', 'q', 'p']);
+});
+
+test('Scheduler status lifecycle transitions', async () => {
+    const g = new PullGraph();
+    const check = async id => `ok:${id}`;
+    g.register('a', () => 1);
+    const s = new Scheduler(g, { check, concurrency: 1 });
+    assert.equal(s.status('a'), 'DIRTY');
+    s.enqueue(['a']);
+    assert.equal(s.status('a'), 'QUEUED');
+    await s.run();
+    assert.equal(s.status('a'), 'CACHED');
 });
