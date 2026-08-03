@@ -1,0 +1,105 @@
+{
+  "theorem": "example (a b c : Nat) (h : a < b) (h2 : b < c) : a < c := by sorry",
+  "statementHash": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+  "proofScript": "by\n  omega",
+  "assumptions": [],
+  "deps": [],
+  "events": [
+    {
+      "id": "evt_pq39lof",
+      "t": 1785789252047,
+      "type": "lemma_goal",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "statement": "example (a b c : Nat) (h : a < b) (h2 : b < c) : a < c := by sorry",
+      "parent": "evt_ub0iyu0"
+    },
+    {
+      "id": "evt_qifgouf",
+      "t": 1785789253935,
+      "type": "goal_selected",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "goalClassId": "goal_5107e1fb",
+      "goal": {
+        "type": "a < c",
+        "context": [
+          {
+            "name": "a",
+            "type": "Nat"
+          },
+          {
+            "name": "b",
+            "type": "Nat"
+          },
+          {
+            "name": "c",
+            "type": "Nat"
+          },
+          {
+            "name": "h",
+            "type": "a < b"
+          },
+          {
+            "name": "h2",
+            "type": "b < c"
+          }
+        ],
+        "pos": {
+          "line": 1,
+          "column": 61
+        },
+        "proofState": 0,
+        "sessionKey": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8"
+      },
+      "parent": "evt_pq39lof"
+    },
+    {
+      "id": "evt_px8zp36",
+      "t": 1785789253936,
+      "type": "tactic_proposed",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "goalClassId": "goal_5107e1fb",
+      "attempt": 1,
+      "tactic": "omega",
+      "parent": "evt_qifgouf"
+    },
+    {
+      "id": "evt_akonx58",
+      "t": 1785789253963,
+      "type": "tactic_applied",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "goalClassId": "goal_5107e1fb",
+      "tactic": "omega",
+      "parent": "evt_px8zp36"
+    },
+    {
+      "id": "evt_2umllej",
+      "t": 1785789253963,
+      "type": "goal_solved",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "goalClassId": "goal_5107e1fb",
+      "tactic": "omega",
+      "parent": "evt_akonx58"
+    },
+    {
+      "id": "evt_os501v3",
+      "t": 1785789255664,
+      "type": "lemma_verified",
+      "lemmaId": "150cb677d9a4b148ace677c49675435241ec9520867c3bd6a4b94a648d86e6b8",
+      "statement": "example (a b c : Nat) (h : a < b) (h2 : b < c) : a < c := by sorry",
+      "proofScript": "by\n  omega",
+      "ms": 3616,
+      "goalCount": 1,
+      "parent": "evt_2umllej"
+    }
+  ],
+  "metrics": {
+    "tacticsPerLemma": 1,
+    "tacticSuccessRate": 1
+  },
+  "guardrailReport": {
+    "ok": true,
+    "violations": []
+  },
+  "checkpoints": [],
+  "timestamp": "2026-08-03T20:34:15.667Z"
+}

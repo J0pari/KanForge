@@ -20,8 +20,8 @@ The build retires risk in the order it can sink the project, and phases are gate
 results*, not by code volume. The product scope is unchanged — this is ordering, not descoping.
 
 1. **The loop must prove real lemmas before the machinery grows** (P0–P1 gate). Nothing past P1
-   is justified until the minimal loop — PullGraph + scheduler + `backendRepl` + one LLM
-   adapter — has verified a lemma through the kernel and emitted a traced event. Every later
+   is justified until the minimal loop — PullGraph + scheduler + `backendRepl.applyTactic` + one LLM
+   adapter — has proved a lemma via tactic-level search (LLM proposes one tactic per call, backend applies it, subgoals are searched recursively) and emitted a traced event. Every later
    phase assumes this is already robust, so its machinery always has something to learn from.
 2. **Reliability before breadth** (P3–P5). The last-20% reliability work — repair, premise
    retrieval, autoformalization — is scheduled *after* the core loop and measured, because that
@@ -38,7 +38,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 
 | Review risk | Gate (phase) | Metric (decides) | Fail-forward |
 |---|---|---|---|
-| Loop never works | P0.3 + P1 | first-lemma time-to-verify (goal intake → kernel VERIFIED); pass@8 ≥ 1 / 20 miniF2F | fix loop reliability; do not add RL/query/digest |
+| Loop never works | P0.3 + P1 | first-lemma time-to-verify (goal intake → all goals solved via tactic search); ≥ 1/20 miniF2F fully proved | fix loop reliability; do not add RL/query/digest |
 | Backend brittle at scale | P0.3 resilience suite | worker restarts = hangs = JSON parse-failures = 0 in CI runs | harden the pool before raising concurrency |
 | Nothing to learn from | P3 / P5 on the smoke set | repair sample-complexity; search budget use | extend the loop, not the RL stack |
 | Pass@1 stalls RL | P6 start gate | pass@1 trajectory reported before P6 work begins | reorder: reliability work before RL |
@@ -58,8 +58,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   - `lean4web` is *deferred* — it ships only once a real instance is exercised end-to-end
     (no fabricated adapters).
 - **Deliverable:** `lean/backend.js` adapter interface + the implemented backends passing a
-  round-trip test against the real kernel: `example : 1 + 1 = 2 := by rfl` (CLI) and
-  `by omega` over the real `repl` binary.
+  round-trip test against the real kernel: `applyTactic(goal, "rfl")` returns zero subgoals (REPL) and
+  `check("example : 1 + 1 = 2 := by rfl")` returns verified (CLI).
 
 ### 0.2 Build the core
 - Implement `Lazy`, `LazyTemplate`, `LazyFunctor`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
@@ -88,26 +88,27 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 
 ---
 
-## Phase 1 — Single-step tactic loop + telemetry
+## Phase 1 — Tactic-level search loop + telemetry
 **Est. 2 weeks.**
 
 ### 1.1 Telemetry bus
-- Implement `sharpening/bus.js` (central event bus), `store.js` (bounded event store, causal
+- Implement `optimization/bus.js` (central event bus), `store.js` (bounded event store, causal
   parent links), `metrics.js` (KPI calculator), `patterns.js` (degeneracy monitors),
   `exporter.js` (telemetry export), `core/hasher.js` (hash chains), and the invariant wiring in
   `core/guardrails.js` (names per `architecture.md` §1).
 - Add the proof event vocabulary (`architecture.md` §4).
 - **Deliverable:** every REPL call and LLM call is a traced causal event with `parent`.
 
-### 1.2 LLM adapter + best-of-N
+### 1.2 LLM adapter + tactic-level search
 - `agent/llm.js`: OpenAI/Anthropic-compatible + local (vLLM/Ollama) clients; streaming optional.
-- `search/bestofn.js`: for a goal, sample N candidate patches, verify each, keep passers. Pre-filter
+- `agent/loop.js`: tactic-level search — for each lemma, the loop picks an unsolved goal, asks the LLM for ONE tactic, applies it via `backend.applyTactic`, gets subgoals, repeats. A proof is a tree of tactic applications. Each LLM call is bounded (10-30s), each kernel check is bounded (1-3s). No timeout possible by design.
+- `search/bestofn.js`: for a single goal, sample N tactic proposals, apply each, take first that succeeds. Pre-filter
   stage before verification (Wave2 cost-model idea, CPU-side): drop known-failing patterns (causal
   predictors), premise-lock violations, and near-duplicate patches.
 - **Acceptance (provisional):** on a 20-problem miniF2F smoke set with a frontier model,
-  pass@8 ≥ 1 problem; `sharpening/metrics.js` reports success rate, tokens/attempt,
-  attempts/lemma. Re-set the threshold from the first run.
-- **Search efficiency KPI:** compiler invocations eliminated by the pre-filter (Wave2 §15),
+   ≥ 1 problem fully proved (all goal equivalence classes in e-graph solved); `optimization/metrics.js` reports success rate, tokens/tactic,
+  tactics/lemma. Re-set the threshold from the first run.
+- **Search efficiency KPI:** kernel checks eliminated by the pre-filter (Wave2 §15),
   logged per run.
 
 ### 1.3 Query API (vertical slice)
@@ -121,10 +122,10 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 **Est. 1–2 weeks.**
 
 ### 2.1 Lemmas as graph nodes
-- Wire `PullGraph` to goals: node = goal/lemma with `statementHash`, `proof`, `deps`, cache.
+- Wire `PullGraph` to the two-level structure: Level 1 nodes = lemmas (with `statementHash`, `proof`, `deps`, cache); Level 2 nodes = goal equivalence classes within each lemma's e-graph (with `normalizedGoalType`, `normalizedContext`, `tactics`, `stats`, `parents`).
 - Error boundaries per node: fallback policy `retry→repair→skip (never weaken)`.
 - **Deliverable:** proof of a theorem with 3+ lemmas produces a serializable forest; re-running
-  hits the cache (cache-hit stats via `sharpening/metrics.js`).
+  hits the cache (cache-hit stats via `optimization/metrics.js`).
 
 ### 2.2 Resumability
 - `PullGraph.serialize()` to `kanforge/runs/<runId>/state.json` after every verified lemma
@@ -150,14 +151,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `{ location, constraint, expected, actual, dependencies }` — mapping to the failed graph
   neighborhood; verified regions stay immutable across repair rounds.
 - **Acceptance (provisional):** sample complexity on the miniF2F smoke set drops ≥ 5× vs Phase 1
-  best-of-N at equal accuracy (report both via `sharpening/metrics.js`). The ≥ 5× figure is a first
+  best-of-N at equal accuracy (report both via `optimization/metrics.js`). The ≥ 5× figure is a first
   guess; the measured comparison is the fixed criterion.
 
 ### 3.2 Sub-proposition error feedback
 - For conjunction/disjunction-heavy goals, align error text to the sub-proposition that failed
   (per the 2025 FOL literature).
 - **Acceptance:** repair success on the smoke set reported; failure cases logged to
-  `sharpening/store.js` for Phase 6 analysis.
+  `optimization/store.js` for Phase 6 analysis.
 
 ---
 
@@ -189,10 +190,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 **Est. 2 weeks.**
 
 ### 5.1 BFS + MCGS with transposition merging
-- `search/bfs.js`, `search/mcgs.js`: best-first over proof states; merge nodes whose goals are
-  alpha-equivalent or definitionally equal (share value/visit stats). Node identity is normalized
-  in `pullgraph.js` (the adopted core of Wave2's e-graph dedup, `architecture.md` §10) so every
-  search variant inherits the merge, not just MCGS.
+- `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; transposition merging is built into the e-graph structure — alpha-equivalent or definitionally-equal goals are already merged into equivalence classes with shared statistics (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10), so every search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
   reported. Compare, then decide.
 
@@ -202,14 +200,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance:** ablations logged (with/without each) on the smoke set.
 
 ### 5.3 Failure-aware search biasing
-- Use `sharpening/causal.js` `getFailurePredictors()` to penalize action sequences known to
+- Use `optimization/causal.js` `getFailurePredictors()` to penalize action sequences known to
   precede FAIL.
 - **Acceptance:** predictor list is non-empty and search budget spent on non-predictor branches
   increases.
 
 ---
 
-## Phase 6 — RL sharpening
+## Phase 6 — RL optimization
 **Est. 4 weeks.**
 
 > **P6 start gate:** P6 does not begin until the deterministic loop (P3–P5) is the measured
@@ -217,21 +215,21 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 > before starting; if pass@1 is near zero, the next iteration is loop reliability, not RL.
 
 ### 6.1 Reward function + GRPO
-- `sharpening/reward.js`: initial defaults per `architecture.md` §6 (tune, don't trust).
-- `sharpening/grpo.js`: GRPO over trajectories sampled by the search layer, with Lean
+- `optimization/reward.js`: initial defaults per `architecture.md` §6 (tune, don't trust).
+- `optimization/grpo.js`: GRPO over trajectories sampled by the search layer, with Lean
   verification as the outcome oracle.
 - **Deliverable:** training harness (single GPU fine-tune on Goedel-Prover-7B or
-  DeepSeek-Prover-V2-7B style base); W&B/Prometheus metric export via `sharpening/exporter.js`.
+  DeepSeek-Prover-V2-7B style base); W&B/Prometheus metric export via `optimization/exporter.js`.
 
 ### 6.2 Guardrails (anti-reward-hacking)
 - Enforce the invariant spec in `core/guardrails.js` (per `architecture.md` §2.5): pinned
   statement hash unchanged (no weakening); no `axiom`/`admit`/`unsafe` leakage; tactic-strength
-  caps; `checkHermetic` over runs. `sharpening/patterns.js` monitors degenerate loops.
+  caps; `checkHermetic` over runs. `optimization/patterns.js` monitors degenerate loops.
 - **Acceptance:** *hacking probes* pass — when prompted to "prove" a weakened/trivial variant, the
   system refuses (guardrail trip logged, no reward).
 
 ### 6.3 Test-time RL
-- `sharpening/ttrl.js`: on hard goals, allow the policy to adapt within the run from accumulated
+- `optimization/ttrl.js`: on hard goals, allow the policy to adapt within the run from accumulated
   verification outcomes (AlphaProof-style).
 - **Acceptance (provisional):** pass@1 improves on hard targets with adaptation vs frozen policy;
   sample efficiency reported.
@@ -269,7 +267,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   git commits all consistent and queryable via `/integrity/verify`.
 
 ### 7.4 Ongoing RL loop
-- Fold every mission run back into 6.4; refresh reward/guardrails from `sharpening/patterns.js`
+- Fold every mission run back into 6.4; refresh reward/guardrails from `optimization/patterns.js`
   findings. Long-horizon runs use resumable transactions throughout (Phase 2 machinery).
 
 ---
@@ -300,7 +298,7 @@ P0 (toolchain + core) ─▶ P1 (loop + telemetry) ─▶ P2 (state machine + re
 ## Definition of done (whole project)
 1. A target theorem entered in natural language yields: audited formal statement → blueprint DAG →
    verified Lean proof (no `sorry`) → readable writeup → commit + audit hash.
-2. The sharpening loop demonstrably improves pass@1 on held-out targets with the same model
+2. The optimization loop demonstrably improves pass@1 on held-out targets with the same model
    (measured, not asserted).
 3. Reward-hacking probes consistently fail (guardrails hold).
 4. Every result is reproducible: pinned toolchain + full event trace + hashes.

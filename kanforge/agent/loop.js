@@ -1,229 +1,389 @@
-// P1 minimal loop (build_order.md P1 gate): PullGraph + scheduler + backendRepl + one LLM adapter.
-// Node ids ARE statement hashes (pin.js), so re-adding the same lemma de-dupes to one graph node.
-// For each lemma, the loop: emits a goal event -> asks the LLM for a proof body -> verifies the
-// composed statement against the real kernel -> on error, feeds the message back and retries up to
-// `attemptsPerLemma`; the scheduler stops once `stopAfterFailures` nodes have failed.
-// No mocks: `backend` is a real Lean backend and `llm` a real LLMClient.
+// Tactic-level search loop (architecture.md §2.2, §4).
+//
+// Two-level structure:
+// - Level 1: Lemma DAG (dependency-ordered dispatch via scheduler)
+// - Level 2: Goal e-graph (equivalence classes of goals with transposition merging)
+//
+// For each lemma, the loop works backwards from the target goal to simpler subgoals:
+// 1. Pick the first open goal equivalence class from the e-graph (frontier order — the repl
+//    tactic API attacks the head goal of a proof state)
+// 2. Ask the LLM for ONE tactic
+// 3. Apply it via backend.applyTactic(goal, tactic) on the goal's proofState
+// 4. Get zero or more new goal equivalence classes
+// 5. Repeat until the root goal class is solved (lemma proved) or budget exhausted
+//
+// Commit gate (§2.5): the composed tree is straightened to a script, spliced into the pinned
+// statement (state.js buildProofSource), kernel-verified as a whole, and only then checked
+// against the HARD guardrails (pin unchanged, kernel accepted, no leakage). A violation marks
+// the node WEAKENED/FAILED and emits a guardrail trip — never a cached success.
+//
+// Telemetry (build_order.md P1.1): every event flows through optimization/bus.js into
+// optimization/store.js with id/t/parent — the parent chain is the causal DAG per lemma.
 
 import { Scheduler } from '../core/scheduler.js';
 import { PullGraph } from '../core/pullgraph.js';
-import { hashStatement } from '../lean/pin.js';
+import { hashStatement, makePin } from '../lean/pin.js';
+import { GoalEGraph } from '../core/egraph.js';
+import { straighten, buildProofSource } from '../core/state.js';
+import { Guardrails } from '../core/guardrails.js';
+import { EventBus } from '../optimization/bus.js';
+import { EventStore } from '../optimization/store.js';
+import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
+import { classifyError, buildRepairPrompt } from './repair.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const SYSTEM_PROMPT =
-    'You prove Lean 4 theorems. The user gives a Lean 4 statement ending in `:= by sorry`. ' +
-    'Reply with ONLY the proof body that fills the sorry (the tactics or term that follows `:=`). ' +
-    'No code fences, no commentary, no leading `by`. One or a few lines only — never explain. ' +
-    'Use Lean 4 syntax ONLY (tactics follow `:= by`); NEVER use `begin`/`end`/`case zero` or other ' +
-    'Lean 3 syntax. ' +
-    'The Lean environment is core + Std (NO Mathlib): the tactics available are `omega` (natural/' +
-    'integer linear arithmetic; try it FIRST for arithmetic goals), `simp`, `rw`, `rcases`, ' +
-    '`cases`, `constructor`, `by_cases`, `intro`, `exact`, `apply`, `refine`, `induction`, ' +
-    '`native_decide`, and library lemmas such as `Nat.le_of_lt`. Mathlib tactics (`ring`, ' +
-    '`linarith`, `norm_num`, `field_simp`, `positivity`, `tauto`) do NOT exist here.';
-
-// Pure: extract the proof body from LLM output. Tolerates fences, a leading `by`, and echoes of
-// the whole statement; when the model wraps its answer in a fenced block (even amid prose), the
-// LAST fenced block wins.
-export function parseProof(text) {
-    let s = String(text ?? '').trim();
-    const blocks = [...s.matchAll(/```(?:lean4|lean)?\s*\n?([\s\S]*?)```/g)].map(m => m[1].trim());
-    if (blocks.length) s = blocks[blocks.length - 1];
-    if (s.includes(':=')) {
-        s = s.slice(s.lastIndexOf(':=') + 2).trim();
-    }
-    s = s.replace(/^by\s+/, '').trim();
-    return s;
-}
-
-// Pure: fill the trailing `:= by sorry` of a stub statement with a proof body.
-export function composeProof(statement, proof) {
-    const body = parseProof(proof);
-    const stub = String(statement).trim();
-    if (!/:= by sorry\s*$/.test(stub)) {
-        throw new Error(`statement is not a sorry stub: ${stub}`);
-    }
-    return stub.replace(/:= by sorry\s*$/, `:= by ${body}`);
-}
-
-// Pure: the term variant — `:= <body>` instead of `:= by <body>`. Some models emit a proof
-// *term* (e.g. `Nat.add_comm a b`), which is not valid after `by`; verify both forms.
-export function composeProofTerm(statement, proof) {
-    const body = parseProof(proof);
-    const stub = String(statement).trim();
-    if (!/:= by sorry\s*$/.test(stub)) {
-        throw new Error(`statement is not a sorry stub: ${stub}`);
-    }
-    return stub.replace(/:= by sorry\s*$/, `:= ${body}`);
-}
-
-// Pure: build the chat messages for one (or a retry of) a lemma attempt. Rejected proofs are
-// echoed back truncated: re-feeding long prose made the model continue the essay instead of
-// producing a fresh proof body.
-export function proposeProofMessages(statement, feedback = [], context = null) {
-    let user = `Statement:\n${statement}\n\nFill the trailing \`sorry\` with a proof.`;
-    if (context) {
-        user += `\n\nContext:\n${String(context).trim()}`;
-    }
-    for (const fb of feedback) {
-        const echoed = String(fb.proof ?? '').replace(/\s+/g, ' ').trim();
-        const snippet = echoed.length > 200 ? `${echoed.slice(0, 200)}…` : echoed;
-        user += `\n\nPrevious attempt \`${snippet}\` was rejected by Lean:\n${fb.error}\nTry again.`;
-    }
-    return [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: user }
-    ];
-}
-
-export function buildLemmaId(statement) {
-    return hashStatement(statement);
-}
-
-export class MinimalLoop {
-    constructor({ backend, llm, concurrency = 2, attemptsPerLemma = 2, timeoutMs = 300_000, stopAfterFailures = 2, maxTokens = 512, onEvent = null } = {}) {
+export class TacticLoop {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null } = {}) {
         if (!backend || !llm) {
-            throw new Error('MinimalLoop requires a real backend and a real llm client');
+            throw new Error('TacticLoop requires a real backend and a real llm client');
         }
         this.backend = backend;
         this.llm = llm;
         this.concurrency = concurrency;
-        this.attemptsPerLemma = attemptsPerLemma;
-        this.timeoutMs = timeoutMs;
-        this.stopAfterFailures = stopAfterFailures;
-        this.maxTokens = maxTokens;
+        this.maxTacticsPerGoal = maxTacticsPerGoal;
+        this.maxGoalsPerLemma = maxGoalsPerLemma;
+        this.checkpointDir = checkpointDir;
+
+        this.bus = bus ?? new EventBus();
+        this.store = store ?? new EventStore();
+        if (!bus || !store) this.bus.subscribe(e => this.store.append(e));
         this.onEvent = onEvent ?? (e => console.log(JSON.stringify(e)));
 
         this.graph = new PullGraph();
-        this._age = new Map(); // nodeId -> insertion order (older = smaller = dispatched first)
-        this._context = new Map(); // nodeId -> optional per-lemma guidance/context for the LLM prompt
+        this.pins = new Map();          // lemmaId -> Pin (statement pinning, §3)
+        this._chains = new Map();       // lemmaId -> last event id (causal parent chain)
+        this._age = new Map();
         this._order = 0;
         this.llmCalls = 0;
-        this.verifyCalls = 0;
-        this._events = [];
+        this.tacticCalls = 0;
         this.lastOutcome = null;
+
+        // Create checkpoint directory if specified
+        if (this.checkpointDir) {
+            fs.mkdirSync(this.checkpointDir, { recursive: true });
+        }
     }
 
-    addLemma(statement, { deps = [], context = null } = {}) {
-        const id = buildLemmaId(statement);
+    addLemma(statement, { deps = [] } = {}) {
+        const id = hashStatement(statement);
         if (!this.graph.nodes.has(id)) {
             this._age.set(id, this._order++);
             this.graph.register(id, () => statement);
+            this.pins.set(id, makePin(statement, this.backend.pin?.() ?? {}));
         }
-        if (context) this._context.set(id, context);
         for (const dep of deps) {
-            const depId = buildLemmaId(dep);
+            const depId = hashStatement(dep);
             if (!this.graph.nodes.has(depId)) {
                 this._age.set(depId, this._order++);
                 this.graph.register(depId, () => dep);
+                this.pins.set(depId, makePin(dep, this.backend.pin?.() ?? {}));
             }
             this.graph.dependsOn(id, depId);
         }
         return id;
     }
 
-    // Oldest-sorry priority: the earliest-added lemma (lowest insertion index) dispatches first.
     priority(nodeId) {
         return this._age.get(nodeId) ?? Number.MAX_SAFE_INTEGER;
     }
 
-    _emit(event) {
-        this._events.push(event);
-        this.onEvent?.(event);
+    _emit(event, lemmaId = null) {
+        const enriched = this.bus.emit({
+            ...event,
+            parent: lemmaId ? (this._chains.get(lemmaId) ?? null) : null
+        });
+        if (lemmaId) this._chains.set(lemmaId, enriched.id);
+        this.onEvent?.(enriched);
+        return enriched;
     }
 
-    async _tryForms(nodeId, attempt, proof, statement) {
-        // A proof body may be a tactic script (`:= by ...`) or a proof term (`:= ...`); try the
-        // likely form first so the common case costs ONE kernel check, falling back to the other.
-        const tactic = { form: 'tactic', src: composeProof(statement, proof) };
-        const term = { form: 'term', src: composeProofTerm(statement, proof) };
-        const forms = proofLooksLikeTactic(proof) ? [tactic, term] : [term, tactic];
-        let last;
-        for (const c of forms) {
-            if (last && c.src === last.src) continue;
-            this.verifyCalls++;
-            const res = await this.backend.check(c.src);
-            this._emit({ type: 'lemma_attempt', nodeId, attempt, proof, status: res.status, form: c.form });
-            if (res.status === 'verified' && !res.goals.length) {
-                return { ok: true, form: c.form };
-            }
-            last = { src: c.src, res };
-        }
-        return { ok: false, res: last?.res ?? { status: 'error', error: { message: 'no form accepted' } } };
-    }
-
-    async _proveStatement(nodeId, statement, signal = null) {
-        this._emit({ type: 'lemma_goal', nodeId, statement });
+    async _proveLemma(lemmaId, statement, signal = null) {
+        this._emit({ type: 'lemma_goal', lemmaId, statement }, lemmaId);
         const start = Date.now();
-        const feedback = [];
-        let lastError = 'no attempts made';
-        let attempts = 0;
-        const context = this._context.get(nodeId) ?? null;
 
-        for (let attempt = 1; attempt <= this.attemptsPerLemma; attempt++) {
-            attempts = attempt;
-            if (signal?.aborted) break;
-            let proof = null;
-            try {
-                this.llmCalls++;
-                const out = await this.llm.complete(
-                    proposeProofMessages(statement, feedback, context),
-                    { maxTokens: this.maxTokens, signal }
-                );
-                proof = parseProof(out.text);
-            } catch (err) {
-                lastError = `llm call failed: ${err?.message ?? err}`;
-                if (signal?.aborted) break; // scheduler timed the lemma out: no more attempts
-                this._emit({ type: 'lemma_llm_error', nodeId, attempt, error: lastError });
-                feedback.push({ proof: '<llm-error>', error: lastError });
-                continue;
+        const fail = (error, extra = {}) => {
+            const ms = Date.now() - start;
+            this._emit({ type: 'lemma_failed', lemmaId, statement, ms, error, ...extra }, lemmaId);
+            throw new Error(`lemma ${lemmaId} failed: ${error}`);
+        };
+
+        try {
+            // Level 2: Goal e-graph. extractGoals opens the backend proof session.
+            const egraph = new GoalEGraph();
+            const rootGoals = await this.backend.extractGoals(statement);
+            if (!rootGoals || rootGoals.length === 0) {
+                fail('could not extract root goal');
             }
 
-            const attemptResult = await this._tryForms(nodeId, attempt, proof, statement);
-            if (attemptResult.ok) {
-                const ms = Date.now() - start;
-                this._emit({ type: 'lemma_verified', nodeId, statement, proof, attempts: attempt, ms, form: attemptResult.form });
-                return { statement, proof, attempts: attempt, ms };
+            const rootId = egraph.addGoal(rootGoals[0]);
+            egraph.setRoot(rootGoals[0]);
+
+            let goalCount = 1;
+            while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
+                if (signal?.aborted) break;
+
+                // Frontier order: the first open class is the head goal of the current
+                // proof state; its freshest concrete goal carries the live proofState.
+                const openGoals = egraph.getOpenGoals();
+                if (openGoals.length === 0) break;
+
+                const currentGoalClass = openGoals[0];
+                const goal = egraph.currentGoal(currentGoalClass.id);
+                this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
+
+                let solved = false;
+                let lastResult = null;
+                for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
+                    if (signal?.aborted) break;
+
+                    this.llmCalls++;
+                    const tactic = await this._proposeTactic(goal, attempt);
+                    if (!tactic) {
+                        this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
+                        continue;
+                    }
+
+                    this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic }, lemmaId);
+
+                    this.tacticCalls++;
+                    const result = await this.backend.applyTactic(goal, tactic);
+                    lastResult = result;
+
+                    if (result.status === 'error') {
+                        this._emit({ type: 'tactic_failed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' }, lemmaId);
+                        continue;
+                    }
+
+                    egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
+                    this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
+                    for (const subgoal of result.newGoals) {
+                        this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
+                    }
+
+                    if (result.newGoals.length === 0) {
+                        solved = true;
+                        this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
+                        break;
+                    }
+
+                    solved = true; // decomposed into subgoals; they join the frontier
+                    break;
+                }
+
+                if (!solved) {
+                    // P3.1: Attempt repair before giving up
+                    const lastError = lastResult?.error?.message ?? 'unknown error';
+                    const errorType = classifyError(lastError);
+                    this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
+
+                    const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
+                    const repairedTactic = await this._proposeTacticFromPrompt(repairPrompt);
+
+                    if (repairedTactic) {
+                        this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+
+                        this.tacticCalls++;
+                        const repairResult = await this.backend.applyTactic(goal, repairedTactic);
+
+                        if (repairResult.status === 'ok') {
+                            egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
+                            this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                            for (const subgoal of repairResult.newGoals) {
+                                this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
+                            }
+                            solved = true;
+                            lastResult = repairResult;
+
+                            if (repairResult.newGoals.length === 0) {
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                            }
+                        } else {
+                            this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
+                        }
+                    }
+
+                    if (!solved) {
+                        egraph.markFailed(currentGoalClass.id);
+                        fail(`could not solve goal class ${currentGoalClass.id} after ${this.maxTacticsPerGoal} attempts + repair`);
+                    }
+                }
+
+                goalCount += lastResult?.newGoals?.length ?? 0;
             }
-            lastError = attemptResult.res?.error?.message ?? 'unproven goals remain';
-            feedback.push({ proof, error: lastError });
+
+            if (!egraph.isRootSolved()) {
+                fail(`root goal not solved after ${goalCount} goals`);
+            }
+
+            // Compose the proof tree, straighten to a script, splice into the pinned
+            // statement, and kernel-verify the WHOLE source (§2.4, §2.5 invariant 2).
+            const proofTree = egraph.extractProof();
+            if (!proofTree) {
+                fail('proof extraction failed');
+            }
+            const { script: proofScript } = straighten(proofTree);
+            const source = buildProofSource(statement, proofScript);
+            const verification = await this.backend.verifyProof(source, lemmaId);
+
+            // HARD guardrail gate at commit (§2.5): pin unchanged, kernel accepted, no leakage.
+            const commit = Guardrails.assertLemmaCommit({
+                pin: this.pins.get(lemmaId),
+                statement,
+                proofScript,
+                verification
+            });
+            if (!commit.ok) {
+                for (const v of commit.violations) {
+                    if (v.type === 'STATEMENT_WEAKENED') {
+                        this._emit({ type: 'statement_weakened', lemmaId, violation: v }, lemmaId);
+                    }
+                    this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                }
+                fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`);
+            }
+
+            const ms = Date.now() - start;
+            this._emit({ type: 'lemma_verified', lemmaId, statement, proofScript, ms, goalCount }, lemmaId);
+
+            const result = { statement, proofScript, verifiedAt: new Date().toISOString(), goalCount, ms };
+
+            // Checkpoint: serialize graph state after each verified lemma (P2.2 resumability)
+            // Mark node as cached before serializing so it's included in the checkpoint
+            if (this.checkpointDir) {
+                const node = this.graph.nodes.get(lemmaId);
+                if (node) {
+                    node.cached = true;
+                    node.value = result;
+                }
+                const checkpointPath = path.join(this.checkpointDir, 'state.json');
+                const serialized = this.graph.serialize();
+                fs.writeFileSync(checkpointPath, JSON.stringify(serialized, null, 2));
+                this._emit({ type: 'checkpoint_written', lemmaId, checkpointPath }, lemmaId);
+            }
+
+            return result;
+        } finally {
+            // Release the leased proof-session worker back to the backend pool.
+            this.backend.endLemma?.(lemmaId);
         }
+    }
 
-        // Every dispatched lemma MUST reach a terminal event — a lemma abandoned by the
-        // scheduler's kill-on-hang timeout is still accounted for (attempts = completed attempts),
-        // never silently dropped from the run's summary.
-        if (signal?.aborted && attempts > 0) lastError = `lemma timed out (aborted after ${attempts} attempts): ${lastError}`;
-        const ms = Date.now() - start;
-        this._emit({ type: 'lemma_failed', nodeId, statement, attempts, ms, lastError });
-        throw new Error(`lemma ${nodeId} failed after ${attempts} attempts: ${lastError}`);
+    async _proposeTactic(goal, attempt) {
+        const prompt = this._buildTacticPrompt(goal, attempt);
+        return this._proposeTacticFromPrompt(prompt);
+    }
+
+    async _proposeTacticFromPrompt(prompt) {
+        try {
+            const response = await this.llm.complete(prompt);
+            let tactic = response.text?.trim();
+            if (tactic) {
+                tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+                tactic = tactic.replace(/^`|`$/g, '').trim();
+            }
+            return tactic || null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    _buildTacticPrompt(goal, attempt) {
+        const contextStr = goal.context?.length > 0
+            ? `\nContext:\n${goal.context.map(c => `  ${c.name} : ${c.type}`).join('\n')}`
+            : '';
+
+        return [
+            {
+                role: 'system',
+                content: 'You are a Lean 4 proof assistant. Given a goal, propose ONE tactic to make progress. Reply with ONLY the tactic, no explanation or markdown formatting. Examples: "intro h", "omega", "simp [h]", "apply foo", "cases h".'
+            },
+            {
+                role: 'user',
+                content: `Goal:\n  ${goal.type}${contextStr}\n\nPropose ONE tactic (attempt ${attempt}/${this.maxTacticsPerGoal}):`
+            }
+        ];
     }
 
     async proveAll() {
         const scheduler = new Scheduler(this.graph, {
-            check: async (id, signal) => this._proveStatement(id, this.graph.nodes.get(id).computation.value, signal),
+            check: async (id, signal) => this._proveLemma(id, this.graph.nodes.get(id).computation.value, signal),
             concurrency: this.concurrency,
-            timeoutMs: this.timeoutMs,
+            timeoutMs: null, // No timeout: each operation is bounded
             priority: id => this.priority(id),
-            maxFailures: this.stopAfterFailures ?? null,
-            onProgress: info => this._emit({ type: `scheduler_${info.stage}`, ...info })
+            maxFailures: null,
+            onProgress: info => this._emit({ type: `scheduler_${info.stage}`, ...info }, info.nodeId)
         });
 
         scheduler.enqueue([...this.graph.nodes.keys()]);
         const outcome = await scheduler.run();
         this.lastOutcome = outcome;
         this._emit({ type: 'loop_finished', ok: outcome.ok, stopped: outcome.stopped, failures: [...outcome.failures.keys()] });
+
+        // Generate audit packs for verified lemmas
+        if (outcome.ok || outcome.results.size > 0) {
+            const runId = `run_${Date.now()}`;
+            const runsDir = path.join(process.cwd(), 'runs', runId);
+
+            for (const [lemmaId, result] of outcome.results) {
+                const statement = this.graph.nodes.get(lemmaId).computation.value;
+                const deps = [...(this.graph.edges?.get(lemmaId) ?? [])];
+                const lemmaEvents = this.store.events.filter(e => e.lemmaId === lemmaId);
+
+                const pack = assembleAuditPack({
+                    theorem: statement,
+                    statementHash: lemmaId,
+                    proofScript: result.proofScript,
+                    deps,
+                    events: lemmaEvents,
+                    metrics: {
+                        tacticsPerLemma: result.goalCount,
+                        tacticSuccessRate: lemmaEvents.filter(e => e.type === 'tactic_applied').length / Math.max(1, lemmaEvents.filter(e => e.type === 'tactic_proposed').length)
+                    },
+                    guardrailReport: { ok: true, violations: [] }
+                });
+
+                const lemmaDir = path.join(runsDir, lemmaId.slice(0, 8));
+                writeAuditPack(pack, lemmaDir);
+            }
+
+            this._emit({ type: 'audit_packs_written', runId, runsDir, count: outcome.results.size });
+        }
+
         return outcome;
     }
 
     events() {
-        return [...this._events];
+        return [...this.store.events];
+    }
+
+    // Resume from checkpoint (P2.2): load serialized graph state, mark cached lemmas as CACHED
+    resume(checkpointPath) {
+        if (!fs.existsSync(checkpointPath)) {
+            throw new Error(`checkpoint not found: ${checkpointPath}`);
+        }
+        const serialized = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+
+        // Restore cached nodes
+        for (const obj of serialized.objects) {
+            const node = this.graph.nodes.get(obj.id);
+            if (node) {
+                node.cached = true;
+                node.value = obj.value;
+                node.pullCount = obj.pullCount;
+            }
+        }
+
+        this._emit({ type: 'resumed_from_checkpoint', checkpointPath, cachedCount: serialized.objects.length });
+        return serialized.objects.length;
     }
 
     getInfos() {
         return {
             lemmas: this.graph.nodes.size,
             llmCalls: this.llmCalls,
-            verifyCalls: this.verifyCalls,
-            events: this._events.length,
+            tacticCalls: this.tacticCalls,
+            events: this.store.events.length,
             backend: this.backend.getInfos?.() ?? null
         };
     }

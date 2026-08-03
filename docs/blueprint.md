@@ -22,8 +22,8 @@ frame, not a claim about the mathematics of the agent.)
 A general agentic loop that:
 1. takes a target theorem (natural language or Lean statement),
 2. **autoformalizes** it into Lean 4,
-3. **decomposes** it into an audited blueprint DAG of lemmas,
-4. **proves** the DAG bottom-up with an LLM proposing tactics/lemmas,
+3. **decomposes** it into an audited blueprint DAG of lemmas (Level 1),
+4. **proves** the DAG bottom-up: for each lemma, a tactic-level search (Level 2) works backwards from the goal to simpler subgoals — proposes ONE tactic per LLM call, applies it to decompose the goal, gets simpler subgoals, repeats until all subgoals are trivially solved,
 5. **verifies** every step with the Lean kernel (lean4web / REPL / CLI),
 6. **repairs** failures using Lean's error feedback,
 7. **sharpens** itself — telemetry → causal analysis → RL signal → better search,
@@ -67,7 +67,7 @@ section only argues the shape.
 | `core/context.js` | environment-passing | thread per-run config (budget, model, library) without globals |
 | `core/stream.js` | head-strict / tail-lazy streams | search frontiers, event streams, telemetry windows are unbounded but cheaply forced |
 | `core/fix.js`, `lazify` | coinductive fixed points; memoized proxied calls | self-referential search streams: an infinite frontier as a fixpoint (§4.1) |
-| `core/pullgraph.js` | pull-based dependency DAG; invalidation; serialize/deserialize; error boundaries | **the proof DAG** — lemmas as nodes, dependency edges, checkpoint/resume, error containment (§4.6) |
+| `core/pullgraph.js` | pull-based dependency DAG; invalidation; serialize/deserialize; error boundaries | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's e-graph); checkpoint/resume, error containment (§4.6) |
 | `core/promise.js` | async-thunk pull | async Lean round-trips without leaking partial state |
 | `core/cache.js` | lazy keyed cache | lemma/mathlib caches; compact-eager vs general-lazy split (§4.6) |
 | `core/hasher.js` | absorbing hash chains; integrity verify | statement pinning + tamper-evident audit trail |
@@ -75,12 +75,12 @@ section only argues the shape.
 | `core/patch.js` | typed patch envelope | candidates as reorderable/mergeable/discardable graph mutations |
 | `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
 | `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously (Giraud-axiom style, §4.10) |
-| `sharpening/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
-| `sharpening/store.js` | bounded event store, causal parent links | full causal trace of the agent |
-| `sharpening/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
-| `sharpening/metrics.js` | KPI calculator | agent KPIs: pass@1/k, tokens/lemma, reuse, guardrail trips |
-| `sharpening/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
-| `sharpening/exporter.js` | telemetry export | metrics feed for RL and dashboards |
+| `optimization/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
+| `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
+| `optimization/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
+| `optimization/metrics.js` | KPI calculator | agent KPIs: pass@1/k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, reuse, guardrail trips |
+| `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
+| `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards |
 | `growth/commit.js` | commit-per-lemma | content-addressed library growth; statement hash in the message |
 | `growth/lemmaStore.js` | content-addressed lemma store | reproducible lemma reuse |
 | `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
@@ -95,7 +95,7 @@ section only argues the shape.
 - **Proof domain** — what makes this a *proof* refinery rather than a generic build system:
   `pullgraph` (proof DAG), `state` (tree↔script), `patch`, `scheduler`, `guardrails`, plus
   `lean/*`, `agent/*`, `blueprint/*`, `search/*`.
-- **Instrumentation, growth, presentation** — `sharpening/*`, `growth/*`, `query/*`,
+- **Instrumentation, growth, presentation** — `optimization/*`, `growth/*`, `query/*`,
   `digest/*`, `bench/*`.
 
 Order of construction (which module lands in which phase) is `build_order.md`; precedence of
@@ -200,18 +200,18 @@ Detailed contracts: `architecture.md`. This is the shape.
 - **`lean/backend.js`** — adapter interface + three implementations. Default for RL is the REPL
   over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes every checked goal
   carry a hash; mutation = `WEAKENED` + guardrail trip.
-- **`core/pullgraph.js`** — nodes are goals/lemmas, edges are typed dependency roles, `pull()`
+- **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); `pull()`
   proves on demand, `serialize()` is the checkpoint. Error boundary per node:
   `retry → repair → skip (never weaken)`. Node identity is normalized so alpha-equivalent /
-  definitionally-equal goals share a node (transposition merging; the adopted core of Wave2's
-  e-graph dedup — `architecture.md` §10).
+  definitionally-equal goals share an equivalence class (transposition merging; the adopted core of Wave2's
+  e-graph structure — `architecture.md` §2.2, §10).
 - **`core/patch.js` + `core/scheduler.js`** — candidates are typed patches (Wave2 §4; the
   Lean-relevant operator subset: tactic / lemma / rewrite / replace), and dispatch is a
   dependency-ordered scheduler with a 7-state lifecycle (Wave2 §7–8; `architecture.md` §2.6–2.7).
 - **`agent/agent.js`** — the six-stage Kleisli loop; every stage emits a traced event.
 - **`blueprint/skeleton.js` + `refine.js`** — the modality pair; stub statements are typechecked
   so the DAG is kernel-valid even before proving.
-- **`sharpening/*`** — `causal.js` produces the transition matrix, failure predictors,
+- **`optimization/*`** — `causal.js` produces the transition matrix, failure predictors,
   bottlenecks, critical path. These are the RL features and the "why is it failing" answers.
 - **`search/*`** — best-of-N baseline, BFS, MCGS with transposition merging, repulsion,
   premise retrieval.
@@ -227,8 +227,7 @@ Detailed contracts: `architecture.md`. This is the shape.
 
 - **Benchmarks** (held-out splits): miniF2F (smoke), then PutnamBench, ProverBench, ProofNet,
   Lean Workbook, uproof. Rationale: saturation — `research_notes_2026.md` warning 3.
-- **Internal KPIs** (`sharpening/metrics.js`): pass@1/k, tokens per verified lemma, attempts per
-  lemma, repair-loop efficiency, lemma reuse rate, guardrail trips. Plus the four Wave2 §15
+- **Internal KPIs** (`optimization/metrics.js`): pass@1/k (lemma-level), tactics per verified lemma, tactics per goal, tactic success rate, repair-loop efficiency, lemma reuse rate, guardrail trips. Plus the four Wave2 §15
   dimensions (verification throughput, compilation efficiency, search efficiency, correctness
   preservation) — `build_order.md` "Evaluation dimensions".
 - **Ablations** (log, don't pre-commit): best-of-N vs BFS vs MCGS; no-repair vs repair;

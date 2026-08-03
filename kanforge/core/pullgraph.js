@@ -150,6 +150,48 @@ export class PullGraph {
         this.progressCallback = callback;
     }
 
+    // Critical-path extraction (architecture.md §2.3): the ancestor cone of targetId —
+    // every node the target transitively depends on, with the edges among them.
+    subgraph(targetId) {
+        const ids = new Set();
+        const stack = [targetId];
+        while (stack.length) {
+            const id = stack.pop();
+            if (ids.has(id) || !this.objects.has(id)) continue;
+            ids.add(id);
+            for (const dep of this.edges?.get(id) ?? []) stack.push(dep);
+        }
+        const edges = {};
+        for (const id of ids) {
+            const deps = [...(this.edges?.get(id) ?? [])].filter(d => ids.has(d));
+            if (deps.length) edges[id] = deps;
+        }
+        return { root: targetId, ids: [...ids], edges };
+    }
+
+    // Blueprint diff between runs (architecture.md §2.3): nodes added/removed/changed
+    // relative to another graph (cached values compared structurally).
+    diff(other) {
+        const added = [];
+        const removed = [];
+        const changed = [];
+        for (const id of this.objects.keys()) {
+            if (!other.objects.has(id)) added.push(id);
+        }
+        for (const id of other.objects.keys()) {
+            if (!this.objects.has(id)) removed.push(id);
+        }
+        for (const [id, node] of this.objects) {
+            const otherNode = other.objects.get(id);
+            if (!otherNode) continue;
+            if (node.cached !== otherNode.cached ||
+                JSON.stringify(node.value ?? null) !== JSON.stringify(otherNode.value ?? null)) {
+                changed.push(id);
+            }
+        }
+        return { added, removed, changed };
+    }
+
     setProgressInterval(n) {
         this.progressInterval = n;
     }

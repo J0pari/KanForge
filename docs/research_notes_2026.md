@@ -49,14 +49,16 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
 
 ## 2. The ten tricks (design constraints, not prescriptions)
 
+All tricks below apply at the **tactic level** (Level 2, `architecture.md` §2.2): the LLM proposes one tactic per call, the backend applies it to a goal and returns subgoals. A proof is a tree of tactic applications extracted from the e-graph. The lemma DAG (Level 1) is the dependency structure; the goal e-graph (Level 2) is where the intelligence lives.
+
 1. **Verifier-as-reward RL** — AlphaProof, Seed-Prover, DeepSeek-V2, FormaRL, Kimina converge on
-   GRPO/VAPO/expert-iteration with binary kernel verification + shaped progress.
+   GRPO/VAPO/expert-iteration with binary kernel verification + shaped progress. Applied at tactic level: each tactic application is a reward signal.
 2. **Sketch → refine** — Seed-Prover (sketch model) and LeanMarathon (audited blueprint DAG):
    produce the lemma skeleton first, prove bottom-up.
-3. **Repair loops beat raw sampling** — APOLLO: isolate the failing sub-lemma, retry at low
-   top-K, recompose, re-verify. 10–100× sample savings claimed.
+3. **Repair loops beat raw sampling** — APOLLO: isolate the failing subgoal, retry at low
+   top-K with a different tactic, recompose, re-verify. 10–100× sample savings claimed. Applied at tactic level: when a tactic fails on a goal, repair proposes an alternative tactic for the same goal.
 4. **Graph search with state merging** — Aristotle MCGS, AlphaProof Nexus: merge
-   transposition-equivalent goals (same context, def-eq) so they share a node and statistics.
+   transposition-equivalent goals (same context, def-eq) so they share an equivalence class and statistics. Applied at Level 2: the goal e-graph structure (`architecture.md` §2.2) automatically merges equivalent goals, enabling efficient search.
 5. **Diversity mechanisms** — Goedel repulsion; low top-K independent attempts; AlphaProof
    test-time RL on hard goals.
 6. **Premise retrieval** — LeanDojo-style relevance scoring; "premise-locked" search removes
@@ -90,8 +92,8 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
    favors *low* sample complexity (repair loops, premise pruning, dedup, state merging).
 7. **Data contamination** — competition corpora leak into pretraining. Maintain clean held-out
    splits.
-8. **Strategy starvation** — fixed tactics fail on sensitive deductive chains. Keep strategy
-   diversity + sub-proposition-level error feedback.
+8. **Strategy starvation** — fixed tactics fail on sensitive deductive chains. Keep tactic
+   diversity + goal-level error feedback. When a tactic fails on a goal, the repair loop should propose fundamentally different tactics, not minor variations.
 9. **Digestion is still human** — formal proofs are unreadable. Ship prose translations,
    blueprints, assumption accounts.
 10. **Mathlib dependency drift** — pin toolchain + `lakefile.lean` per workspace; isolate builds.
@@ -119,7 +121,7 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
 
 The foundational lazy/pull primitives in `kanforge/core/` (`lazy`, `stream`, `promise`, `cache`,
 `pipeline`, `context`, `fix`, `functor`, `template`, `serialize`, `hasher`) and the
-telemetry/instrumentation modules (`sharpening/*`, `query/*`) are adaptations of the lazy
+telemetry/instrumentation modules (`optimization/*`, `query/*`) are adaptations of the lazy
 build-system machinery in the `J0pari/Builder` repository (MIT licensed). The adaptation is a
 re-implementation under KanForge's domain (proofs, not documents); correctness is enforced by the
 unit-test suite, not by trust in the source. This provenance is recorded here — the evidence doc —

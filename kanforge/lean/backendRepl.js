@@ -1,19 +1,22 @@
 // REPL pool over the real `leanprover-community/repl` binary (architecture.md §3 + §3.1).
-// Wire protocol (verified against the actual binary, built at the pinned toolchain):
-//   stdin:  one compact JSON object per command, followed by a blank line.
-//   stdout: one compact JSON object per response, followed by a blank line.
-//   request:  { "cmd": "<lean command>", "env": null }   // env null = fresh session
-//   response: { "env": n, "messages": [{pos, endPos, severity, data}], "sorries": [...],
-//               "tactics": [...], "infotree": ... }
-//   a failed command that raises an IO error returns { "message": "..." } instead.
-// The pool is the correctness bottleneck, so its failure modes are explicit:
-//   - warm worker pool; a check is a single request/response over one worker
-//   - kill-on-hang: every check has a timeout; a worker exceeding it is killed and replaced
-//   - crash replace with <= 1 retry per job, then it fails loudly
-//   - per-line parse resilience: a malformed JSON line is skipped and counted (never drops the batch)
-//   - single-flight: identical statements dedup to one kernel invocation
-//   - graceful drain: shutdown() kills workers, pending requests are aborted
-//   - health counters via getInfos(): { poolSize, restarts, hangs, timeouts, parseErrors, poolUptime }
+// Wire protocol (verified against the actual binary, rev 1d23837, pinned toolchain):
+//   statement mode:  { "cmd": "<lean command>", "env": null }
+//     -> { "env": n, "messages": [...], "sorries": [{ proofState, pos, goal, endPos }] }
+//   tactic mode:     { "tactic": "<tactic>", "proofState": n }
+//     -> { "proofStatus": "Completed" | "Incomplete: ...", "proofState": n+1, "goals": [...] }
+//     -> { "message": "Lean error: ..." }                       on tactic failure
+//     -> { "message": "Unknown proof state." }                  on stale proofState
+// Framing: one compact JSON object per request, followed by a blank line; responses are
+// pretty-printed JSON documents terminated by a blank line.
+//
+// Proof sessions: tactic mode is stateful per worker (proofStates are session-local), so
+// extractGoals leases one worker per lemma until endLemma(key) releases it. verifyProof for a
+// leased lemma runs on the same worker, so concurrent lemmas never deadlock the pool (pool
+// size may equal scheduler concurrency). check() keeps its stateless single-flight contract.
+//
+// Pool resilience (§3.1): warm workers; kill-on-hang timeout replaces the worker and fails the
+// job; crash replace with <= 1 retry for stateless checks; per-document parse resilience;
+// graceful drain; health counters via getInfos().
 
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
@@ -21,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { hashStatement, makePin, NORM_VERSION } from './pin.js';
+import { parseGoalText } from './goalText.js';
 
 // The repl binary links against Lean's runtime DLLs (libleanshared.dll & friends), which live
 // in the toolchain bin dir. On Windows they must be on PATH or the exe dies with
@@ -80,6 +84,19 @@ export function leanErrorFromMessages(messages) {
     };
 }
 
+// One sorry entry -> one Goal (§3): the repl goal string is the full telescope, parsed into
+// context entries + target so the e-graph can normalize and the LLM prompt can render it.
+function goalFromSorry(s) {
+    const parsed = parseGoalText(s.goal ?? '');
+    return {
+        type: parsed.type,
+        context: parsed.context,
+        caseName: parsed.caseName ?? undefined,
+        pos: s.pos ?? null,
+        proofState: s.proofState ?? null
+    };
+}
+
 export class ReplWorker {
     constructor({ replBin, env, onParseError, onExit, onIdle }) {
         this.replBin = replBin;
@@ -95,9 +112,6 @@ export class ReplWorker {
         this.child = child;
         this.pid = child.pid ?? null;
 
-        // Framing: each response is one JSON document terminated by a blank line. Pretty-printed
-        // responses span many physical lines (only `{"env": n}` fits on one), so accumulate lines
-        // and parse the whole document when the blank line arrives.
         this._rl = readline.createInterface({ input: child.stdout });
         this._rl.on('line', line => {
             if (!line.trim()) {
@@ -129,8 +143,6 @@ export class ReplWorker {
         try {
             parsed = JSON.parse(text);
         } catch {
-            // Malformed response document: counted, and the job is retried on a fresh worker —
-            // never silently dropped.
             onParseError?.(text);
             const pending = this._pending;
             this._pending = null;
@@ -140,12 +152,20 @@ export class ReplWorker {
         }
         const pending = this._pending;
         this._pending = null;
-        this.busy = false;
-        if (pending) pending.resolve(parsed);
+        // busy is owned by the caller (leased sessions stay busy); only free it for one-shot requests.
+        if (pending) {
+            this.busy = pending.lease ? this.busy : false;
+            pending.resolve(parsed);
+        } else {
+            this.busy = false;
+        }
         onIdle?.(this);
     }
 
-    request(cmd) {
+    // payload is the full request object: { cmd, env } for statement mode,
+    // { tactic, proofState } for tactic mode. lease=true keeps the worker reserved after the
+    // response (proof sessions); the pool releases it via release().
+    request(payload, { lease = false } = {}) {
         if (!this.isAlive()) {
             return Promise.reject(Object.assign(new Error('repl worker not running'), { kind: 'worker-exit' }));
         }
@@ -153,12 +173,10 @@ export class ReplWorker {
             return Promise.reject(new Error('repl worker busy'));
         }
         return new Promise((resolve, reject) => {
-            this._pending = { resolve, reject };
+            this._pending = { resolve, reject, lease };
             this.busy = true;
             try {
-                // Real repl protocol: compact JSON + blank line. env null = fresh session, so
-                // every check verifies its statement against a clean kernel environment.
-                this.child.stdin.write(JSON.stringify({ cmd, env: null }) + '\n\n');
+                this.child.stdin.write(JSON.stringify(payload) + '\n\n');
             } catch (err) {
                 this._pending = null;
                 this.busy = false;
@@ -198,6 +216,7 @@ export class BackendRepl {
         this._workers = [];
         this._inflight = new Map();   // statementHash -> shared promise (single-flight)
         this._waiters = [];           // pending _acquire() resolvers
+        this._sessions = new Map();   // lemmaKey -> { worker }
         this._draining = false;
 
         this.restarts = 0;
@@ -226,6 +245,11 @@ export class BackendRepl {
         if (worker.isAlive()) worker.kill();
         const idx = this._workers.indexOf(worker);
         if (idx !== -1) this._workers.splice(idx, 1);
+        // Any session on this worker is broken; drop it so the next call fails loudly
+        // instead of waiting on a dead process.
+        for (const [key, session] of this._sessions) {
+            if (session.worker === worker) this._sessions.delete(key);
+        }
         if (!this._draining) {
             this.restarts++;
             this._spawnWorker();
@@ -252,21 +276,41 @@ export class BackendRepl {
         return new Promise((resolve, reject) => this._waiters.push({ resolve, reject }));
     }
 
-    async _checkOnce(statement, timeoutMs) {
-        const worker = await this._acquire();
+    // One request on one worker with kill-on-hang (§3.1). Shared by stateless checks and
+    // leased session calls. On timeout, stateless checks kill the worker; leased sessions
+    // just fail the request (the session is broken, but the worker stays alive for other sessions).
+    async _requestOnWorker(worker, payload, { timeoutMs, lease = false } = {}) {
         let timer;
         try {
             return await new Promise((resolve, reject) => {
-                worker.request(statement).then(resolve, reject);
+                worker.request(payload, { lease }).then(resolve, reject);
                 timer = setTimeout(() => {
                     this.timeouts++;
                     this.hangs++;
-                    this._retire(worker); // kill-on-hang + replace
-                    reject(Object.assign(new Error(`lean repl timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
+                    if (!lease) {
+                        // Stateless check: kill worker and replace
+                        this._retire(worker);
+                        reject(Object.assign(new Error(`lean repl timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
+                    } else {
+                        // Leased session: fail request but keep worker alive
+                        reject(Object.assign(new Error(`lean repl session timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
+                    }
                 }, timeoutMs);
             });
         } finally {
             clearTimeout(timer);
+        }
+    }
+
+    async _checkOnce(statement, timeoutMs) {
+        const worker = await this._acquire();
+        try {
+            return await this._requestOnWorker(worker, { cmd: statement, env: null }, { timeoutMs });
+        } finally {
+            if (worker.isAlive() && !worker._retired) {
+                worker.busy = false;
+                this._wakeWaiters();
+            }
         }
     }
 
@@ -295,8 +339,8 @@ export class BackendRepl {
     }
 
     _classify(resp) {
-        // Real repl can answer either a CommandResponse {env, messages, sorries, ...} or a
-        // hard error {message} (unknown env, IO failure). Classify both.
+        // Statement mode: either a CommandResponse {env, messages, sorries, ...} or a hard
+        // error {message} (unknown env, IO failure).
         if (resp && !('env' in resp) && typeof resp.message === 'string') {
             return {
                 status: 'error',
@@ -307,11 +351,7 @@ export class BackendRepl {
         }
         const messages = resp?.messages ?? [];
         const { errors, warnings } = parseLeanMessages(messages);
-        const goals = (resp?.sorries ?? []).map(s => ({
-            type: s.goal ?? '',
-            context: [],
-            pos: s.pos ?? null
-        }));
+        const goals = (resp?.sorries ?? []).map(goalFromSorry);
         return {
             status: errors.length ? 'error' : 'verified',
             goals,
@@ -320,17 +360,104 @@ export class BackendRepl {
         };
     }
 
-    async extractGoals(src, position) {
-        const res = await this.check(`set_option pp.all true in\n${src}`);
-        return res.goals;
+    // ---- Proof sessions (tactic mode) ----
+
+    // Open a proof session for a lemma statement and return its goals. Leases one worker
+    // until endLemma(key). The session key is hashStatement(src); the loop already keys
+    // lemmas by exactly that hash (agent/loop.js addLemma).
+    async extractGoals(src, opts = {}) {
+        const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
+        const key = hashStatement(src);
+        const worker = await this._acquire();
+        try {
+            const resp = await this._requestOnWorker(worker, { cmd: src, env: null }, { timeoutMs, lease: true });
+            const messages = resp?.messages ?? [];
+            const { errors } = parseLeanMessages(messages);
+            if (errors.length) {
+                worker.busy = false;
+                this._wakeWaiters();
+                return [];
+            }
+            this._sessions.set(key, { worker });
+            return (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
+        } catch (err) {
+            if (worker.isAlive() && !worker._retired) {
+                worker.busy = false;
+                this._wakeWaiters();
+            }
+            throw err;
+        }
     }
 
-    async verifyProof(script) {
-        const res = await this.check(script);
+    // Apply ONE tactic to ONE goal (§3, §4). Uses the repl tactic API against the goal's
+    // proofState on the leased session worker.
+    async applyTactic(goal, tactic, opts = {}) {
+        const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
+        const key = goal?.sessionKey;
+        const session = key ? this._sessions.get(key) : null;
+        if (!session) {
+            return {
+                status: 'error',
+                newGoals: [],
+                error: { message: 'no proof session for goal (extractGoals must open one)' }
+            };
+        }
+        let resp;
+        try {
+            resp = await this._requestOnWorker(session.worker, { tactic: String(tactic).trim(), proofState: goal.proofState }, { timeoutMs, lease: true });
+        } catch (err) {
+            return { status: 'error', newGoals: [], error: { message: err.message, detail: err.message } };
+        }
+        if (typeof resp?.message === 'string') {
+            // "Lean error: ..." (tactic failed) or "Unknown proof state." (stale goal)
+            return {
+                status: 'error',
+                newGoals: [],
+                error: { message: resp.message, detail: resp.message }
+            };
+        }
+        const newGoals = (resp?.goals ?? []).map(g => {
+            const parsed = parseGoalText(g);
+            return {
+                type: parsed.type,
+                context: parsed.context,
+                caseName: parsed.caseName ?? undefined,
+                pos: null,
+                proofState: resp.proofState,
+                sessionKey: key
+            };
+        });
+        return { status: 'ok', newGoals, error: undefined };
+    }
+
+    // Kernel check of a full proof source (statement + composed script). Runs on the leased
+    // session worker when a session key is given, so pool size may equal loop concurrency
+    // without starving verification; otherwise a stateless single-flight check.
+    async verifyProof(src, key = null) {
+        let res;
+        const session = key ? this._sessions.get(key) : null;
+        if (session && session.worker.isAlive()) {
+            const resp = await this._requestOnWorker(session.worker, { cmd: src, env: null }, { timeoutMs: this.timeoutMs, lease: true });
+            res = this._classify(resp);
+        } else {
+            res = await this.check(src);
+        }
         if (res.status !== 'verified' || res.goals.length) {
             return { status: 'error', error: res.error ?? { message: 'unproven goals remain' } };
         }
         return { status: 'verified', error: undefined };
+    }
+
+    // Release the leased session worker for a lemma. Idempotent.
+    endLemma(key) {
+        const session = this._sessions.get(key);
+        if (!session) return;
+        this._sessions.delete(key);
+        const { worker } = session;
+        if (worker.isAlive() && !worker._retired) {
+            worker.busy = false;
+            this._wakeWaiters();
+        }
     }
 
     getInfos() {
@@ -339,6 +466,7 @@ export class BackendRepl {
             mathlibHash: this.mathlibHash ?? null,
             backends: ['repl'],
             poolSize: this._workers.length,
+            sessions: this._sessions.size,
             restarts: this.restarts,
             hangs: this.hangs,
             timeouts: this.timeouts,
@@ -359,6 +487,7 @@ export class BackendRepl {
         this._draining = true;
         for (const w of this._waiters) w.reject(new Error('backend draining'));
         this._waiters = [];
+        this._sessions.clear();
         const deadline = Date.now() + timeoutMs;
         while (this._workers.some(w => w.busy) && Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 25));

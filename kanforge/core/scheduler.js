@@ -171,24 +171,21 @@ export class Scheduler {
         const start = Date.now();
         const result = new Promise((resolve, reject) => {
             let settled = false;
-            const timer = setTimeout(() => {
+            const timer = timeoutMs != null ? setTimeout(() => {
                 if (!settled) {
                     settled = true;
-                    // kill-on-hang: rejecting alone would orphan the in-flight check (it would keep
-                    // burning LLM calls / workers after the scheduler has moved on). Abort the job's
-                    // signal so the check can settle promptly and still emit its terminal event.
                     controller.abort();
                     reject(new Error(`timeout after ${timeoutMs}ms: ${nodeId}`));
                 }
-            }, timeoutMs);
-            timer.unref?.();
+            }, timeoutMs) : null;
+            timer?.unref?.();
 
             Promise.resolve()
                 .then(() => check(nodeId, controller.signal))
                 .then(value => {
                     if (!settled) {
                         settled = true;
-                        clearTimeout(timer);
+                        if (timer) clearTimeout(timer);
                         this._progress(nodeId, { stage: 'complete', ms: Date.now() - start });
                         resolve(value);
                     }
@@ -196,7 +193,7 @@ export class Scheduler {
                 .catch(error => {
                     if (!settled) {
                         settled = true;
-                        clearTimeout(timer);
+                        if (timer) clearTimeout(timer);
                         this._progress(nodeId, { stage: 'failed', ms: Date.now() - start, error });
                         reject(error);
                     }
@@ -220,7 +217,11 @@ export class Scheduler {
         if (this._failures) {
             this._failures.set(nodeId, reason);
         }
-        this._progress(nodeId, { stage: 'failed', error: reason });
+        // Serialize error for event emission (Error objects spread to {})
+        const errorInfo = reason instanceof Error
+            ? { message: reason.message, stack: reason.stack }
+            : reason;
+        this._progress(nodeId, { stage: 'failed', error: errorInfo });
     }
 
     _prio(nodeId) {

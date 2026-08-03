@@ -1,0 +1,130 @@
+{
+  "theorem": "example (P Q : Prop) : P → Q := by sorry",
+  "statementHash": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+  "proofScript": "by\n  intro h\n    omega",
+  "assumptions": [],
+  "deps": [],
+  "events": [
+    {
+      "id": "evt_ib8h7pp",
+      "t": 1785789439185,
+      "type": "lemma_goal",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "statement": "example (P Q : Prop) : P → Q := by sorry",
+      "parent": "evt_6u9bdfo"
+    },
+    {
+      "id": "evt_sun1pjp",
+      "t": 1785789439196,
+      "type": "goal_selected",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_66763e97",
+      "goal": {
+        "type": "P → Q",
+        "context": []
+      },
+      "parent": "evt_ib8h7pp"
+    },
+    {
+      "id": "evt_lkfupn7",
+      "t": 1785789439196,
+      "type": "tactic_proposed",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_66763e97",
+      "attempt": 1,
+      "tactic": "intro h",
+      "parent": "evt_sun1pjp"
+    },
+    {
+      "id": "evt_v7fonyb",
+      "t": 1785789439196,
+      "type": "tactic_applied",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_66763e97",
+      "tactic": "intro h",
+      "parent": "evt_lkfupn7"
+    },
+    {
+      "id": "evt_gzocjv8",
+      "t": 1785789439244,
+      "type": "subgoal_created",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "subgoal": {
+        "type": "Q",
+        "context": [
+          {
+            "name": "h",
+            "type": "P"
+          }
+        ]
+      },
+      "parent": "evt_v7fonyb"
+    },
+    {
+      "id": "evt_8vmdbis",
+      "t": 1785789439244,
+      "type": "goal_selected",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_6ebdb3e5",
+      "goal": {
+        "type": "Q",
+        "context": [
+          {
+            "name": "h",
+            "type": "P"
+          }
+        ]
+      },
+      "parent": "evt_gzocjv8"
+    },
+    {
+      "id": "evt_1s6ggzb",
+      "t": 1785789439245,
+      "type": "tactic_proposed",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_6ebdb3e5",
+      "attempt": 1,
+      "tactic": "omega",
+      "parent": "evt_8vmdbis"
+    },
+    {
+      "id": "evt_3sqcp2z",
+      "t": 1785789439245,
+      "type": "tactic_applied",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_6ebdb3e5",
+      "tactic": "omega",
+      "parent": "evt_1s6ggzb"
+    },
+    {
+      "id": "evt_ahlkmbz",
+      "t": 1785789439245,
+      "type": "goal_solved",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "goalClassId": "goal_6ebdb3e5",
+      "tactic": "omega",
+      "parent": "evt_3sqcp2z"
+    },
+    {
+      "id": "evt_la90t02",
+      "t": 1785789439247,
+      "type": "lemma_verified",
+      "lemmaId": "21bbb2d4fc5fe4b7cca0bc5896ea742aaf8f5b4895095a3fe86fb120044cb35d",
+      "statement": "example (P Q : Prop) : P → Q := by sorry",
+      "proofScript": "by\n  intro h\n    omega",
+      "ms": 52,
+      "goalCount": 2,
+      "parent": "evt_ahlkmbz"
+    }
+  ],
+  "metrics": {
+    "tacticsPerLemma": 2,
+    "tacticSuccessRate": 1
+  },
+  "guardrailReport": {
+    "ok": true,
+    "violations": []
+  },
+  "checkpoints": [],
+  "timestamp": "2026-08-03T20:37:19.248Z"
+}

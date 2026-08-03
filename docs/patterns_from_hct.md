@@ -21,7 +21,7 @@ mapping is re-framed; the specification is never bent to fit the metaphor. (`blu
 1. **Simplicial sets & ∞-categories → coinductive lazy search.** ∞-structures are determined by
    their finite skeleta; composition is horn-filling. Keep an infinite, lazily-materialized
    frontier and force only what's needed (`core/stream.js`, `core/fix.js`). **Repair = horn
-   filling**: a failing goal is a horn missing its filler; the repair agent's job is to fill it,
+   filling**: a failing goal is a horn missing its filler; the repair agent's job is to propose a tactic that fills it,
    not to re-roll the whole proof (`agent/repair.js`).
 
 2. **Straightening / unstraightening → the proof-tree ↔ tactic-script duality.** A fibration
@@ -50,7 +50,7 @@ mapping is re-framed; the specification is never bent to fit the metaphor. (`blu
 
 7. **Stable ∞-categories → residual tracking.** Every tactic application leaves its residual
    goal (the cofiber); the residuals form a spectrum of open goals. Progress = the spectrum
-   strictly decreases in a well-founded order (`sharpening/metrics.js`).
+   strictly decreases in a well-founded order (`optimization/metrics.js`).
 
 8. **Descent & hypercovers → distributed proving.** Shard a development into a hypercover of
    lemma sub-goals, prove locally, require coherence on every overlap before merging
