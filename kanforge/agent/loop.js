@@ -30,11 +30,12 @@ import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
+import { bestOfNWithSwiss, buildPairwiseJudge } from '../search/swiss.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8 } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -44,6 +45,8 @@ export class TacticLoop {
         this.maxTacticsPerGoal = maxTacticsPerGoal;
         this.maxGoalsPerLemma = maxGoalsPerLemma;
         this.checkpointDir = checkpointDir;
+        this.useSwiss = useSwiss;
+        this.swissN = swissN;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -134,7 +137,31 @@ export class TacticLoop {
 
                 let solved = false;
                 let lastResult = null;
-                for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
+
+                if (this.useSwiss) {
+                    this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId: currentGoalClass.id, N: this.swissN }, lemmaId);
+                    const swissResult = await bestOfNWithSwiss(goal, this.backend, this.llm, { N: this.swissN });
+                    this.llmCalls += this.swissN;
+
+                    if (swissResult.ok) {
+                        this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId: currentGoalClass.id, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
+                        egraph.applyTactic(currentGoalClass.id, swissResult.tactic, swissResult.result.newGoals);
+                        this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
+                        for (const subgoal of swissResult.result.newGoals) {
+                            this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
+                        }
+                        if (swissResult.result.newGoals.length === 0) {
+                            solved = true;
+                            this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
+                        } else {
+                            solved = true;
+                        }
+                        lastResult = swissResult.result;
+                    } else {
+                        this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId: currentGoalClass.id, rankingSize: swissResult.ranking.length }, lemmaId);
+                    }
+                } else {
+                    for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
                     if (signal?.aborted) break;
 
                     this.llmCalls++;
@@ -170,6 +197,7 @@ export class TacticLoop {
                     solved = true; // decomposed into subgoals; they join the frontier
                     break;
                 }
+                } // end else (non-Swiss path)
 
                 if (!solved) {
                     // P3.1: Attempt repair before giving up

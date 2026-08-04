@@ -16,8 +16,11 @@ ESM package, `"type": "module"`.
 
 ```
 kanforge/
+  index.js                   # root entry point
+  env.js                     # environment/config loader
   core/                      # lazy/pull machinery + proof-state primitives
-    lazy.js                  # Lazy, lazify (memoized thunks)
+    lazy.js                  # Lazy (memoized thunks)
+    lazify.js                # lazify (memoized proxied calls)
     template.js              # LazyTemplate (defer string building)
     functor.js               # LazyFunctor (map/extract over structured results)
     stream.js                # LazyStream (head-strict / tail-lazy)
@@ -27,6 +30,7 @@ kanforge/
     promise.js               # PullPromise (async thunk)
     cache.js                 # PullCache + compact/eager split
     pullgraph.js             # proof DAG: nodes, edges, invalidate, serialize
+    egraph.js                # goal equivalence classes (Level 2 search structure, §2.2)
     serialize.js             # StateSerializer
     hasher.js                # Hasher (statement/event hash chains)
     state.js                 # straighten / unstraighten (tree ↔ script)
@@ -38,13 +42,13 @@ kanforge/
     backendRepl.js           # leanprover-community/repl impl (JSON-lines, pool)
     backendCli.js            # `lean` CLI impl
     pin.js                   # toolchain + mathlib4 pin, statement hashing
+    goalText.js              # goal text extraction / normalization
   agent/
-    agent.js                 # observe→propose→act→verify→repair→commit loop
+    loop.js                  # the agent loop: observe→propose→act→verify→repair→commit; PullGraph + scheduler + backendRepl + one LLM adapter; node id = statement hash; oldest-sorry priority; stop budget; traced events
     solve.js                 # universal-arrow stopping rule
     repair.js                # horn-filler repair
     prompts.js               # prompt builder from Lean terms
     llm.js                   # provider-neutral client (env-driven): gemini/openai/anthropic/copilot/openrouter + local ollama/vllm; secret only from KANFORGE_LLM_API_KEY or git-ignored .env
-    loop.js                  # P1 minimal loop: PullGraph + scheduler + backendRepl + one LLM adapter; node id = statement hash; oldest-sorry priority; stop budget; traced events
     roles/                   # P7 only (multi-agent ensemble)
       autoformalizer.js
       conjecturer.js
@@ -60,6 +64,7 @@ kanforge/
     mcgs.js                  # MCGS with transposition merging
     repulsion.js             # Goedel-style diversity penalty
     premises.js              # premise retrieval + premise-locked flag
+    swiss.js                 # Swiss-tournament best-of-n (Bradley-Terry ranking, LLM pairwise judge, §5)
   optimization/
     bus.js                   # central event bus
     store.js                 # bounded event store (causal parent links)
@@ -85,6 +90,19 @@ kanforge/
   bench/
     harness.js               # run targets, collect KPIs
     kpis.js                  # pass@k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, subgoals/tactic, reuse, guardrail trips
+    smoke.js                 # 23-problem miniF2F-style smoke set (5 tiers), runs over real repl
+    run.js                   # benchmark run driver
+    complex.js               # complexity analysis helpers
+  test/                      # unit + integration tests (Node built-in test runner)
+    core.test.js             # core/ primitives
+    state.test.js            # tree ↔ script round-trip
+    guardrails.test.js       # invariant checks
+    integration.test.js      # end-to-end loop tests
+    live.repl.test.js        # real repl binary resilience suite (P0.3 gate)
+    optimization.test.js     # telemetry + metrics
+    architectural.test.js    # module inventory + contract checks
+    goalText.test.js         # goal text extraction
+    swiss.test.js            # Swiss-tournament ranking
   corpus/
     miniF2F-split/ putnam/ proverbench/ proofnet/ workbook/ open-targets/
 ```
@@ -375,6 +393,7 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
 - `mcgs.js`: Monte Carlo Graph Search over the e-graph; **transposition merging** is built into the e-graph structure — alpha-equivalent / definitionally-equal goals are already merged into equivalence classes with shared statistics. Node identity is normalized so *every* search variant inherits the merge, not just MCGS.
 - `repulsion.js`: log-ratio diversity penalty among concurrent tactic samples.
 - `premises.js`: relevance scoring over mathlib; `premiseLocked: true` restricts the generator to retrieved premises only.
+- `swiss.js`: Swiss-tournament best-of-n selection (faithful to Open Proof Corpus methodology, arXiv:2506.21621 §5.5): round-robin tournament judged pairwise by the LLM, Bradley-Terry ratings fit by MLE, candidates applied in rating order with kernel-grounded fallthrough. OPC reports +17% improvement over naive best-of-n (26%→43% vs 26%→36%).
 
 ---
 
@@ -440,13 +459,15 @@ transition matrix, predictors, live frontier.
 Per-module rationale and the build sequence are `blueprint.md` §3 and `build_order.md`. Summary
 by role:
 
-- **Foundations** (generic, fully unit-tested, no proof assumptions): `core/lazy`, `stream`,
-  `promise`, `cache`, `pipeline`, `context`, `fix`, `functor`, `template`, `serialize`, `hasher`.
+- **Foundations** (generic, fully unit-tested, no proof assumptions): `core/lazy`, `core/lazify`,
+  `stream`, `promise`, `cache`, `pipeline`, `context`, `fix`, `functor`, `template`, `serialize`,
+  `hasher`.
 - **Proof domain** (the contribution that makes this a proof refinery): `core/pullgraph` (proof
-  DAG), `core/state` (tree↔script), `core/patch`, `core/scheduler`, `core/guardrails`,
-  `lean/*`, `agent/*`, `blueprint/*`, `search/*`.
+  DAG), `core/egraph` (goal equivalence classes), `core/state` (tree↔script), `core/patch`,
+  `core/scheduler`, `core/guardrails`, `lean/*` (incl. `goalText`), `agent/*`, `blueprint/*`,
+  `search/*` (incl. `swiss`).
 - **Instrumentation / growth / query / digest**: `optimization/*`, `growth/*`, `query/*`,
-  `digest/*`, `bench/*`.
+  `digest/*`, `bench/*` (incl. `smoke`).
 
 Lineage: the foundational primitives adapt established lazy-computation patterns documented in
 `research_notes_2026.md` §4; provenance is evidence, not design argument — contracts here are
