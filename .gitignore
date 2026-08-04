@@ -4,6 +4,9 @@ kanforge/lean-project/.lake/
 # Extraction staging (regenerable via tools/extract_modules.py)
 kanforge/_extracted/
 
+# Smoke test run artifacts
+kanforge/runs/
+
 # Node
 node_modules/
 

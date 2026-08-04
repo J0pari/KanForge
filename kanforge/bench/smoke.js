@@ -1,4 +1,4 @@
-// miniF2F-style smoke set for the P0–P1 gate (build_order.md §1.2, 20-problem provisional target).
+// miniF2F-style smoke set for the P0–P1 gate (build_order.md §1.2; 23 problems, 5 tiers).
 // Runs over the REAL repl binary, whose environment is core Lean + Std (no Mathlib): omega over
 // Nat/Int, simp, rw, rcases/cases, induction, constructor, native_decide are available; Mathlib
 // tactics (ring, linarith, nlinarith, norm_num, field_simp, tauto) are NOT. Every problem is a

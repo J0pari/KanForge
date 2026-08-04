@@ -1,18 +1,18 @@
 # KanForge
 
-**Tactic-level automated theorem prover for Lean 4**
+**LLM-guided proof refinery for Lean 4**
 
-KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM-guided tactic search to automatically prove Lean 4 theorems. It implements a two-level architecture: a lemma DAG for dependency-ordered dispatch, and a goal e-graph for tactic-level search with transposition merging.
+KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM-guided tactic search to construct Lean 4 proofs. It implements a two-level architecture: a lemma DAG for dependency-ordered dispatch, and a goal e-graph for tactic-level search with transposition merging. Every tactic proposal is checked against the real Lean kernel before it is committed — the LLM proposes, the kernel disposes.
 
 ## Key Features
 
-- **Tactic-level search**: LLM proposes one tactic per call, backend applies it, subgoals are searched recursively
+- **Tactic-level search**: LLM proposes one tactic per call, the backend applies it, and subgoals are searched recursively
 - **Goal e-graph**: Equivalence classes of goals with shared statistics enable efficient transposition merging
-- **REPL integration**: Direct interaction with Lean 4 kernel via `leanprover-community/repl`
+- **REPL integration**: Direct interaction with the Lean kernel via `leanprover-community/repl`
 - **Causal telemetry**: Every event (tactic proposal, application, goal solving) is traced with parent links
-- **Guardrails enforcement**: Statement pinning prevents weakening, kernel verification ensures correctness
-- **Checkpoint/resume**: Long-running proofs can be interrupted and resumed from any verified lemma
-- **Repair loops**: Failed tactics trigger error-driven repair attempts before giving up
+- **Guardrails enforcement**: Statement pinning prevents weakening; kernel verification ensures correctness
+- **Checkpoint/resume**: Verified lemmas are serialized to `state.json` and can be resumed from any checkpoint
+- **Error-driven repair**: Failed tactics are classified and retried through a repair prompt before giving up
 
 ## Architecture
 
@@ -36,7 +36,7 @@ Level 1: Lemma DAG                    Level 2: Goal E-Graph
 
 **Level 1 (Scheduler)**: Dispatches lemmas in dependency order. A lemma can only be proved after all its dependencies are verified.
 
-**Level 2 (Tactic Loop)**: For each lemma, extracts the root goal, proposes tactics via LLM, applies them via the REPL, and recursively solves subgoals until the root is solved.
+**Level 2 (Tactic Loop)**: For each lemma, extracts the root goal, proposes tactics via the LLM, applies them via the REPL, and recursively solves subgoals until the root is solved.
 
 ## Installation
 
@@ -44,6 +44,7 @@ Level 1: Lemma DAG                    Level 2: Goal E-Graph
 
 - **Node.js** ≥ 18.0
 - **Lean 4** with elan (install via [elan](https://github.com/leanprover/elan))
+- **opencode CLI** (`npm install -g opencode-ai`) — the sole LLM provider; no API key is needed
 - **leanprover-community/repl** built for your toolchain
 
 ### Setup
@@ -59,35 +60,52 @@ npm install
 # Configure environment
 cp .env.example .env
 # Edit .env to set:
-#   KANFORGE_REPL_BIN=/path/to/repl/binary
+#   KANFORGE_REPL_BIN=<path to a repl binary>   (see "Building the REPL")
 #   KANFORGE_LEAN_TOOLCHAIN=leanprover/lean4:v4.33.0-rc1
-#   KANFORGE_LLM_API_KEY=your-api-key
+# No API key is required: all model interaction goes through the opencode CLI.
 ```
 
 ### Building the REPL
 
-The REPL must be built for your specific Lean toolchain:
+Two repl flavors are supported, distinguished by `KANFORGE_REPL_BIN`:
+
+1. **Standalone core-Lean repl** (P0–P1 smoke gate): fast startup, no Mathlib. Build the
+   `leanprover-community/repl` binary for your toolchain and point `KANFORGE_REPL_BIN` at it.
+2. **Mathlib-enabled repl** (P0.1; premise retrieval, corpus targets): built inside
+   `lean-project`, which pins mathlib4 and the repl at the same toolchain rev:
 
 ```bash
 cd lean-project
-lake build repl
-# Binary will be at .lake/build/bin/repl
+lake exe cache get            # fetch prebuilt mathlib oleans (network required)
+lake build repl               # binary at .lake/packages/repl/.lake/build/bin/repl
 ```
+
+Then point `KANFORGE_REPL_BIN` at that binary (`.exe` on Windows). Every repl session can
+`import Mathlib`.
 
 ## Usage
 
 ### Running the Smoke Test
 
 ```bash
-# Run all smoke problems
+# Run all 23 smoke problems
 node bench/run.js
 
 # Run specific problems
 node bench/run.js trans_lt add_double nat_sub
 
-# Run with checkpointing
+# Run with checkpointing (writes state.json into the given directory)
 node bench/run.js --checkpoint-dir=runs/my_run
+
+# Resume from a checkpoint
+node bench/run.js --resume=runs/my_run/state.json
 ```
+
+The smoke set (`bench/smoke.js`) is 23 problems across five escalating tiers: T1 linear
+arithmetic via `omega` (7), T2 propositional logic (4), T3 functions/induction (5),
+T4 harder/ceiling (4), T5 complex multi-step induction (3). Every problem is a well-typed
+`:= by sorry` stub that runs over the real kernel — no aggregate pass rate is claimed here;
+the harness reports exactly what it observes.
 
 ### Running Tests
 
@@ -96,24 +114,12 @@ npm test
 ```
 
 Test suite includes:
-- **Architectural tests**: Verify backward decomposition, atomic operations, proof tree structure
-- **Integration tests**: End-to-end loop with mock backend
-- **Live REPL tests**: Real kernel interaction (requires REPL binary)
-- **Unit tests**: Goal parsing, state serialization, guardrails, scheduler
 
-### Example Output
-
-```
-===== SMOKE SET RESULTS =====
-OK   t1 trans_lt       ms=13112 goals=1 families=[omega]
-      proof: by |   omega
-OK   t1 add_double     ms=13194 goals=1 families=[omega]
-      proof: by |   omega
-OK   t1 nat_sub        ms=13245 goals=1 families=[omega]
-      proof: by |   omega
-
-Solved: 3/3 (100.0%), families used: omega, tier>=2 solved: 0, wall: 13s
-```
+- **Architectural tests**: backward decomposition, atomic bounded operations, proof-tree straightening
+- **Integration tests**: end-to-end loop with a mock backend
+- **Live REPL tests**: real kernel interaction (gated on `KANFORGE_REPL_BIN` pointing at a repl binary)
+- **Swiss-tournament tests**: Bradley-Terry fitting, pairwise judging, best-of-n selection
+- **Unit tests**: goal parsing, state serialization, guardrails, e-graph, telemetry
 
 ## Project Structure
 
@@ -121,88 +127,104 @@ Solved: 3/3 (100.0%), families used: omega, tier>=2 solved: 0, wall: 13s
 kanforge/
 ├── agent/              # Tactic loop and LLM integration
 │   ├── loop.js         # Main tactic-level search loop
-│   ├── llm.js          # LLM client (OpenAI/Anthropic)
+│   ├── llm.js          # LLM client (sole provider: opencode CLI)
 │   ├── prompts.js      # Tactic proposal prompts
-│   └── repair.js       # Error-driven repair
+│   ├── repair.js       # Error-driven repair (classify, retry)
+│   └── solve.js        # Per-lemma solving logic
 ├── core/               # Foundational primitives
 │   ├── egraph.js       # Goal equivalence graph
 │   ├── pullgraph.js    # Pull-based dependency graph
 │   ├── scheduler.js    # Dependency-ordered dispatch
 │   ├── state.js        # Proof tree ↔ script conversion
-│   └── guardrails.js   # Invariant enforcement
-├── lean/               # Lean 4 backend
+│   ├── guardrails.js   # Invariant enforcement
+│   └── ...             # caching, hashing, lazy evaluation
+├── lean/               # Lean 4 backends (all drive the real kernel)
+│   ├── backend.js      # Backend interface
 │   ├── backendRepl.js  # REPL protocol implementation
+│   ├── backendCli.js   # Lean CLI backend
 │   ├── goalText.js     # Goal string parsing
 │   └── pin.js          # Statement pinning
 ├── optimization/       # Telemetry and metrics
 │   ├── bus.js          # Event bus
 │   ├── store.js        # Causal event store
 │   └── metrics.js      # Performance metrics
+├── search/             # Standalone search baselines
+│   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B)
+│   ├── bestofn.js      # Naive best-of-n baseline
+│   ├── bfs.js          # Breadth-first search
+│   ├── mcgs.js         # Multi-goal coverage search
+│   ├── premises.js     # Premise retrieval stub
+│   └── repulsion.js    # Goedel diversity penalty
 ├── bench/              # Benchmarking
 │   ├── run.js          # Smoke test runner
-│   └── smoke.js        # Problem definitions
-├── test/               # Test suite
-│   ├── architectural.test.js
-│   ├── integration.test.js
-│   └── live.repl.test.js
-└── runs/               # Checkpoint and audit outputs
+│   ├── smoke.js        # 23-problem smoke set (tiers 1–5)
+│   └── ...
+├── test/               # Test suite (node:test)
+└── runs/               # Per-lemma audit output and checkpoints
     └── run_<timestamp>/
-        ├── checkpoint.json
-        └── audit.json
+        ├── state.json  # Checkpoint (resumable)
+        └── <lemma>/    # audit.json, proof.md, proof.html
 ```
 
-## Current Capabilities
+## Current Status
 
-**Verified on real Lean 4 kernel:**
-- ✅ Linear arithmetic (omega tactic)
-- ✅ Propositional logic (intro, exact, constructor)
-- ✅ Simple induction (induction, rfl, omega)
-- ✅ Transposition merging (equivalent goals share statistics)
-- ✅ Multi-lemma proofs with dependencies
-- ✅ Checkpoint/resume for long-running proofs
+**Verified against the real Lean 4 kernel** (live REPL suite, no mocks):
 
-**Smoke test results (20 problems):**
-- Tier 1 (linear arithmetic): 7/7 solved
-- Tier 2 (propositional logic): 4/4 solved
-- Tier 3 (induction): 3/5 solved
-- Tier 4 (harder): 1/4 solved
-- **Overall: 15/20 (75%)**
+- Linear arithmetic over `Nat` via `omega` — `trans_lt` proved end-to-end by the loop
+- Multi-goal decomposition via `induction` (case `zero` / `succ`), closed with `rfl`
+- Kernel verification of the assembled full-source proof script
+
+**Verified by unit/integration tests** (mock kernel):
+
+- E-graph normalization and transposition merging
+- Proof-tree ↔ script straightening (round-trip bijectivity)
+- Guardrail invariants (statement weakening, leakage/`sorry`/`admit` rejection)
+- Checkpoint/resume via `state.json`
+- Causal telemetry (event bus + store query)
+- Swiss-tournament best-of-n selection (Bradley-Terry ranking + kernel-grounded fallthrough)
 
 ## Design Principles
 
 1. **Tactic-level search**: Each LLM call proposes ONE tactic for ONE goal. No monolithic proof generation.
 
-2. **Kernel verification**: Every tactic application is checked by the Lean 4 kernel. No trusted LLM output.
+2. **Kernel verification**: Every tactic application is checked by the Lean kernel. No trusted LLM output.
 
 3. **Transposition merging**: Equivalent goals (alpha-equivalent or definitionally equal) share statistics in the e-graph, avoiding redundant search.
 
 4. **Causal telemetry**: Every event has a parent link, enabling reconstruction of the proof search trajectory.
 
-5. **Guardrails enforcement**: Statement pins prevent weakening, forbidden tokens (sorry, admit, unsafe) are rejected.
+5. **Guardrails enforcement**: Statement pins prevent weakening; forbidden tokens (`sorry`, `admit`, `unsafe`) are rejected.
 
-6. **Resumability**: Each verified lemma is a checkpoint. Long proofs can be interrupted and resumed.
+6. **Resumability**: Each verified lemma is serialized as a checkpoint (`state.json`). Long proofs can be interrupted and resumed.
 
 ## Limitations
 
-- **Core Lean only**: Current REPL has no Mathlib. Tactics like `ring`, `linarith`, `norm_num` are unavailable.
-- **Single-tactic proposals**: LLM proposes one tactic at a time. No proof sketching or multi-step planning.
-- **No premise retrieval**: Cannot automatically find relevant lemmas from Mathlib or user context.
+- **Single-tactic proposals**: The LLM proposes one tactic at a time — no proof sketching or multi-step planning. This is a deliberate design decision, not a missing feature.
+- **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1). The P0–P1 smoke gate runs over core Lean + Std.
+- **Premise retrieval**: Not implemented; `search/premises.js` is a stub.
+- **Search baselines not wired in**: `search/*` modules (`swiss`, `bestofn`, `bfs`, `mcgs`, `repulsion`) are standalone; the live loop does not consume them yet.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
 ## Roadmap
 
-- [ ] **Mathlib integration**: Build REPL with Mathlib dependency
-- [ ] **Best-of-n ranking**: Swiss tournament selection for proof attempts (+17% accuracy)
-- [ ] **LLM-as-judge**: Train 8B model for tactic validation (90% accuracy)
-- [ ] **Premise retrieval**: LeanDojo-style relevance scoring over Mathlib
-- [ ] **Category-aware tactics**: Detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
-- [ ] **Proof critic**: Auto-generate issue summaries to guide repair loops
+- [x] **Swiss-tournament best-of-n selection** — `search/swiss.js`, faithful to the Open Proof Corpus
+      methodology (arXiv:2506.21621, §5.5 / App. B): round-robin tournament judged pairwise by the LLM,
+      Bradley-Terry ratings fit by MLE, candidates applied in rating order. OPC reports this strategy
+      improves best-of-n accuracy by 17% (26% → 43% vs 26% → 36% on its 134-problem subset).
+- [ ] **Wire Swiss ranking into the live loop** — consume `search/swiss.js` from `agent/loop.js`
+- [ ] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
+      unblocks premise retrieval and the miniF2F corpus
+- [ ] **Premise retrieval** — LeanDojo-style relevance scoring over Mathlib
+- [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
+- [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
+- [ ] **Proof critic** — auto-generate issue summaries to guide repair loops
 
 ## References
 
 - **Architecture**: See `docs/architecture.md` for detailed system design
-- **Build order**: See `docs/build_order.md` for phased implementation plan
+- **Build order**: See `docs/build_order.md` for the phased implementation plan
 - **Research notes**: See `docs/research_notes_2026.md` for state-of-the-art analysis
+- **Open Proof Corpus**: See the paper for best-of-n selection methodology
 
 ## License
 
@@ -214,7 +236,7 @@ If you use KanForge in your research, please cite:
 
 ```bibtex
 @software{kanforge2026,
-  title = {KanForge: Tactic-level Automated Theorem Prover for Lean 4},
+  title = {KanForge: LLM-guided Proof Refinery for Lean 4},
   author = {J0pari},
   year = {2026},
   url = {https://github.com/J0pari/KanForge}
