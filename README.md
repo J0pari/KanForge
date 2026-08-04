@@ -168,7 +168,13 @@ kanforge/
 
 ## Current Status
 
-**Verified against the real Lean 4 kernel** (live REPL suite, no mocks):
+**Kernel-verified scope.** Every "verified against the real Lean kernel" claim below is against
+the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in this checkout**:
+`import Mathlib` does not work with the current `KANFORGE_REPL_BIN`. Mathlib-only tactics —
+`ring`, `linarith`, `norm_num`, `tauto`, etc. — are therefore unavailable until the P0.1 build in
+`lean-project` completes (see Roadmap).
+
+**Verified against the real Lean 4 kernel** (live REPL suite, no mocks; core Lean + Std only):
 
 - Linear arithmetic over `Nat` via `omega` — `trans_lt` proved end-to-end by the loop
 - Multi-goal decomposition via `induction` (case `zero` / `succ`), closed with `rfl`
@@ -182,6 +188,24 @@ kanforge/
 - Checkpoint/resume via `state.json`
 - Causal telemetry (event bus + store query)
 - Swiss-tournament best-of-n selection (Bradley-Terry ranking + kernel-grounded fallthrough)
+
+**Not built / stubbed — do not treat as working behavior:**
+
+- **`blueprint/skeleton.js`** — STUB. `SkeletonGenerator.generate()` never calls its LLM client and
+  returns one hardcoded placeholder stub (`lemma ... : True := by sorry`) regardless of input.
+- **`blueprint/refine.js`** — STUB. `BlueprintRefiner.refine()` returns the blueprint unchanged.
+- **`growth/lemmaStore.js`, `growth/dataset.js`** — in-memory only; nothing persists across runs.
+- **Premise retrieval** — `search/premises.js` is a stub (see Limitations).
+- **Search baselines** — `search/*` are standalone. `swiss` is the exception: the live loop can
+  consume it via `useSwiss: true` (`agent/loop.js`); `bestofn`, `bfs`, `mcgs`, `repulsion` are not
+  wired into the loop.
+- **`kanforge/runs/`** — the directory contains audit packs from **mock-backend test runs**. Some
+  entries (e.g. `P → Q` "proved" by `intro h; omega`) are **not** kernel-verified; they were
+  produced by the test mock and are not real theorems. Do not cite `runs/` output as evidence.
+- **CI** — no CI configuration; `npm test` runs locally only.
+- **Inherited footprint** — roughly half the repo's disk footprint is from the unrelated prior
+  project this was scaffolded from (a document generator + a higher-category-theory course).
+  Documented, not hidden: see `docs/patterns_from_hct.md`.
 
 ## Design Principles
 
@@ -200,9 +224,10 @@ kanforge/
 ## Limitations
 
 - **Single-tactic proposals**: The LLM proposes one tactic at a time — no proof sketching or multi-step planning. This is a deliberate design decision, not a missing feature.
-- **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1). The P0–P1 smoke gate runs over core Lean + Std.
-- **Premise retrieval**: Not implemented; `search/premises.js` is a stub.
-- **Search baselines not wired in**: `search/*` modules (`swiss`, `bestofn`, `bfs`, `mcgs`, `repulsion`) are standalone; the live loop does not consume them yet.
+- **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1), which is **not built in this checkout**. The P0–P1 smoke gate runs over core Lean + Std. See "Current Status".
+- **Premise retrieval**: Not implemented; `search/premises.js` is a stub. See "Current Status".
+- **Search baselines not wired in**: `bestofn`, `bfs`, `mcgs`, `repulsion` are standalone; the live loop does not consume them yet. (`swiss` is wired, opt-in via `useSwiss`.)
+- **Blueprint / growth layers**: The blueprint (skeleton/refine) and growth modules are stubs or in-memory only. See "Current Status".
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
 ## Roadmap
@@ -211,7 +236,8 @@ kanforge/
       methodology (arXiv:2506.21621, §5.5 / App. B): round-robin tournament judged pairwise by the LLM,
       Bradley-Terry ratings fit by MLE, candidates applied in rating order. OPC reports this strategy
       improves best-of-n accuracy by 17% (26% → 43% vs 26% → 36% on its 134-problem subset).
-- [ ] **Wire Swiss ranking into the live loop** — consume `search/swiss.js` from `agent/loop.js`
+- [x] **Wire Swiss ranking into the live loop** — `agent/loop.js` consumes `search/swiss.js`
+      when `useSwiss: true` (opt-in; `swissN` sets tournament size, default 8)
 - [ ] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
       unblocks premise retrieval and the miniF2F corpus
 - [ ] **Premise retrieval** — LeanDojo-style relevance scoring over Mathlib

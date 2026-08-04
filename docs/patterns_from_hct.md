@@ -1,13 +1,23 @@
 # KanForge — Patterns from HCT
 
+This document records where several design *names* in KanForge came from. It is historical
+lineage, not specification: the mechanisms are plain programming constructs whose contracts live
+in `architecture.md`. No mapping below is load-bearing — none of them changes what the code does.
+
+In plain terms, the resulting mechanisms are: lazy evaluation and lazily-forced unbounded search
+frontiers; pipeline stage composition for the agent loop; a dual proof-tree / Lean-script
+representation; LLM-propose + kernel-verify with a goal-solved stopping rule; error-driven
+repair; pinned statements (no weakening); a blueprint skeleton → refine two-phase buildout
+(currently stubs, P4); an eager-vs-lazy caching split; open-goal accounting for progress; and
+sharded, coherence-checked distributed proving (P7). Each is detailed in `architecture.md` and
+sequenced in `build_order.md`.
+
 The seeded example documents (`output/primer.md`, `output/working.md`) are a 27-layer higher
-category theory curriculum. Most layers are exposition. A subset yields *structural* design
-patterns for the proof agent that are genuinely load-bearing — each one maps to a module in
-`architecture.md`. The rest reinforce those patterns without changing module decisions; they are
-not listed here.
+category theory curriculum from which the names below were drawn. Most layers are exposition; the
+rest reinforce the patterns without changing module decisions.
 
 **Framing caveat:** these are engineering analogies that produced useful designs, not claims
-about the mathematics of the agent. Use them to justify structure, not to predict behavior.
+about the mathematics of the agent. Use them to justify naming, not to predict behavior.
 
 **Inspiration vs specification:** a mapping names a heuristic; it is not an algorithm and is never
 implemented literally. When a mapping would require building the categorical object (a Kan
@@ -16,7 +26,7 @@ mapping is re-framed; the specification is never bent to fit the metaphor. (`blu
 
 ---
 
-## The load-bearing patterns
+## The patterns (historical intuition — none are load-bearing)
 
 1. **Simplicial sets & ∞-categories → coinductive lazy search.** ∞-structures are determined by
    their finite skeleta; composition is horn-filling. Keep an infinite, lazily-materialized
@@ -32,7 +42,7 @@ mapping is re-framed; the specification is never bent to fit the metaphor. (`blu
 
 3. **Kan extensions → the search primitive.** A Kan extension is the best approximate extension
    of a functor along another. Every agent act is an extension: given the current partial proof
-   and the target goal, find the most general fill (`agent/agent.js`). `fix` gives the infinite
+   and the target goal, find the most general fill (`agent/loop.js`). `fix` gives the infinite
    extension — a full proof from finite evidence.
 
 4. **Adjunctions → generator ⊣ verifier.** LLM-generate is left adjoint to Lean-verify; unit is

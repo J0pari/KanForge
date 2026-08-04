@@ -194,12 +194,19 @@ export function resolveOpenCodeInvocation(config = {}) {
     let prefix = null;
     let resolveError = null;
     try {
-        const comSpec = process.env.ComSpec ?? 'cmd.exe';
-        prefix = execFileSync(comSpec, ['/d', '/s', '/c', 'npm prefix -g'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim();
+        if (process.platform === 'win32') {
+            // `npm prefix -g` needs the cmd wrapper on Windows (npm is a .cmd script).
+            const comSpec = process.env.ComSpec ?? 'cmd.exe';
+            prefix = execFileSync(comSpec, ['/d', '/s', '/c', 'npm prefix -g'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim();
+        } else {
+            // On Unix `npm` is a real binary on PATH; spawn it directly (no cmd.exe).
+            prefix = execFileSync('npm', ['prefix', '-g'], { encoding: 'utf8', timeout: 15_000 }).trim();
+        }
     } catch (err) {
         resolveError = err?.message ?? String(err);
     }
-    const exe = prefix ? join(prefix, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe') : null;
+    const exeName = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
+    const exe = prefix ? join(prefix, 'node_modules', 'opencode-ai', 'bin', exeName) : null;
     if (exe && existsSync(exe)) {
         _openCodeInvocation = { command: exe };
         return _openCodeInvocation;
@@ -207,7 +214,7 @@ export function resolveOpenCodeInvocation(config = {}) {
     const tried = exe ?? `npm prefix -g failed (${resolveError})`;
     throw new Error(
         `opencode CLI not found. Tried: ${tried}. ` +
-        'Install it (npm install -g opencode-ai) or set KANFORGE_LLM_OPENCODE_BIN to the opencode.exe path.'
+        'Install it (npm install -g opencode-ai) or set KANFORGE_LLM_OPENCODE_BIN to the opencode binary path.'
     );
 }
 

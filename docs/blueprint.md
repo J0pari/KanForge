@@ -5,9 +5,11 @@ The design is self-contained: every module below exists because the goal in §1 
 demands it. Implementation lineage (which existing libraries the foundational primitives adapt) is
 a provenance matter, documented in `research_notes_2026.md` §4, not argued here.
 
-**Working title:** *KanForge* — "a forge of Kan extensions: find the best extension of a partial
-proof." (The Kan-extension framing is elaborated in `patterns_from_hct.md`; it is a heuristic
-frame, not a claim about the mathematics of the agent.)
+**Working title:** *KanForge*. The name comes from an early "Kan-extension" framing — "find the
+best extension of a partial proof" — but the mechanisms are ordinary programming constructs
+(lazy evaluation, pipeline stage composition, a proof DAG, pinned statements). Nothing here
+implements or depends on category theory. The historical metaphor lineage is documented in
+`patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the agent.
 
 > This document is the design narrative. It states *why* and *what*. The *how* — module
 > contracts, file layout, event vocabulary, reward defaults, wire formats — lives in
@@ -24,10 +26,16 @@ A general agentic loop that:
 2. **autoformalizes** it into Lean 4,
 3. **decomposes** it into an audited blueprint DAG of lemmas (Level 1),
 4. **proves** the DAG bottom-up: for each lemma, a tactic-level search (Level 2) works backwards from the goal to simpler subgoals — proposes ONE tactic per LLM call, applies it to decompose the goal, gets simpler subgoals, repeats until all subgoals are trivially solved,
-5. **verifies** every step with the Lean kernel (lean4web / REPL / CLI),
+5. **verifies** every step with the Lean kernel (REPL / CLI; `lean4web` deferred),
 6. **repairs** failures using Lean's error feedback,
 7. **sharpens** itself — telemetry → causal analysis → RL signal → better search,
 8. **digests** results into human-readable, peer-reviewable writeups.
+
+**Status of this vision (what works today vs planned).** The tactic-level loop (steps 4–6) is
+implemented and kernel-verified against core Lean + Std (`agent/loop.js`). The rest is
+planned work tracked in `build_order.md`: step 1 intake, 2 (autoformalization, P7), 3
+(blueprint skeleton, P4 — currently stubs), 7 (RL, P6), 8 (digestion, P4.3/P7). The Mathlib-enabled
+repl that steps 2–3 need is not built in this checkout. See README "Current Status".
 
 ### 1.2 Non-goals
 - A Lean language server. (We *consume* lean4web/REPL/LSP.)
@@ -60,13 +68,13 @@ section only argues the shape.
 
 | Module | Role in KanForge | Why it exists |
 |---|---|---|
-| `core/lazy.js` | memoized thunk; `map`/`flatMap` monad | goals/lemmas are expensive; compute each at most once, only when forced (§4.6) |
+| `core/lazy.js` | memoized thunk; `map`/`flatMap` sequential composition | goals/lemmas are expensive; compute each at most once, only when forced (§4.6) |
 | `core/template.js` | strings materialize only on `toString()` | build prompts/tactic templates without paying for unneeded text |
 | `core/functor.js` | `map`/`extract` over "possibly-lazy" structures | work uniformly over results that may or may not be computed yet |
-| `core/pipeline.js` | Kleisli stage composition | the agent loop is a monadic effect stack; stages compose with traced events (§4.5) |
+| `core/pipeline.js` | stage composition | the agent loop is a pipeline of stages; stages compose in order and each emits traced events (§4.5) |
 | `core/context.js` | environment-passing | thread per-run config (budget, model, library) without globals |
 | `core/stream.js` | head-strict / tail-lazy streams | search frontiers, event streams, telemetry windows are unbounded but cheaply forced |
-| `core/fix.js`, `lazify` | coinductive fixed points; memoized proxied calls | self-referential search streams: an infinite frontier as a fixpoint (§4.1) |
+| `core/fix.js`, `lazify` | lazy self-referential streams; memoized proxied calls | search frontiers are unbounded but only forced as far as needed (§4.1) |
 | `core/pullgraph.js` | pull-based dependency DAG; invalidation; serialize/deserialize; error boundaries | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's e-graph); checkpoint/resume, error containment (§4.6) |
 | `core/promise.js` | async-thunk pull | async Lean round-trips without leaking partial state |
 | `core/cache.js` | lazy keyed cache | lemma/mathlib caches; compact-eager vs general-lazy split (§4.6) |
@@ -74,7 +82,7 @@ section only argues the shape.
 | `core/state.js` | straighten/unstraighten (tree ↔ script) | lossless dual representation — the backbone (§4.2) |
 | `core/patch.js` | typed patch envelope | candidates as reorderable/mergeable/discardable graph mutations |
 | `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
-| `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously (Giraud-axiom style, §4.10) |
+| `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously |
 | `optimization/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
 | `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
 | `optimization/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
@@ -103,72 +111,80 @@ contracts is `architecture.md`.
 
 ---
 
-## 4. How the HCT documents elicit the patterns
+## 4. Where the design came from (plain terms first, then the metaphors)
 
 The transformed example documents (`output/primer.md`, `output/working.md`) are a 27-layer higher
-category theory curriculum. The **load-bearing** mappings — the ones that actually drive design
-decisions in `architecture.md` — are:
+category theory curriculum that this project was seeded from; it is where several *names* for
+design elements originated. The mechanisms themselves are all ordinary programming constructs —
+nothing here is a category-theory object. The mappings below are historical lineage, not
+specification; `architecture.md` defines the actual contract in plain terms.
 
-1. **Simplicial sets & ∞-categories → coinductive lazy search.** ∞-structures are determined by
-   all finite skeleta. Keep an infinite, lazily-materialized frontier; the agent forces only the
-   finite skeleton it needs. **Horn-filling = the repair loop**: a failing goal is a horn missing
-   its filler.
-2. **Straightening / unstraightening → the proof-tree ↔ tactic-script duality.** A fibration over
-   C *is* a functor C → Cat. Keep the proof as a tree (good for surgery) and as a script (good for
-   Lean) and switch representations losslessly — `core/state.js`. **This is the backbone; never
-   edit only one side.**
-3. **Kan extensions → the search primitive.** A Kan extension is the best approximate extension
-   of a functor. Every agent act is a Kan extension: given the current partial proof and the
-   target, find the most general fill. `fix`/coinduction gives the infinite extension.
-4. **Adjunctions → generator ⊣ verifier.** LLM-generate is left adjoint to Lean-verify. A goal is
-   solved at the *universal arrow*: when the generator's candidate composes cleanly through the
-   verifier's certificate. Two-sided — search *and* filter for free.
-5. **Monads & algebras → the loop as a monad.** `Pipeline.kleisli` is Kleisli composition; the
-   agent is a monadic effect stack (LLM, Lean check, cache, log, reward).
-6. **Presentable/accessible categories → the caching rule.** Compact objects (finite data) ↔
-   eagerly materialize small lemmas; filtered colimits ↔ lazily generate everything else.
-7. **Stable ∞-categories → residual tracking.** Every tactic application carries its residual goal
-   (cofiber); the collection of residuals is a spectrum of open goals; progress = the spectrum
-   strictly decreases in a well-founded order.
-8. **∞-topoi, descent, hypercovers → distributed proving.** Shard a development into a hypercover
-   of lemma sub-goals, verify locally, require *descent* (coherence on overlaps) before merging.
-9. **Modalities → the skeleton/refine phase switch.** **Skeleton** (idempotent comonad:
-   approximate a theorem by a DAG of `sorry`-stub lemmas) and **Refine** (idempotent monad: fill
-   the lowest `sorry`). The blueprint statement set never changes — only unproved stubs shrink.
-10. **Giraud axioms → an intrinsic invariant spec.** Like Giraud axioms characterize a topos,
-    define correctness by a minimal checkable invariant set (`core/guardrails.js`), not by
-    construction.
-11. **Internal language / type-theoretic semantics → Lean IS the internal language.** Statements,
-    goals, and contexts are already Lean terms; the agent reasons *in* Lean syntax, not about it.
-12. **Base change → generalization/instantiation.** Pulling a proof back along a change of
-    hypotheses is the agent's generalize/instantiate engine (deferred; would live under
-    `agent/roles/` in P7 if a target needs it).
+The mechanisms in plain language (the only load-bearing part):
 
-The remaining layers (fibrations taxonomy, monoidal structure, ∞-topoi internal logic, cohesion,
-(∞,2)-categories, etc.) reinforce these but do not independently change a module decision. The
-full 27-layer walk-through and a mapping table are in `patterns_from_hct.md`.
+- **Lazy evaluation everywhere**: memoized thunks, lazily-forced unbounded streams,
+  self-referential frontiers (`core/lazy`, `core/fix`, `core/stream`).
+- **Pipeline stage composition for the loop**: observe → propose → act → verify → repair →
+  commit, each stage emitting a traced event (`core/pipeline`, `agent/loop.js`).
+- **Dual proof representation**: a proof tree (for surgery) and a Lean script (for the kernel),
+  converted losslessly (`core/state.js`).
+- **LLM proposes, kernel disposes**: every tactic is verified by Lean before commit; a goal is
+  solved when a tactic closes it, a lemma is proved when its full statement is kernel-verified
+  (`agent/solve.js`).
+- **Error-driven repair**: failed tactics are classified and retried with structured feedback
+  (`agent/repair.js`).
+- **Pinned statements**: no weakening of a statement or interface; mutation trips a guardrail
+  (`core/guardrails.js`).
+- **Blueprint skeleton → refine**: decompose a theorem into typechecked `sorry` stubs, then fill
+  the lowest stub bottom-up (`blueprint/`, P4).
+- **Caching split**: eagerly materialize small objects, lazily generate the rest
+  (`core/cache.js`).
+- **Open-goal accounting for progress**: a lemma makes progress when its open-goal count/rank
+  strictly decreases.
+- **Distributed proving (P7)**: shard a development across agents with single-owner lemma edits
+  and coherence checks on overlaps before merging (`growth/multibody.js`).
 
-### 4.1 The resulting design patterns (summary)
+The HCT names those mechanisms were derived from (historical; the full 27-layer walk-through and
+mapping table are in `patterns_from_hct.md`):
+
+| Design mechanism (plain) | HCT name it was derived from |
+|---|---|
+| lazily-forced unbounded search frontier | simplicial sets & ∞-categories (coinductive lazy search) |
+| error-driven repair of a failing goal | horn-filling |
+| proof-tree ↔ tactic-script duality | straightening / unstraightening |
+| lazy repair loop over the goal frontier | Kan extensions (the original working title) |
+| LLM-propose + kernel-verify stopping rule | adjunction (generator ⊣ verifier) |
+| pipeline stage composition | monad / Kleisli composition |
+| eager-vs-lazy caching split by object size | presentable/accessible categories |
+| open-goal accounting for progress | stable ∞-categories (residual tracking) |
+| sharded, coherence-checked distributed proving | descent / hypercovers |
+| skeleton → refine two-phase buildout | modalities (comonad/monad) |
+| minimal checkable invariant set | Giraud axioms |
+| prompts built from Lean terms | internal language |
+| generalize/instantiate over hypotheses (deferred, P7) | base change |
+
+### 4.1 The resulting design patterns (summary, plain terms)
+
 - Dual proof representations with lossless straighten/unstraighten.
-- Adjoint generator/verifier with universal-arrow stopping.
-- Idempotent skeleton/refine modality oscillation.
-- Coinductive, lazily-forced infinite frontiers.
-- Descent-checked distributed proving (hypercovers, P7).
-- Well-founded residual spectra for progress.
-- Presentability-flavored caching (compact eager, general lazy).
-- Kleisli composition of the whole loop.
+- LLM-propose + kernel-verify loop with a goal-solved stopping rule.
+- Blueprint skeleton → refine two-phase buildout (statements never change; stubs shrink).
+- Lazily-forced unbounded search frontiers.
+- Coherence-checked distributed proving (P7).
+- Open-goal accounting for progress.
+- Eager-vs-lazy caching split by object size.
+- Pipeline stage composition of the whole loop.
 
 ### 4.2 Inspiration vs specification
-The HCT mappings are heuristics that *named* the design; they are not the specification.
-Rule: wherever a mapping would require implementing the categorical object literally, the module
-contract in `architecture.md` wins.
 
-- "Kan extensions = the search primitive" names the lazy repair loop over the goal frontier. It
-  does **not** mean computing Kan extensions; `core/fix.js` is a coinductive lazy stream, nothing
-  more.
-- "Adjunctions = generator ⊣ verifier" names the LLM/Lean pairing with kernel-verified stopping
+The HCT mappings are historical heuristics that *named* the design; they are not the
+specification. Rule: wherever a mapping would require implementing the categorical object
+literally, the module contract in `architecture.md` wins.
+
+- "Kan extensions = the search primitive" named the lazy repair loop over the goal frontier. It
+  does **not** mean computing Kan extensions; `core/fix.js` is a lazy self-referential stream,
+  nothing more.
+- "Adjunctions = generator ⊣ verifier" named the LLM/Lean pairing with kernel-verified stopping
   (`agent/solve.js`), not a theorem about adjoint functors.
-- "Monads = the loop" names Kleisli composition of stages (`core/pipeline.js`), not a
+- "Monads = the loop" named stage composition of the pipeline (`core/pipeline.js`), not a
   category-theory library.
 
 Implementors must not add a category-theory dependency or a "Kan-extension engine". If a mapping
@@ -184,7 +200,7 @@ Detailed contracts: `architecture.md`. This is the shape.
 ```
    target (NL / Lean) ──▶ Autoformali-zer ─▶ Blueprint ─▶ ProofState PullGraph
                                                    │
-   LLM adapters ◀─▶  Agent Loop (Pipeline.kleisli): observe→propose→act→verify→repair→commit
+   LLM adapters ◀─▶  Agent Loop (pipeline): observe→propose→act→verify→repair→commit
                           │
                           ▼
                      Lean Backend: lean4web | REPL | CLI  (kernel = the only truth)
@@ -197,8 +213,9 @@ Detailed contracts: `architecture.md`. This is the shape.
 ```
 
 ### 5.1 Component notes (behavior, not contracts)
-- **`lean/backend.js`** — adapter interface + three implementations. Default for RL is the REPL
-  over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes every checked goal
+- **`lean/backend.js`** — adapter interface + two implementations (REPL over a process pool,
+  `lean` CLI; `lean4web` is deferred until a real instance is exercised). Default for RL is the
+  REPL over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes every checked goal
   carry a hash; mutation = `WEAKENED` + guardrail trip.
 - **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); `pull()`
   proves on demand, `serialize()` is the checkpoint. Error boundary per node:
@@ -208,9 +225,11 @@ Detailed contracts: `architecture.md`. This is the shape.
 - **`core/patch.js` + `core/scheduler.js`** — candidates are typed patches (Wave2 §4; the
   Lean-relevant operator subset: tactic / lemma / rewrite / replace), and dispatch is a
   dependency-ordered scheduler with a 7-state lifecycle (Wave2 §7–8; `architecture.md` §2.6–2.7).
-- **`agent/agent.js`** — the six-stage Kleisli loop; every stage emits a traced event.
-- **`blueprint/skeleton.js` + `refine.js`** — the modality pair; stub statements are typechecked
-  so the DAG is kernel-valid even before proving.
+- **`agent/loop.js`** — the six-stage pipeline loop (observe → propose → act → verify → repair →
+  commit); every stage emits a traced event.
+- **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (currently **stubs**,
+  P4); the design intent is that stub statements are typechecked so the DAG is kernel-valid even
+  before proving.
 - **`optimization/*`** — `causal.js` produces the transition matrix, failure predictors,
   bottlenecks, critical path. These are the RL features and the "why is it failing" answers.
 - **`search/*`** — best-of-N baseline, BFS, MCGS with transposition merging, repulsion,

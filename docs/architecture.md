@@ -26,7 +26,7 @@ kanforge/
     stream.js                # LazyStream (head-strict / tail-lazy)
     pipeline.js              # Pipeline.kleisli / compose
     context.js               # ConfigContext (per-run config threading)
-    fix.js                   # coinductive fixed points
+    fix.js                   # lazy self-referential streams (memoized fixpoint)
     promise.js               # PullPromise (async thunk)
     cache.js                 # PullCache + compact/eager split
     pullgraph.js             # proof DAG: nodes, edges, invalidate, serialize
@@ -36,7 +36,7 @@ kanforge/
     state.js                 # straighten / unstraighten (tree ↔ script)
     patch.js                 # typed patch envelope (Wave2 §4): node, op, replacement, scope, meta
     scheduler.js             # dependency-ordered dispatch over the PullGraph (Wave2 §7–8)
-    guardrails.js            # invariant spec + guardrail logic (the Giraud axioms)
+    guardrails.js            # invariant spec + guardrail logic
   lean/
     backend.js               # adapter interface + factory
     backendRepl.js           # leanprover-community/repl impl (JSON-lines, pool)
@@ -45,18 +45,18 @@ kanforge/
     goalText.js              # goal text extraction / normalization
   agent/
     loop.js                  # the agent loop: observe→propose→act→verify→repair→commit; PullGraph + scheduler + backendRepl + one LLM adapter; node id = statement hash; oldest-sorry priority; stop budget; traced events
-    solve.js                 # universal-arrow stopping rule
-    repair.js                # horn-filler repair
+    solve.js                 # goal-solved / lemma-proved stopping rules
+    repair.js                # error-driven repair (classify, retry)
     prompts.js               # prompt builder from Lean terms
-    llm.js                   # provider-neutral client (env-driven): gemini/openai/anthropic/copilot/openrouter + local ollama/vllm; secret only from KANFORGE_LLM_API_KEY or git-ignored .env
+    llm.js                   # sole LLM client: drives the opencode CLI (no API key; KANFORGE_LLM_MODEL selects the model)
     roles/                   # P7 only (multi-agent ensemble)
       autoformalizer.js
       conjecturer.js
       prover.js
       critic.js
   blueprint/
-    skeleton.js              # comonad: theorem → DAG of sorry-stubs
-    refine.js                # monad: fill lowest stub (never edits statements)
+    skeleton.js              # STUB: theorem → DAG of typechecked sorry-stubs (LLM decomposition not implemented)
+    refine.js                # STUB: fill lowest stub bottom-up (never edits statements)
     drift.js                 # re-verify pinned statement hashes
   search/
     bestofn.js               # baseline
@@ -84,9 +84,9 @@ kanforge/
     gui/                     # WebSocket dashboard
   growth/
     commit.js                # commit-per-lemma (statement hash in message)
-    lemmaStore.js            # content-addressed lemma store
-    dataset.js               # verified attempts → training samples
-    multibody.js             # hypercover multi-agent (P7)
+    lemmaStore.js            # PARTIAL: content-addressed lemma store (in-memory only, no persistence)
+    dataset.js               # PARTIAL: verified attempts → training samples (in-memory only, no persistence)
+    multibody.js             # multi-agent lemma-ownership lanes (P7)
   bench/
     harness.js               # run targets, collect KPIs
     kpis.js                  # pass@k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, subgoals/tactic, reuse, guardrail trips
@@ -115,13 +115,13 @@ kanforge/
 ```js
 Lazy.of(fn)         // memoized thunk
 lazy.map(fn)        // functor map
-lazy.flatMap(fn)    // monadic bind
+lazy.flatMap(fn)    // sequential composition (bind)
 lazy.get()          // force
 ```
 
 ### 2.2 `Pipeline`
 ```js
-Pipeline.kleisli(...stages)      // (a) => b via monadic stages
+Pipeline.kleisli(...stages)      // (a) => b, stages applied in order (preserves lazy/promise wrapping)
 Pipeline.compose(a, b)           // stage composition, checked
 stage = { run(ctx, input) -> Promise<output>, name, track(evt) }
 ```
@@ -196,7 +196,7 @@ Edge:
 API:
 ```js
 graph.pull(nodeId)                    // recurse deps, compute, cache; error boundary
-graph.invalidate(nodeId)              // transitive re-prove downstream (context pullback)
+graph.invalidate(nodeId)              // transitive re-prove downstream (invalidate dependents)
 graph.serialize() / deserialize(json) // checkpoint / resume (whole forest = transaction log)
 graph.diff()                          // blueprint diff between runs
 graph.subgraph(targetId)              // critical path extraction
@@ -212,7 +212,7 @@ Rule: repairs edit the tree, then re-straighten; kernel successes un-straighten 
 one representation only (the dual of Wave2's "no representation diverges independently" — we keep
 the tree↔script duality as the backbone and skip a third e-graph representation; see §10).
 
-### 2.5 `guardrails.js` — the invariant spec (Giraud axioms)
+### 2.5 `guardrails.js` — the invariant spec
 ```js
 checkAll(graph, ctx) -> { ok, violations[] }
 // 1. interfaces are pinned (no weakening): statement + signature hash unchanged;
@@ -353,7 +353,7 @@ compare a hash computed under a different `normVersion`.
 
 The agent loop operates at Level 2 (goal e-graph within a single lemma). The scheduler dispatches lemmas at Level 1; for each lemma, the agent loop runs the tactic-level search below.
 
-**Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application is a strategic disconnection that decomposes the current goal into zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
+**Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application reduces the current goal to zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
 
 ```js
 const agent = Pipeline.kleisli(observe, propose, act, verify, repair, commit)
@@ -365,7 +365,7 @@ repair(fail)    -> Patch[]            // isolate failing sub-goal (Wave2 §11 er
 commit(verified)-> LemmaRef           // all goals solved → compose proof script → verify full statement
 ```
 
-Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the e-graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it is a poor disconnection.
+Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the e-graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it makes no progress.
 
 **Event vocabulary** (all stages emit to `optimization/bus.js`; canonical — do not re-list in other
 docs):
