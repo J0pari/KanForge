@@ -31,11 +31,12 @@ import { EventStore } from '../optimization/store.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
 import { bestOfNWithSwiss, buildPairwiseJudge } from '../search/swiss.js';
+import { PremiseRetriever, buildPremisePrompt, findPremiseLockViolations } from '../search/premises.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8 } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5 } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -47,6 +48,9 @@ export class TacticLoop {
         this.checkpointDir = checkpointDir;
         this.useSwiss = useSwiss;
         this.swissN = swissN;
+        this.premiseLocked = premiseLocked;
+        this.premiseTopK = premiseTopK;
+        this.retriever = (premises && premises.length > 0) ? new PremiseRetriever(premises) : null;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -104,6 +108,7 @@ export class TacticLoop {
     async _proveLemma(lemmaId, statement, signal = null) {
         this._emit({ type: 'lemma_goal', lemmaId, statement }, lemmaId);
         const start = Date.now();
+        this._retrievedPremises = new Set(); // union of all per-goal retrievals (premise-lock commit check)
 
         const fail = (error, extra = {}) => {
             const ms = Date.now() - start;
@@ -165,7 +170,7 @@ export class TacticLoop {
                     if (signal?.aborted) break;
 
                     this.llmCalls++;
-                    const tactic = await this._proposeTactic(goal, attempt);
+                    const tactic = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
                     if (!tactic) {
                         this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
                         continue;
@@ -254,6 +259,18 @@ export class TacticLoop {
             const source = buildProofSource(statement, proofScript);
             const verification = await this.backend.verifyProof(source, lemmaId);
 
+            // Premise-lock gate (build_order.md §5.2): when locked, the proof may only
+            // reference premises that were actually retrieved for this lemma.
+            if (this.premiseLocked) {
+                const violations = findPremiseLockViolations(proofScript, this.retriever?.corpus ?? [], [...this._retrievedPremises]);
+                if (violations.length > 0) {
+                    const v = { type: 'PREMISE_LOCK_VIOLATION', message: `proof references unretrieved premises: ${violations.join(', ')}`, names: violations };
+                    this._emit({ type: 'premise_lock_trip', lemmaId, violation: v }, lemmaId);
+                    this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                    fail('guardrails rejected the commit: PREMISE_LOCK_VIOLATION');
+                }
+            }
+
             // HARD guardrail gate at commit (§2.5): pin unchanged, kernel accepted, no leakage.
             const commit = Guardrails.assertLemmaCommit({
                 pin: this.pins.get(lemmaId),
@@ -297,8 +314,8 @@ export class TacticLoop {
         }
     }
 
-    async _proposeTactic(goal, attempt) {
-        const prompt = this._buildTacticPrompt(goal, attempt);
+    async _proposeTactic(goal, attempt, lemmaId = null, goalClassId = null) {
+        const prompt = this._buildTacticPrompt(goal, attempt, lemmaId, goalClassId);
         return this._proposeTacticFromPrompt(prompt);
     }
 
@@ -316,7 +333,14 @@ export class TacticLoop {
         }
     }
 
-    _buildTacticPrompt(goal, attempt) {
+    _buildTacticPrompt(goal, attempt, lemmaId = null, goalClassId = null) {
+        if (this.retriever) {
+            const premises = this.retriever.retrieve(goal, this.premiseTopK);
+            for (const p of premises) this._retrievedPremises?.add(p.name);
+            this._emit({ type: 'premises_retrieved', lemmaId, goalClassId, count: premises.length, names: premises.map(p => p.name) }, lemmaId);
+            return buildPremisePrompt(goal, premises, { attempt, maxAttempts: this.maxTacticsPerGoal, premiseLocked: this.premiseLocked });
+        }
+
         const contextStr = goal.context?.length > 0
             ? `\nContext:\n${goal.context.map(c => `  ${c.name} : ${c.type}`).join('\n')}`
             : '';

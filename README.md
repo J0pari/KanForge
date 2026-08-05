@@ -161,7 +161,7 @@ kanforge/
 │   ├── bestofn.js      # Naive best-of-n baseline
 │   ├── bfs.js          # Breadth-first search
 │   ├── mcgs.js         # Multi-goal coverage search
-│   ├── premises.js     # Premise retrieval stub
+│   ├── premises.js     # BM25 premise retriever (premise-locked search)
 │   └── repulsion.js    # Goedel diversity penalty
 ├── bench/              # Benchmarking
 │   ├── run.js          # Smoke test runner
@@ -204,10 +204,13 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - Refine loop: bottom-up fill, re-split (adds children, never edits statements), drift checks
 - Lemma-store persistence (write-through atomic, corruption-tolerant) and training-dataset
   append/split/contamination logic
+- Premise retrieval (`search/premises.js`): BM25 lexical scorer ranks a premise corpus against the
+  goal; `TacticLoop` injects the top-k premises into the prompt, and premise-locked mode makes
+  `premise-locked` commit-time guardrail tripping a kernel-verified proof that cites an unretrieved
+  premise. The lexical baseline is the bar any learned retriever must beat.
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **Premise retrieval** — `search/premises.js` is a stub (see Limitations).
 - **Search baselines** — `search/*` are standalone. `swiss` is the exception: the live loop can
   consume it via `useSwiss: true` (`agent/loop.js`); `bestofn`, `bfs`, `mcgs`, `repulsion` are not
   wired into the loop.
@@ -237,7 +240,10 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 
 - **Single-tactic proposals**: The LLM proposes one tactic at a time — no proof sketching or multi-step planning. This is a deliberate design decision, not a missing feature.
 - **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1), which is **not built in this checkout**. The P0–P1 smoke gate runs over core Lean + Std. See "Current Status".
-- **Premise retrieval**: Not implemented; `search/premises.js` is a stub. See "Current Status".
+- **Premise retrieval**: A lexical (BM25) baseline is implemented and wired into the loop
+  (`premises`/`premiseLocked`/`premiseTopK` options). The LeanDojo-style *learned* retriever needs
+  the Mathlib-enabled repl build (P0.1) for a real Mathlib corpus — a placeholder corpus can be
+  exercised today.
 - **Search baselines not wired in**: `bestofn`, `bfs`, `mcgs`, `repulsion` are standalone; the live loop does not consume them yet. (`swiss` is wired, opt-in via `useSwiss`.)
 - **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalEGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
@@ -257,8 +263,11 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - [x] **Growth persistence** — `growth/lemmaStore.js` (content-addressed, write-through) and
       `growth/dataset.js` (append-only JSONL, held-out split, contamination check)
 - [ ] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
-      unblocks premise retrieval and the miniF2F corpus
-- [ ] **Premise retrieval** — LeanDojo-style relevance scoring over Mathlib
+      unblocks learned premise retrieval and the miniF2F corpus
+- [x] **Premise retrieval (lexical baseline)** — `search/premises.js`: BM25 scorer, top-k retrieval,
+      premise-locked prompt + commit-time guardrail; wired into `agent/loop.js`. Learned
+      LeanDojo-style relevance scoring over Mathlib is the remaining P0.2 goal (needs the Mathlib
+      repl build).
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops
