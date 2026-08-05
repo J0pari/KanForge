@@ -16,6 +16,30 @@ test('straighten/unstraighten round-trips linear tactic chains', () => {
     assert.strictEqual(assertRoundTrip(tree), true);
 });
 
+test('straighten keeps linear chains at the same column (Lean-valid)', () => {
+    const tree = {
+        tactic: 'intro h',
+        subproofs: [{ tactic: 'omega', subproofs: [] }]
+    };
+    const { script } = straighten(tree);
+    assert.strictEqual(script, 'by\n  intro h\n  omega');
+});
+
+test('straighten places multi-branch bullets at the opener\'s column', () => {
+    const tree = {
+        tactic: 'constructor',
+        subproofs: [
+            { tactic: 'rfl', subproofs: [] },
+            { tactic: 'constructor', subproofs: [
+                { tactic: 'rfl', subproofs: [] },
+                { tactic: 'rfl', subproofs: [] }
+            ]}
+        ]
+    };
+    const { script } = straighten(tree);
+    assert.strictEqual(script, 'by\n  constructor\n  · rfl\n  · constructor\n    · rfl\n    · rfl');
+});
+
 test('straighten/unstraighten round-trips nested multi-branch tactic trees', () => {
     const tree = {
         tactic: 'induction n',

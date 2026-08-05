@@ -78,18 +78,17 @@ test('live: skeleton stubs typecheck under the real Lean kernel', { skip: SKIP_L
     }
 });
 
-// NOTE: a multi-goal root (e.g. `1 = 1 ∧ 2 = 2` with `constructor`) is deliberately
-// NOT used here: the pre-existing agent/loop.js multi-goal e-graph mishandles the repl's
-// "remaining goals" semantics (verified: `constructor` → branch `rfl` is misattributed →
-// commit KERNEL_REJECTED). The stubs' integration is exercised with a single-goal,
-// bottom-up three-lemma development instead; every statement is rfl-closable in core Lean.
+// The root is deliberately a conjunction, so the live path exercises the repl's
+// multi-goal "remaining goals" semantics end-to-end: `constructor` splits the root,
+// each `· rfl` branch closes its own goal, and the composed bullet script must pass
+// the kernel at commit (regression for the old e-graph frontier misattribution).
 test('live: end-to-end skeleton → refine proves a development with no sorry remaining', { skip: SKIP_LIVE, timeout: 900000 }, async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-live-'));
     const backend = makeBackend();
     try {
-        const theorem = 'example : 1 + 1 = 2 + 0 := by sorry';
-        const h1 = 'example : 1 + 1 = 2 := by sorry';
-        const h2 = 'example : 2 + 0 = 2 := by sorry';
+        const theorem = 'example : 1 = 1 ∧ 2 = 2 := by sorry';
+        const h1 = 'example : 1 = 1 := by sorry';
+        const h2 = 'example : 2 = 2 := by sorry';
         const llm = new LiveLLM({
             [theorem]: JSON.stringify({
                 lemmas: [

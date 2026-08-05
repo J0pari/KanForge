@@ -4,10 +4,18 @@
 // buildProofSource: pinned statement + script → full kernel-checkable source
 // assertRoundTrip: bijectivity check, enforced in tests
 //
-// Canonical script layout (script coordinates, 2-space step per depth level):
+// Canonical script layout (2-space step per nesting level):
 //   by
-//     intro h          (indent 2)
-//       omega          (indent 4)
+//     constructor        (indent 2)
+//     · rfl             (bullet at indent 2, content at indent 4)
+//     · constructor     (bullet at indent 2)
+//       · rfl           (inner bullet at indent 4)
+//       · rfl           (indent 4)
+//
+// Lean requires sequential tactics in a block to align at the SAME column, and
+// `·` bullets to sit at the column of the tactic that opened the goal block
+// (bullet content steps two columns deeper). Single-child chains therefore do
+// not deepen — each next tactic continues on a new line at the same column.
 //
 // Rule (§2.4): repairs edit the tree, then re-straighten; kernel successes un-straighten
 // back. Never edit one representation only.
@@ -17,25 +25,30 @@ export function straighten(tree) {
     const map = new Map();
     let counter = 0;
 
-    function render(node, indent = 2) {
+    // Render each tactic line at its column relative to the body: chains reuse
+    // the parent's column, bullets sit at the opener's column with content two
+    // columns deeper (recursing the same way).
+    function renderLines(node, col) {
         const id = `node_${counter++}`;
         map.set(id, node);
-        const spaces = ' '.repeat(indent);
+        const lines = [[col, node.tactic]];
         if (!node.subproofs || node.subproofs.length === 0) {
-            return `${node.tactic}`;
+            return lines;
         } else if (node.subproofs.length === 1) {
-            const sub = render(node.subproofs[0], indent + 2);
-            return `${node.tactic}\n${spaces}${sub}`;
+            return lines.concat(renderLines(node.subproofs[0], col));
         } else {
-            const subs = node.subproofs.map(sp => {
-                const r = render(sp, indent + 2);
-                return `${spaces}· ${r}`;
-            }).join('\n');
-            return `${node.tactic}\n${subs}`;
+            for (const sp of node.subproofs) {
+                const spLines = renderLines(sp, col + 2);
+                const [first, ...rest] = spLines;
+                lines.push([col, `· ${first[1]}`], ...rest);
+            }
+            return lines;
         }
     }
 
-    const scriptBody = render(tree, 2);
+    const scriptBody = renderLines(tree, 0)
+        .map(([col, text]) => `${' '.repeat(col)}${text}`)
+        .join('\n');
     const script = `by\n  ${scriptBody.split('\n').join('\n  ')}`;
     return { script, map };
 }
@@ -54,49 +67,53 @@ export function unstraighten(script) {
 
     let pos = 0;
 
-    function parseNode(expectedIndent) {
+    function parseNode(indent) {
         if (pos >= items.length) return null;
-        const currentIndent = items[pos].indent;
-        if (currentIndent < expectedIndent) return null;
+        const item = items[pos];
+        if (item.bullet || item.indent !== indent) return null;
 
-        const node = { tactic: items[pos].text, subproofs: [] };
+        const node = { tactic: item.text, subproofs: [] };
         pos++;
+        if (pos >= items.length) return node;
 
-        // Children live at currentIndent + 2
-        const childIndent = currentIndent + 2;
-        if (pos < items.length && items[pos].indent === childIndent) {
-            if (items[pos].bullet) {
-                // Multi-branch bullet group
-                while (pos < items.length && items[pos].indent === childIndent && items[pos].bullet) {
-                    const bulletNode = parseBullet(childIndent);
-                    if (bulletNode) node.subproofs.push(bulletNode);
-                }
-            } else {
-                // Single child chain
-                const childNode = parseNode(childIndent);
-                if (childNode) node.subproofs.push(childNode);
+        const next = items[pos];
+        if (next.bullet) {
+            // Multi-branch: `·` bullets at the node's own column.
+            while (pos < items.length && items[pos].bullet && items[pos].indent === indent) {
+                const b = parseBullet(indent);
+                if (b) node.subproofs.push(b);
             }
+        } else if (next.indent === indent) {
+            // Single-child chain continues at the same column.
+            const child = parseNode(indent);
+            if (child) node.subproofs.push(child);
         }
         return node;
     }
 
-    function parseBullet(bulletIndent) {
-        if (pos >= items.length || items[pos].indent !== bulletIndent || !items[pos].bullet) return null;
-        const node = { tactic: items[pos].text, subproofs: [] };
-        pos++;
+    function parseBullet(indent) {
+        if (pos >= items.length) return null;
+        const item = items[pos];
+        if (!item.bullet || item.indent !== indent) return null;
 
-        // Bullet's children live at bulletIndent + 2
-        const childIndent = bulletIndent + 2;
-        if (pos < items.length && items[pos].indent === childIndent) {
-            if (items[pos].bullet) {
-                while (pos < items.length && items[pos].indent === childIndent && items[pos].bullet) {
-                    const b = parseBullet(childIndent);
+        const node = { tactic: item.text, subproofs: [] };
+        pos++;
+        if (pos >= items.length) return node;
+
+        const contentIndent = indent + 2;
+        const next = items[pos];
+        if (next.bullet) {
+            // Nested multi-branch: bullets at the content column.
+            if (next.indent === contentIndent) {
+                while (pos < items.length && items[pos].bullet && items[pos].indent === contentIndent) {
+                    const b = parseBullet(contentIndent);
                     if (b) node.subproofs.push(b);
                 }
-            } else {
-                const childNode = parseNode(childIndent);
-                if (childNode) node.subproofs.push(childNode);
             }
+        } else if (next.indent === contentIndent) {
+            // Single-child chain inside the bullet.
+            const child = parseNode(contentIndent);
+            if (child) node.subproofs.push(child);
         }
         return node;
     }

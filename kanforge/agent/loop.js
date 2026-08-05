@@ -145,9 +145,9 @@ export class TacticLoop {
 
                     if (swissResult.ok) {
                         this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId: currentGoalClass.id, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
-                        egraph.applyTactic(currentGoalClass.id, swissResult.tactic, swissResult.result.newGoals);
+                        const record = egraph.applyTactic(currentGoalClass.id, swissResult.tactic, swissResult.result.newGoals);
                         this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
-                        for (const subgoal of swissResult.result.newGoals) {
+                        for (const subgoal of record.created) {
                             this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                         }
                         if (swissResult.result.newGoals.length === 0) {
@@ -182,9 +182,9 @@ export class TacticLoop {
                         continue;
                     }
 
-                    egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
+                    const record = egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
                     this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
-                    for (const subgoal of result.newGoals) {
+                    for (const subgoal of record.created) {
                         this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                     }
 
@@ -215,9 +215,9 @@ export class TacticLoop {
                         const repairResult = await this.backend.applyTactic(goal, repairedTactic);
 
                         if (repairResult.status === 'ok') {
-                            egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
+                            const record = egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
                             this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
-                            for (const subgoal of repairResult.newGoals) {
+                            for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                             }
                             solved = true;

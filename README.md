@@ -207,10 +207,6 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **Multi-goal roots in the live loop** — a conjunction root split by `constructor` is not yet
-  provable end-to-end: `agent/loop.js` misattributes the repl's "remaining goals" when a branch is
-  closed, producing a proof tree the kernel rejects. The live blueprint suite therefore exercises
-  single-goal developments; case-split `induction` goals work.
 - **Premise retrieval** — `search/premises.js` is a stub (see Limitations).
 - **Search baselines** — `search/*` are standalone. `swiss` is the exception: the live loop can
   consume it via `useSwiss: true` (`agent/loop.js`); `bestofn`, `bfs`, `mcgs`, `repulsion` are not
@@ -243,7 +239,7 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1), which is **not built in this checkout**. The P0–P1 smoke gate runs over core Lean + Std. See "Current Status".
 - **Premise retrieval**: Not implemented; `search/premises.js` is a stub. See "Current Status".
 - **Search baselines not wired in**: `bestofn`, `bfs`, `mcgs`, `repulsion` are standalone; the live loop does not consume them yet. (`swiss` is wired, opt-in via `useSwiss`.)
-- **Blueprint refine vs. multi-goal roots**: skeleton/refine + growth persistence are built and live-kernel-tested for single-goal developments; a `constructor`-split conjunction root still trips the loop's multi-goal handling (see "Current Status").
+- **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalEGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
 ## Roadmap
