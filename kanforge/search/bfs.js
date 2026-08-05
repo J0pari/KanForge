@@ -11,11 +11,12 @@
 import { buildTacticPrompt } from '../agent/prompts.js';
 
 export class BestFirstSearch {
-    constructor({ backend, llm, maxTacticsPerGoal = 8 } = {}) {
+    constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false } = {}) {
         if (!backend || !llm) throw new Error('BestFirstSearch requires a backend and an llm');
         this.backend = backend;
         this.llm = llm;
         this.maxTacticsPerGoal = maxTacticsPerGoal;
+        this.repulsion = repulsion;
     }
 
     _score(goalClass) {
@@ -30,9 +31,12 @@ export class BestFirstSearch {
     // Expand one goal class: try tactics until one applies cleanly. Returns true on progress.
     async expand(egraph, classId) {
         const goal = egraph.currentGoal(classId);
+        const attempted = this.repulsion ? new Set() : null;
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const tactic = await this._propose(goal, attempt);
             if (!tactic) continue;
+            if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
+            attempted?.add(tactic);
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
             egraph.applyTactic(classId, tactic, result.newGoals);

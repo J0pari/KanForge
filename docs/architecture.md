@@ -393,9 +393,17 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
 - `bestofn.js`: for a single goal class, sample k tactic proposals, apply each, take first that succeeds. Pre-filter stage (Wave2: cost-model idea, CPU-side): reject known-failing patterns (causal predictors), premise-lock violations, and near-duplicate patches before verification.
 - `bfs.js`: best-first over goal classes by progress (open-goal spectrum decrease). A state is the set of unsolved goal classes; a tactic application transitions to a new state with simpler subgoal classes.
 - `mcgs.js`: Monte Carlo Graph Search over the e-graph; **transposition merging** is built into the e-graph structure — alpha-equivalent / definitionally-equal goals are already merged into equivalence classes with shared statistics. Node identity is normalized so *every* search variant inherits the merge, not just MCGS.
-- `repulsion.js`: log-ratio diversity penalty among concurrent tactic samples.
+- `repulsion.js`: log-ratio diversity penalty among concurrent tactic samples. `RepulsionSampler`
+  is the actionable form — it refuses to re-propose already-tried tactics (exact-duplicate penalty)
+  and echoes the tried list into the prompt so the generator steers away; `MCGS`/`BestFirstSearch`
+  take a `repulsion` flag that skips duplicate kernel re-checks.
 - `premises.js`: relevance scoring over mathlib; `premiseLocked: true` restricts the generator to retrieved premises only.
 - `swiss.js`: Swiss-tournament best-of-n selection (faithful to Open Proof Corpus methodology, arXiv:2506.21621 §5.5): round-robin tournament judged pairwise by the LLM, Bradley-Terry ratings fit by MLE, candidates applied in rating order with kernel-grounded fallthrough. OPC reports +17% improvement over naive best-of-n (26%→43% vs 26%→36%).
+- `bench/ablation.js`: strategy-ablation harness that runs the smoke set through every recipe
+  (`bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`) under a
+  shared LLM-call budget and reports pass rate AND cost per recipe. It is the measurement apparatus
+  for the §5 acceptance criteria — "MCGS ≥ best-of-N at equal budget; compare, then decide" — and is
+  what turns "swiss is the best choice" into a measured claim.
 
 ---
 

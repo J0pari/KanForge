@@ -193,11 +193,21 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; transposition merging is built into the e-graph structure — alpha-equivalent or definitionally-equal goals are already merged into equivalence classes with shared statistics (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10), so every search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
   reported. Compare, then decide.
+- **Status:** the comparison apparatus ships in `bench/ablation.js` (recipes: `bestofn`, `swiss`,
+  `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`; shared LLM-call budget;
+  per-recipe + per-problem cost/pass tables written to `bench/ablation/`). The measured comparison
+  itself is gated on the P0.1 Mathlib repl build (miniF2F-scale smoke).
 
 ### 5.2 Repulsion + premise retrieval
 - `search/repulsion.js` (Goedel-style diversity penalty) and `search/premises.js`
   (LeanDojo-style relevance scoring over mathlib, "premise-locked" search).
 - **Acceptance:** ablations logged (with/without each) on the smoke set.
+- **Status:** both ship. `repulsion.js` provides `computeRepulsionPenalty` + `RepulsionSampler`
+  (refuses duplicate re-proposals, steers with a "do not repeat" prompt note); `MCGS`/
+  `BestFirstSearch` accept a `repulsion` flag that skips duplicate kernel re-checks. Premise
+  retrieval is the lexical BM25 baseline wired into `TacticLoop`. The with/without ablation logs
+  are produced by `bench/ablation.js` (§5.1 status) — the real smoke-set numbers await the P0.1
+  Mathlib repl build.
 
 ### 5.3 Failure-aware search biasing
 - Use `optimization/causal.js` `getFailurePredictors()` to penalize action sequences known to

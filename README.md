@@ -208,12 +208,20 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
   goal; `TacticLoop` injects the top-k premises into the prompt, and premise-locked mode makes
   `premise-locked` commit-time guardrail tripping a kernel-verified proof that cites an unretrieved
   premise. The lexical baseline is the bar any learned retriever must beat.
+- Search ablation harness (`bench/ablation.js`): runs the smoke set through every recipe —
+  `bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion` — under a
+  shared LLM-call budget and writes per-recipe + per-problem comparison tables (pass rate AND budget,
+  not pass rate alone), implementing the "compare, then decide" acceptance of `build_order.md` §5.1.
+- Repulsion (Goedel-style diversity): `search/repulsion.js` `RepulsionSampler` steers proposals away
+  from already-tried tactics ("do not repeat") and refuses duplicate re-checks in `MCGS`/`BestFirstSearch`.
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **Search baselines** — `search/*` are standalone. `swiss` is the exception: the live loop can
-  consume it via `useSwiss: true` (`agent/loop.js`); `bestofn`, `bfs`, `mcgs`, `repulsion` are not
-  wired into the loop.
+- **Search baselines in the live loop** — `agent/loop.js` only consumes `swiss` (via `useSwiss:
+  true`) as a per-goal strategy. `bestofn`, `bfs`, `mcgs`, `repulsion` are runnable as standalone
+  strategies and as recipes of the ablation harness (`bench/ablation.js`), but the loop has no
+  goal-selection mode that consumes them directly yet — that wiring is the measured next step once
+  the ablation comparison exists.
 - **`kanforge/runs/`** — the directory contains audit packs from **mock-backend test runs**. Some
   entries (e.g. `P → Q` "proved" by `intro h; omega`) are **not** kernel-verified; they were
   produced by the test mock and are not real theorems. Do not cite `runs/` output as evidence.
@@ -268,6 +276,10 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
       premise-locked prompt + commit-time guardrail; wired into `agent/loop.js`. Learned
       LeanDojo-style relevance scoring over Mathlib is the remaining P0.2 goal (needs the Mathlib
       repl build).
+- [x] **Search ablation harness** — `bench/ablation.js`: smoke set × every recipe (bestofn, swiss,
+      ±repulsion, bfs, mcgs) under a shared budget, with per-recipe/per-problem comparison tables
+      (pass rate + LLM/kernel cost). This is the "compare, then decide" machinery that settles
+      swiss-vs-mcgs empirically; the live-loop goal-selection wiring is gated on its first real run.
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops

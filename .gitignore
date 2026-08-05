@@ -6,6 +6,7 @@ kanforge/_extracted/
 
 # Smoke test run artifacts
 kanforge/runs/
+kanforge/bench/ablation/
 
 # Node
 node_modules/

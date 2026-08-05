@@ -27,6 +27,7 @@ export { Hasher, hashChainEntry, verifyHashChain } from './core/hasher.js';
 
 // Search (premise retrieval, selection baselines)
 export { PremiseRetriever, buildPremisePrompt, findPremiseLockViolations, premisesUsedIn, tokenize, extractIdentifiers } from './search/premises.js';
+export { RepulsionSampler, computeRepulsionPenalty } from './search/repulsion.js';
 
 // Optimization (telemetry / RL parameterization)
 export { EventBus } from './optimization/bus.js';

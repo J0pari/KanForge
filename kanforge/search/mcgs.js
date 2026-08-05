@@ -8,12 +8,13 @@
 import { buildTacticPrompt } from '../agent/prompts.js';
 
 export class MCGS {
-    constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4 } = {}) {
+    constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4, repulsion = false } = {}) {
         if (!backend || !llm) throw new Error('MCGS requires a backend and an llm');
         this.backend = backend;
         this.llm = llm;
         this.exploration = exploration;
         this.maxTacticsPerGoal = maxTacticsPerGoal;
+        this.repulsion = repulsion;
     }
 
     _ucb(goalClass, parentVisits) {
@@ -41,10 +42,13 @@ export class MCGS {
 
     async _expand(egraph, goalClass) {
         const goal = egraph.currentGoal(goalClass.id);
+        const attempted = this.repulsion ? new Set() : null;
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const response = await this.llm.complete(buildTacticPrompt(goal, attempt, this.maxTacticsPerGoal));
             const tactic = response.text?.trim();
             if (!tactic) continue;
+            if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
+            attempted?.add(tactic);
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
             egraph.applyTactic(goalClass.id, tactic, result.newGoals);
