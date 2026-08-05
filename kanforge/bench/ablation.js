@@ -22,7 +22,7 @@
 // The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
 // per problem per recipe), so prefer --problems=<subset> to bound wall time.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoalEGraph } from '../core/egraph.js';
@@ -212,8 +212,19 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
     return report;
 }
 
-function summarize(rows, { recipes, problems, N, maxLlmCalls }) {
-    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
+// Crash-safe progress: append each completed (recipe, problem) row to rows.ndjson inside the
+// outDir, so a partial run survives a crash and can be inspected while it is still running.
+function appendRow(outDir, row) {
+    if (!outDir) return;
+    try {
+        mkdirSync(outDir, { recursive: true });
+        appendFileSync(path.join(outDir, 'rows.ndjson'), `${JSON.stringify(row)}\n`);
+    } catch (err) {
+        console.error(`[ablation] failed to write progress row: ${err.message}`);
+    }
+}
+
+function summarize(rows, { recipes, problems, N, maxLlmCalls }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
         recipe: r,
         solved: 0,
         total: problems.length,
@@ -359,7 +370,14 @@ async function main() {
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
     try {
-        const report = await runAblation({ backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir });
+        const report = await runAblation({
+            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir,
+            onRow: (row) => {
+                const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}`;
+                console.log(`[ablation] ${line}`);
+                appendRow(outDir, row);
+            }
+        });
         console.log(`\nAblation complete: ${recipes.length} recipes x ${problems.length} problems -> ${outDir}`);
         console.log(renderMarkdown(report));
     } finally {
