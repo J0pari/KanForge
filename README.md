@@ -148,6 +148,14 @@ kanforge/
 │   ├── bus.js          # Event bus
 │   ├── store.js        # Causal event store
 │   └── metrics.js      # Performance metrics
+├── blueprint/          # Theorem → DAG of stubs, then fill bottom-up
+│   ├── skeleton.js     # LLM decomposition → kernel-typechecked sorry-stubs
+│   ├── dag.js          # Blueprint validation + topological order
+│   ├── refine.js       # Fill lowest unproved stub; re-split on failure
+│   └── run.js          # Skeleton → refine CLI driver
+├── growth/             # Persistence for the growth loop
+│   ├── lemmaStore.js   # Content-addressed lemma store (write-through JSON)
+│   └── dataset.js      # Append-only training samples + held-out split
 ├── search/             # Standalone search baselines
 │   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B)
 │   ├── bestofn.js      # Naive best-of-n baseline
@@ -179,6 +187,9 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - Linear arithmetic over `Nat` via `omega` — `trans_lt` proved end-to-end by the loop
 - Multi-goal decomposition via `induction` (case `zero` / `succ`), closed with `rfl`
 - Kernel verification of the assembled full-source proof script
+- Blueprint pipeline (`test/blueprint.live.test.js`): skeleton stubs (statement hash pinned per
+  stub) typecheck under the real kernel; a three-lemma development refines end-to-end
+  (skeleton → refine → lemma store/dataset capture) with no `sorry` remaining
 
 **Verified by unit/integration tests** (mock kernel):
 
@@ -188,13 +199,18 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - Checkpoint/resume via `state.json`
 - Causal telemetry (event bus + store query)
 - Swiss-tournament best-of-n selection (Bradley-Terry ranking + kernel-grounded fallthrough)
+- Blueprint DAG validation + topological ordering (`blueprint/dag.js`)
+- Skeleton decomposition parsing + stub normalization (incl. `lemma` → `theorem`)
+- Refine loop: bottom-up fill, re-split (adds children, never edits statements), drift checks
+- Lemma-store persistence (write-through atomic, corruption-tolerant) and training-dataset
+  append/split/contamination logic
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **`blueprint/skeleton.js`** — STUB. `SkeletonGenerator.generate()` never calls its LLM client and
-  returns one hardcoded placeholder stub (`lemma ... : True := by sorry`) regardless of input.
-- **`blueprint/refine.js`** — STUB. `BlueprintRefiner.refine()` returns the blueprint unchanged.
-- **`growth/lemmaStore.js`, `growth/dataset.js`** — in-memory only; nothing persists across runs.
+- **Multi-goal roots in the live loop** — a conjunction root split by `constructor` is not yet
+  provable end-to-end: `agent/loop.js` misattributes the repl's "remaining goals" when a branch is
+  closed, producing a proof tree the kernel rejects. The live blueprint suite therefore exercises
+  single-goal developments; case-split `induction` goals work.
 - **Premise retrieval** — `search/premises.js` is a stub (see Limitations).
 - **Search baselines** — `search/*` are standalone. `swiss` is the exception: the live loop can
   consume it via `useSwiss: true` (`agent/loop.js`); `bestofn`, `bfs`, `mcgs`, `repulsion` are not
@@ -227,7 +243,7 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 - **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1), which is **not built in this checkout**. The P0–P1 smoke gate runs over core Lean + Std. See "Current Status".
 - **Premise retrieval**: Not implemented; `search/premises.js` is a stub. See "Current Status".
 - **Search baselines not wired in**: `bestofn`, `bfs`, `mcgs`, `repulsion` are standalone; the live loop does not consume them yet. (`swiss` is wired, opt-in via `useSwiss`.)
-- **Blueprint / growth layers**: The blueprint (skeleton/refine) and growth modules are stubs or in-memory only. See "Current Status".
+- **Blueprint refine vs. multi-goal roots**: skeleton/refine + growth persistence are built and live-kernel-tested for single-goal developments; a `constructor`-split conjunction root still trips the loop's multi-goal handling (see "Current Status").
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
 ## Roadmap
@@ -238,6 +254,12 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
       improves best-of-n accuracy by 17% (26% → 43% vs 26% → 36% on its 134-problem subset).
 - [x] **Wire Swiss ranking into the live loop** — `agent/loop.js` consumes `search/swiss.js`
       when `useSwiss: true` (opt-in; `swissN` sets tournament size, default 8)
+- [x] **Blueprint skeleton** — `blueprint/skeleton.js`: LLM decomposition of a theorem into a DAG of
+      kernel-typechecked `sorry`-stubs (backend-checks each stub; statement hash pinned; `lemma`→`theorem`)
+- [x] **Blueprint refine** — `blueprint/refine.js`: fills the lowest unproved stub bottom-up via the
+      loop, re-splits stuck stubs (adds children, never edits statements), drift-checked each round
+- [x] **Growth persistence** — `growth/lemmaStore.js` (content-addressed, write-through) and
+      `growth/dataset.js` (append-only JSONL, held-out split, contamination check)
 - [ ] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
       unblocks premise retrieval and the miniF2F corpus
 - [ ] **Premise retrieval** — LeanDojo-style relevance scoring over Mathlib

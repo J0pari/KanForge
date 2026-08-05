@@ -8,7 +8,7 @@ In plain terms, the resulting mechanisms are: lazy evaluation and lazily-forced 
 frontiers; pipeline stage composition for the agent loop; a dual proof-tree / Lean-script
 representation; LLM-propose + kernel-verify with a goal-solved stopping rule; error-driven
 repair; pinned statements (no weakening); a blueprint skeleton → refine two-phase buildout
-(currently stubs, P4); an eager-vs-lazy caching split; open-goal accounting for progress; and
+(P4, implemented); an eager-vs-lazy caching split; open-goal accounting for progress; and
 sharded, coherence-checked distributed proving (P7). Each is detailed in `architecture.md` and
 sequenced in `build_order.md`.
 

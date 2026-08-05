@@ -55,8 +55,10 @@ kanforge/
       prover.js
       critic.js
   blueprint/
-    skeleton.js              # STUB: theorem → DAG of typechecked sorry-stubs (LLM decomposition not implemented)
-    refine.js                # STUB: fill lowest stub bottom-up (never edits statements)
+    skeleton.js              # theorem → DAG of kernel-typechecked sorry-stubs (LLM decomposition; every stub backend-checked; lemma→theorem normalization)
+    dag.js                   # blueprint validation, topological order, cycle detection, dependents index
+    refine.js                # fill the lowest unproved stub bottom-up via the loop; re-split on failure (adds children, never edits statements)
+    run.js                   # skeleton → refine CLI driver; writes per-run lemma store + training dataset under runs/
     drift.js                 # re-verify pinned statement hashes
   search/
     bestofn.js               # baseline
@@ -84,8 +86,8 @@ kanforge/
     gui/                     # WebSocket dashboard
   growth/
     commit.js                # commit-per-lemma (statement hash in message)
-    lemmaStore.js            # PARTIAL: content-addressed lemma store (in-memory only, no persistence)
-    dataset.js               # PARTIAL: verified attempts → training samples (in-memory only, no persistence)
+    lemmaStore.js            # content-addressed lemma store, persisted to <dir>/lemmas/*.json (write-through atomic, corruption-tolerant)
+    dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
   bench/
     harness.js               # run targets, collect KPIs

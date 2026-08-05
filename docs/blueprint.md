@@ -32,9 +32,10 @@ A general agentic loop that:
 8. **digests** results into human-readable, peer-reviewable writeups.
 
 **Status of this vision (what works today vs planned).** The tactic-level loop (steps 4–6) is
-implemented and kernel-verified against core Lean + Std (`agent/loop.js`). The rest is
-planned work tracked in `build_order.md`: step 1 intake, 2 (autoformalization, P7), 3
-(blueprint skeleton, P4 — currently stubs), 7 (RL, P6), 8 (digestion, P4.3/P7). The Mathlib-enabled
+implemented and kernel-verified against core Lean + Std (`agent/loop.js`). Step 3 (blueprint
+skeleton → refine, P4) is implemented and live-kernel-tested. The rest is planned work tracked
+in `build_order.md`: step 1 intake, 2 (autoformalization, P7), 7 (RL, P6), 8 (digestion, P4.3/P7).
+The Mathlib-enabled
 repl that steps 2–3 need is not built in this checkout. See README "Current Status".
 
 ### 1.2 Non-goals
@@ -227,9 +228,9 @@ Detailed contracts: `architecture.md`. This is the shape.
   dependency-ordered scheduler with a 7-state lifecycle (Wave2 §7–8; `architecture.md` §2.6–2.7).
 - **`agent/loop.js`** — the six-stage pipeline loop (observe → propose → act → verify → repair →
   commit); every stage emits a traced event.
-- **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (currently **stubs**,
-  P4); the design intent is that stub statements are typechecked so the DAG is kernel-valid even
-  before proving.
+- **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (built, P4; live-kernel
+  tested): stub statements are kernel-typechecked so the DAG is kernel-valid even before proving;
+  refine fills the lowest unproved stub bottom-up and re-splits stuck stubs (never edits statements).
 - **`optimization/*`** — `causal.js` produces the transition matrix, failure predictors,
   bottlenecks, critical path. These are the RL features and the "why is it failing" answers.
 - **`search/*`** — best-of-N baseline, BFS, MCGS with transposition merging, repulsion,
