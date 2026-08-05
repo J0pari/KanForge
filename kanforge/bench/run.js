@@ -14,6 +14,7 @@
 
 import { TacticLoop } from '../agent/loop.js';
 import { SMOKE_PROBLEMS, tacticFamily, validateSmokeSet } from './smoke.js';
+import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
 
 export async function runSmokeSet({ backend, llm, problems = SMOKE_PROBLEMS, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, checkpointDir = null, resumeFrom = null } = {}) {
     if (!backend || !llm) throw new Error('runSmokeSet requires a real backend and a real llm client');
@@ -133,12 +134,19 @@ async function main() {
     const ENV = loadEnv();
 
     const ids = process.argv.slice(2).filter(a => !a.startsWith('--'));
+    const setArg = process.argv.find(a => a.startsWith('--set='));
     const resumeArg = process.argv.find(a => a.startsWith('--resume='));
     const checkpointArg = process.argv.find(a => a.startsWith('--checkpoint-dir='));
 
-    const problems = ids.length ? SMOKE_PROBLEMS.filter(p => ids.includes(p.id)) : SMOKE_PROBLEMS;
+    const set = setArg ? setArg.split('=')[1] : 'core';
+    if (set !== 'core' && set !== 'mathlib') {
+        console.error('unknown problem set; known sets: core, mathlib');
+        process.exit(2);
+    }
+    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : SMOKE_PROBLEMS;
+    const problems = ids.length ? problemsSource.filter(p => ids.includes(p.id)) : problemsSource;
     if (ids.length && problems.length !== ids.length) {
-        const known = SMOKE_PROBLEMS.map(p => p.id).join(', ');
+        const known = problemsSource.map(p => p.id).join(', ');
         console.error(`unknown problem id; known ids: ${known}`);
         process.exit(2);
     }
@@ -150,8 +158,12 @@ async function main() {
     const pool = new BackendRepl({
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
+        leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency,
-        timeoutMs: 60_000
+        // Mathlib imports take 5-35s cold; the core set is near-instant.
+        timeoutMs: set === 'mathlib' ? 180_000 : 60_000,
+        // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
+        workerPerProblem: set === 'mathlib'
     });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });

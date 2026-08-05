@@ -12,6 +12,9 @@ import { loadEnv } from '../env.js';
 const ENV = loadEnv();
 const REPL_BIN = ENV.KANFORGE_REPL_BIN;
 const SKIP_LIVE = !REPL_BIN || !fs.existsSync(REPL_BIN);
+// Mathlib imports additionally need LEAN_PATH, which the backend reconstructs from
+// KANFORGE_LEAN_PROJECT. Skip the Mathlib case unless the project is configured.
+const SKIP_MATHLIB = SKIP_LIVE || !ENV.KANFORGE_LEAN_PROJECT || !fs.existsSync(ENV.KANFORGE_LEAN_PROJECT);
 
 test('live REPL backend round-trip (P0.1 deliverable & P0.3 resilience)', { skip: SKIP_LIVE, timeout: 60000 }, async () => {
     const backend = new BackendRepl({
@@ -45,6 +48,26 @@ test('live REPL backend round-trip (P0.1 deliverable & P0.3 resilience)', { skip
         assert.strictEqual(infos.restarts, 0);
         assert.strictEqual(infos.hangs, 0);
         assert.strictEqual(infos.parseErrors, 0);
+    } finally {
+        await backend.shutdown(3000);
+    }
+});
+
+test('live REPL loads a Mathlib module (P0.1 build; LEAN_PATH wiring)', { skip: SKIP_MATHLIB, timeout: 420000 }, async () => {
+    const backend = new BackendRepl({
+        replBin: REPL_BIN,
+        toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
+        leanProject: ENV.KANFORGE_LEAN_PROJECT,
+        concurrency: 1,
+        timeoutMs: 300000
+    });
+
+    try {
+        // `Real` is Mathlib-only: it resolves only if the repl found Mathlib's oleans via
+        // the LEAN_PATH that KANFORGE_LEAN_PROJECT enables.
+        const res = await backend.check('import Mathlib.Data.Real.Basic\n#check Real');
+        assert.strictEqual(res.status, 'verified', JSON.stringify(res.error));
+        assert.ok(res.warnings.some(w => w.data.includes('Real : Type')), `expected #check Real info, got ${JSON.stringify(res.warnings)}`);
     } finally {
         await backend.shutdown(3000);
     }

@@ -57,11 +57,40 @@ function toolchainBinDir(toolchain) {
     return null;
 }
 
-function resolveReplEnv(toolchain) {
+// The repl's `main` calls `initSearchPath (← Lean.findSysroot)`, which replaces the embedded
+// workspace search path with the toolchain sysroot plus the LEAN_PATH env var (repl README:
+// "run as `lake env <repl>`"). Mathlib and its deps live in
+// <project>/.lake/build/lib/lean and <project>/.lake/packages/<pkg>/.lake/build/lib/lean, so
+// we reconstruct LEAN_PATH from the project layout instead of shelling out to `lake env`.
+function leanProjectLibDirs(leanProject) {
+    const dirs = [];
+    const root = path.join(leanProject, '.lake', 'build', 'lib', 'lean');
+    if (fs.existsSync(root)) dirs.push(root);
+    let packages;
+    try {
+        packages = fs.readdirSync(path.join(leanProject, '.lake', 'packages'));
+    } catch {
+        return dirs;
+    }
+    for (const pkg of packages) {
+        const dir = path.join(leanProject, '.lake', 'packages', pkg, '.lake', 'build', 'lib', 'lean');
+        if (fs.existsSync(dir)) dirs.push(dir);
+    }
+    return dirs;
+}
+
+function resolveReplEnv(toolchain, leanProject) {
+    const env = { ...process.env };
     const bin = toolchainBinDir(toolchain);
-    if (!bin) return process.env;
-    const current = process.env.PATH ?? '';
-    return { ...process.env, PATH: `${bin}${current ? path.delimiter + current : ''}` };
+    if (bin) {
+        const current = env.PATH ?? '';
+        env.PATH = `${bin}${current ? path.delimiter + current : ''}`;
+    }
+    if (leanProject) {
+        const dirs = leanProjectLibDirs(leanProject);
+        if (dirs.length) env.LEAN_PATH = dirs.join(path.delimiter);
+    }
+    return env;
 }
 
 export function parseLeanMessages(messages) {
@@ -208,10 +237,16 @@ export class BackendRepl {
         this.timeoutMs = options.timeoutMs ?? 60_000;
         this.replBin = options.replBin ?? process.env.KANFORGE_REPL_BIN ?? 'repl';
         this.toolchain = options.toolchain ?? process.env.KANFORGE_LEAN_TOOLCHAIN ?? null;
+        this.leanProject = options.leanProject ?? process.env.KANFORGE_LEAN_PROJECT ?? null;
         this.mathlibHash = options.mathlibHash ?? null;
         this.leanVersion = options.leanVersion ?? null;
+        // The repl keeps every environment snapshot forever (REPL.Main cmdStates), so a worker
+        // reused across many Mathlib imports eventually dies with "INTERNAL PANIC: out of
+        // memory". workerPerProblem retires a session's worker when its lemma ends, giving each
+        // problem a fresh process (use for Mathlib-heavy workloads).
+        this.workerPerProblem = options.workerPerProblem ?? false;
         this.startedAt = Date.now();
-        this._env = resolveReplEnv(this.toolchain);
+        this._env = resolveReplEnv(this.toolchain, this.leanProject);
 
         this._workers = [];
         this._inflight = new Map();   // statementHash -> shared promise (single-flight)
@@ -448,12 +483,18 @@ export class BackendRepl {
         return { status: 'verified', error: undefined };
     }
 
-    // Release the leased session worker for a lemma. Idempotent.
+    // Release the leased session worker for a lemma. Idempotent. With workerPerProblem the
+    // worker is retired and replaced instead of returned to the pool, so Mathlib-heavy runs get
+    // a fresh process per problem (the repl accumulates environments until it OOMs otherwise).
     endLemma(key) {
         const session = this._sessions.get(key);
         if (!session) return;
         this._sessions.delete(key);
         const { worker } = session;
+        if (this.workerPerProblem) {
+            if (worker.isAlive() && !worker._retired) this._retire(worker);
+            return;
+        }
         if (worker.isAlive() && !worker._retired) {
             worker.busy = false;
             this._wakeWaiters();

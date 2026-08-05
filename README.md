@@ -80,19 +80,29 @@ lake exe cache get            # fetch prebuilt mathlib oleans (network required)
 lake build repl               # binary at .lake/packages/repl/.lake/build/bin/repl
 ```
 
-Then point `KANFORGE_REPL_BIN` at that binary (`.exe` on Windows). Every repl session can
-`import Mathlib`.
+Then point `KANFORGE_REPL_BIN` at that binary (`.exe` on Windows) and set
+`KANFORGE_LEAN_PROJECT` to the `lean-project` directory. The backend spawns the repl with the
+toolchain `bin` on `PATH` (its runtime DLLs) and `LEAN_PATH` built from
+`.lake/build/lib/lean` + `.lake/packages/*/.lake/build/lib/lean`, so every repl session can
+`import Mathlib` (the repl's `initSearchPath` only honors the sysroot plus `LEAN_PATH`, which is
+why `lake env <repl>` is the documented invocation). Full `import Mathlib` takes minutes per
+process; statements should import the specific Mathlib modules they need.
 
 ## Usage
 
 ### Running the Smoke Test
 
 ```bash
-# Run all 23 smoke problems
+# Run all 23 core smoke problems
 node bench/run.js
+
+# Run all 12 Mathlib problems (ring/linarith/norm_num/decide/positivity/field_simp/tauto over
+# Real, Int, Nat.Prime; each imports the specific modules it needs; one repl process per problem)
+node bench/run.js --set=mathlib
 
 # Run specific problems
 node bench/run.js trans_lt add_double nat_sub
+node bench/run.js --set=mathlib ring_distrib real_sq_ring
 
 # Run with checkpointing (writes state.json into the given directory)
 node bench/run.js --checkpoint-dir=runs/my_run
@@ -177,10 +187,11 @@ kanforge/
 ## Current Status
 
 **Kernel-verified scope.** Every "verified against the real Lean kernel" claim below is against
-the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in this checkout**:
-`import Mathlib` does not work with the current `KANFORGE_REPL_BIN`. Mathlib-only tactics —
-`ring`, `linarith`, `norm_num`, `tauto`, etc. — are therefore unavailable until the P0.1 build in
-`lean-project` completes (see Roadmap).
+the **Mathlib-enabled repl** build in `lean-project` (v4.33.0-rc1): `import Mathlib` works — the
+live suite covers a Mathlib-only module (`Mathlib.Data.Real.Basic`, `#check Real` →
+`Real : Type`) in addition to the core Lean + Std cases. Mathlib-only tactics — `ring`,
+`linarith`, `norm_num`, `tauto`, etc. — are available when the statement imports the module that
+provides them (e.g. `Mathlib.Data.Real.Basic` / `Mathlib.Data.Nat.Basic`).
 
 **Verified against the real Lean 4 kernel** (live REPL suite, no mocks; core Lean + Std only):
 
@@ -247,7 +258,10 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
 ## Limitations
 
 - **Single-tactic proposals**: The LLM proposes one tactic at a time — no proof sketching or multi-step planning. This is a deliberate design decision, not a missing feature.
-- **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. require the Mathlib-enabled repl build (P0.1), which is **not built in this checkout**. The P0–P1 smoke gate runs over core Lean + Std. See "Current Status".
+- **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. are available with
+  the Mathlib-enabled repl (P0.1, built in `lean-project` and exercised by the live suite). Each
+  statement must `import` the Mathlib module that provides the tactic/symbol — a full
+  `import Mathlib` costs minutes per process, so module-level imports are used instead. See "Current Status".
 - **Premise retrieval**: A lexical (BM25) baseline is implemented and wired into the loop
   (`premises`/`premiseLocked`/`premiseTopK` options). The LeanDojo-style *learned* retriever needs
   the Mathlib-enabled repl build (P0.1) for a real Mathlib corpus — a placeholder corpus can be
@@ -270,8 +284,9 @@ the **core Lean 4 + Std** repl build. The Mathlib-enabled repl is **not built in
       loop, re-splits stuck stubs (adds children, never edits statements), drift-checked each round
 - [x] **Growth persistence** — `growth/lemmaStore.js` (content-addressed, write-through) and
       `growth/dataset.js` (append-only JSONL, held-out split, contamination check)
-- [ ] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
-      unblocks learned premise retrieval and the miniF2F corpus
+- [x] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
+      unblocks learned premise retrieval and the miniF2F corpus. Live suite exercises `Mathlib.Data.Real.Basic`
+      via the `LEAN_PATH` the backend reconstructs from `KANFORGE_LEAN_PROJECT`.
 - [x] **Premise retrieval (lexical baseline)** — `search/premises.js`: BM25 scorer, top-k retrieval,
       premise-locked prompt + commit-time guardrail; wired into `agent/loop.js`. Learned
       LeanDojo-style relevance scoring over Mathlib is the remaining P0.2 goal (needs the Mathlib

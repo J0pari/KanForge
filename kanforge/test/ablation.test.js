@@ -11,6 +11,8 @@ import { RepulsionSampler, computeRepulsionPenalty } from '../search/repulsion.j
 import { MCGS } from '../search/mcgs.js';
 import { BestFirstSearch } from '../search/bfs.js';
 import { RECIPES, runAblation, renderMarkdown } from '../bench/ablation.js';
+import { validateSmokeSet } from '../bench/smoke.js';
+import { MATHLIB_PROBLEMS } from '../bench/mathlibSmoke.js';
 import { GoalEGraph } from '../core/egraph.js';
 
 // Deterministic llm: cycles a per-goal-type tactic pool (found by substring match on the prompt
@@ -50,11 +52,17 @@ class ScriptedBackend {
         this.roots = roots;
         this.rules = rules;
         this.applyCalls = [];
+        this.extractCalls = 0;
+        this.endLemmaCalls = [];
     }
 
     async extractGoals(statement) {
         const type = this.roots.get(statement);
-        return type ? [{ type, context: [] }] : null;
+        return type ? [{ type, context: [], sessionKey: `k_${this.extractCalls++}` }] : null;
+    }
+
+    endLemma(key) {
+        this.endLemmaCalls.push(key);
     }
 
     async applyTactic(goal, tactic) {
@@ -238,6 +246,19 @@ test('runAblation rejects an unknown recipe', async () => {
     );
 });
 
+test('runAblation releases every proof session after each problem (no worker leak)', async () => {
+    const { backend, llm } = makeWorld();
+    const report = await runAblation({ backend, llm, problems: PROBLEMS, recipes: ['bestofn', 'swiss', 'mcgs'], N: 4, maxLlmCalls: 100 });
+    // Every problem (per recipe) opened a session and must have released it.
+    assert.strictEqual(backend.endLemmaCalls.length, 3 * PROBLEMS.length);
+    const keys = backend.endLemmaCalls;
+    assert.strictEqual(new Set(keys).size, keys.length, 'each session key released exactly once');
+    for (const d of report.detail) {
+        if (d.id === 'p_open') assert.strictEqual(d.solved, false);
+        else assert.strictEqual(d.solved, true, `${d.recipe}/${d.id} should solve in the mock world`);
+    }
+});
+
 test('renderMarkdown produces a table anchored to the acceptance criteria', () => {
     const md = renderMarkdown({
         generatedAt: new Date().toISOString(),
@@ -255,4 +276,20 @@ test('renderMarkdown produces a table anchored to the acceptance criteria', () =
     assert.match(md, /Pass rate vs\. budget/);
     assert.match(md, /MCGS ≥ best-of-N at equal budget/);
     assert.match(md, /swiss/);
+});
+
+test('MATHLIB_PROBLEMS set is well-formed (stub shape, imports, known families)', () => {
+    assert.doesNotThrow(() => validateSmokeSet(MATHLIB_PROBLEMS));
+    assert.ok(MATHLIB_PROBLEMS.length >= 10, 'mathlib set should cover the tactic families');
+
+    const known = ['ring', 'linarith', 'norm_num', 'decide', 'positivity', 'simp', 'field_simp', 'tauto'];
+    for (const p of MATHLIB_PROBLEMS) {
+        assert.ok(p.statement.startsWith('import Mathlib.'), `${p.id} must import a Mathlib module`);
+        assert.ok(known.includes(p.family), `${p.id} family '${p.family}' not in ${known.join('/')}`);
+        assert.match(p.statement, /:= by sorry\s*$/, `${p.id} must be a by-sorry stub`);
+    }
+    // Mathlib-only content: no problem is provable from core Lean alone — each family needs the
+    // named Mathlib tactic or a Mathlib predicate (Real, Nat.Prime).
+    const ids = new Set(MATHLIB_PROBLEMS.map(p => p.id));
+    assert.ok(ids.size === MATHLIB_PROBLEMS.length, 'ids must be unique');
 });

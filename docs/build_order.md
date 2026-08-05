@@ -195,8 +195,18 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   reported. Compare, then decide.
 - **Status:** the comparison apparatus ships in `bench/ablation.js` (recipes: `bestofn`, `swiss`,
   `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`; shared LLM-call budget;
-  per-recipe + per-problem cost/pass tables written to `bench/ablation/`). The measured comparison
-  itself is gated on the P0.1 Mathlib repl build (miniF2F-scale smoke).
+  per-recipe + per-problem cost/pass tables written to `bench/ablation/`). The P0.1 Mathlib repl
+  build is **done** (`lean-project`, v4.33.0-rc1): the backend spawns it with the toolchain `bin`
+  on `PATH` and a `LEAN_PATH` reconstructed from `KANFORGE_LEAN_PROJECT`, and the live suite
+  proves `import Mathlib.Data.Real.Basic` + `#check Real` typechecks. A **Mathlib problem set**
+  ships in `bench/mathlibSmoke.js` (`--set=mathlib`; 12 problems exercising ring, linarith,
+  norm_num, decide, positivity, field_simp, tauto over Real/Int/`Nat.Prime`, each verified
+  solvable by its family tactic through the real kernel). Two harness fixes made Mathlib runs
+  viable: the drivers now release every proof session (`endLemma`), and `workerPerProblem` gives
+  each problem a fresh repl process — the repl keeps every environment snapshot forever and a
+  reused worker dies with `INTERNAL PANIC: out of memory` after ~9 heavy imports. The measured
+  comparison (`--set=mathlib`) can now run; prefer `--problems=<subset>` to bound wall time
+  (each statement imports its modules, 5-35s per problem per recipe).
 
 ### 5.2 Repulsion + premise retrieval
 - `search/repulsion.js` (Goedel-style diversity penalty) and `search/premises.js`
@@ -206,8 +216,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   (refuses duplicate re-proposals, steers with a "do not repeat" prompt note); `MCGS`/
   `BestFirstSearch` accept a `repulsion` flag that skips duplicate kernel re-checks. Premise
   retrieval is the lexical BM25 baseline wired into `TacticLoop`. The with/without ablation logs
-  are produced by `bench/ablation.js` (§5.1 status) — the real smoke-set numbers await the P0.1
-  Mathlib repl build.
+  are produced by `bench/ablation.js` (§5.1 status). The P0.1 Mathlib repl build that was the
+  gate is **done**; the real smoke-set numbers are the current open item.
 
 ### 5.3 Failure-aware search biasing
 - Use `optimization/causal.js` `getFailurePredictors()` to penalize action sequences known to

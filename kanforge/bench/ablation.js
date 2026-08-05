@@ -16,8 +16,11 @@
 // Cost model: every LLM call (proposal + swiss judge) and every kernel applyTactic is counted
 // per problem per recipe, so the tables report pass rate AND budget, not pass rate alone.
 //
-// CLI: node bench/ablation.js [--recipes=bestofn,swiss] [--problems=trans_lt,add_comm]
-//                             [--N=8] [--max-llm-calls=400] [--out=bench/ablation]
+// CLI: node bench/ablation.js [--set=core|mathlib] [--recipes=bestofn,swiss]
+//                             [--problems=trans_lt,add_comm] [--N=8] [--max-llm-calls=400]
+//                             [--out=bench/ablation]
+// The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
+// per problem per recipe), so prefer --problems=<subset> to bound wall time.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -29,6 +32,7 @@ import { RepulsionSampler } from '../search/repulsion.js';
 import { BestFirstSearch } from '../search/bfs.js';
 import { MCGS } from '../search/mcgs.js';
 import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
+import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
 
 export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 export const RANKING_RECIPES = ['bestofn', 'swiss', 'swiss+repulsion'];
@@ -105,6 +109,7 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
         return { solved: false, error: 'no root goal', llmCalls: 0, tacticCalls: 0, ms: 0 };
     }
     const egraph = openRootEGraph(rootGoals);
+    const sessionKey = rootGoals[0].sessionKey;
 
     const t0 = Date.now();
     let goalCount = 0;
@@ -133,6 +138,8 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
         }
     }
 
+    backend.endLemma(sessionKey);
+
     return {
         solved: egraph.isRootSolved(),
         error: egraph.isRootSolved() ? null : 'budget exhausted or frontier stuck',
@@ -155,6 +162,7 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
         return { solved: false, error: 'no root goal', llmCalls: 0, tacticCalls: 0, ms: 0 };
     }
     const egraph = openRootEGraph(rootGoals);
+    const sessionKey = rootGoals[0].sessionKey;
 
     const t0 = Date.now();
     const approxBudget = Math.max(1, Math.floor(maxLlmCalls / Math.max(1, N)));
@@ -165,6 +173,8 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
         const searcher = new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion });
         await searcher.search(egraph, { maxExpansions: approxBudget });
     }
+
+    backend.endLemma(sessionKey);
 
     return {
         solved: egraph.isRootSolved(),
@@ -311,16 +321,23 @@ async function main() {
     const ENV = loadEnv();
 
     const recipesArg = process.argv.find(a => a.startsWith('--recipes='));
+    const setArg = process.argv.find(a => a.startsWith('--set='));
     const problemsArg = process.argv.find(a => a.startsWith('--problems='));
     const nArg = process.argv.find(a => a.startsWith('--N='));
     const budgetArg = process.argv.find(a => a.startsWith('--max-llm-calls='));
     const outArg = process.argv.find(a => a.startsWith('--out='));
 
+    const set = setArg ? setArg.split('=')[1] : 'core';
+    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : SMOKE_PROBLEMS;
+    if (set !== 'core' && set !== 'mathlib') {
+        console.error('unknown problem set; known sets: core, mathlib');
+        process.exit(2);
+    }
     const recipes = recipesArg ? recipesArg.split('=')[1].split(',') : RECIPES;
     const ids = problemsArg ? problemsArg.split('=')[1].split(',') : [];
-    const problems = ids.length ? SMOKE_PROBLEMS.filter(p => ids.includes(p.id)) : SMOKE_PROBLEMS;
+    const problems = ids.length ? problemsSource.filter(p => ids.includes(p.id)) : problemsSource;
     if (ids.length && problems.length !== ids.length) {
-        const known = SMOKE_PROBLEMS.map(p => p.id).join(', ');
+        const known = problemsSource.map(p => p.id).join(', ');
         console.error(`unknown problem id; known ids: ${known}`);
         process.exit(2);
     }
@@ -331,8 +348,12 @@ async function main() {
     const pool = new BackendRepl({
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
+        leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency: 2,
-        timeoutMs: 60_000
+        // Mathlib imports take 5-35s cold; the core set is near-instant.
+        timeoutMs: set === 'mathlib' ? 180_000 : 60_000,
+        // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
+        workerPerProblem: set === 'mathlib'
     });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
