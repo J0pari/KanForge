@@ -1,4 +1,5 @@
 // Goedel-style diversity penalty (architecture.md §5).
+import { sanitizeTacticText } from '../agent/llm.js';
 export function computeRepulsionPenalty(tactic, activeTactics) {
     let penalty = 0.0;
     for (const t of activeTactics) {
@@ -26,7 +27,7 @@ export class RepulsionSampler {
         const augmented = triedSet.size > 0 ? augmentPrompt(prompt, triedSet) : prompt;
         for (let i = 0; i < this.maxTries; i++) {
             const response = await this.llm.complete(augmented);
-            const tactic = response.text?.trim();
+            const tactic = sanitizeTacticText(response.text);
             if (tactic && !triedSet.has(tactic)) return tactic;
         }
         return null;

@@ -110,6 +110,12 @@ test('parseJudgeVerdict: accepts the ternary vocabulary and rejects noise', () =
     assert.strictEqual(parseJudgeVerdict(null), null);
 });
 
+test('parseJudgeVerdict: strips markdown around the verdict token', () => {
+    assert.strictEqual(parseJudgeVerdict('`A`'), 'a');
+    assert.strictEqual(parseJudgeVerdict('```\nB\n```'), 'b');
+    assert.strictEqual(parseJudgeVerdict('`EQUAL` (tie)'), 'equal');
+});
+
 test('buildJudgePrompt: shows both tactics and demands a single-line verdict', () => {
     const prompt = buildJudgePrompt({ type: 'P → Q', context: [] }, 'intro h', 'exact h');
     assert.ok(prompt.includes('P → Q'));

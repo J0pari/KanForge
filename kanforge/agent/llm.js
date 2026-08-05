@@ -138,11 +138,41 @@ export class LLMClient {
     }
 }
 
+// Pure: normalize the prompt shapes this codebase passes to llm.complete() into a messages
+// array. Callers use an array of { role, content }, a `{ user: string }` shorthand (search/
+// bestofn.js), or a bare prompt string (RepulsionSampler via ablation.js) — the real CLI client
+// must accept all three, not just the array form.
+export function normalizeMessages(messages) {
+    if (Array.isArray(messages)) return messages;
+    if (typeof messages === 'string') return [{ role: 'user', content: messages }];
+    if (messages && typeof messages === 'object' && typeof messages.user === 'string') {
+        return [{ role: 'user', content: messages.user }];
+    }
+    return [];
+}
+
+// Pure: extract a usable tactic from a raw LLM response. The opencode model free-form answers
+// with markdown fences, backticks, and explanatory prose around the tactic; the kernel needs the
+// bare tactic. This is the same sanitization the TacticLoop applies (loop.js), shared so the
+// ablation/search drivers get it too. A response that STARTS with a backtick is treated as
+// `tactic` prose: everything after the matching close is dropped ('`ring` (a tautology)' -> ring).
+export function sanitizeTacticText(text) {
+    let t = String(text ?? '').trim();
+    t = t.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+    if (t.startsWith('`')) {
+        const close = t.indexOf('`', 1);
+        if (close !== -1) t = t.slice(1, close);
+    } else if (t.endsWith('`')) {
+        t = t.slice(0, -1);
+    }
+    return t.trim();
+}
+
 // Pure: serialize a chat messages array into a single prompt for the opencode CLI (agent mode
 // takes one prompt, not role-tagged turns). The kanforge system prompt becomes inline
 // instructions, so the model still sees the full grounding.
 export function messagesToPrompt(messages) {
-    return (messages ?? []).map((m) => {
+    return normalizeMessages(messages).map((m) => {
         const label = m.role === 'system' ? 'System instructions'
             : m.role === 'assistant' ? 'Assistant (history)'
             : 'Task';

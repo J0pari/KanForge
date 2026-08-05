@@ -1,8 +1,9 @@
 // Best-of-N search baseline (architecture.md §5).
+import { sanitizeTacticText } from '../agent/llm.js';
 export async function bestOfN(goal, backend, llm, N = 8) {
     for (let i = 0; i < N; i++) {
         const response = await llm.complete({ user: `Goal: ${goal.type}\nPropose tactic:` });
-        const tactic = response.text?.trim();
+        const tactic = sanitizeTacticText(response.text);
         if (!tactic) continue;
         const result = await backend.applyTactic(goal, tactic);
         if (result.status === 'ok') {

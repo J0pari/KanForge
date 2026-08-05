@@ -9,6 +9,8 @@
 // OPC reports Rank (Swiss) improves best-of-n accuracy by 17% over the discrete/continuous
 // baselines (26% -> 43% vs 26% -> 36%) on its 134-problem best-of-n subset.
 
+import { sanitizeTacticText } from '../agent/llm.js';
+
 // Fit Bradley-Terry ratings over the outcomes of a round-robin tournament.
 //
 //   outcomes: [{ a, b, result }] where a, b are 0-based competitor indices (a < b) and result
@@ -106,8 +108,10 @@ export function buildJudgePrompt(goal, tacticA, tacticB) {
 }
 
 // Pure: map the judge's free-text answer to the ternary outcome ('a' | 'b' | 'equal' | null).
+// Markdown fences/backticks around the verdict token are stripped before the ternary match.
 export function parseJudgeVerdict(text) {
-    const first = String(text ?? '').trim().split(/\s+/)[0]?.toUpperCase();
+    const cleaned = String(text ?? '').replace(/```(?:lean)?/gi, '').replace(/`/g, '').trim();
+    const first = cleaned.split(/\s+/)[0]?.toUpperCase();
     if (first === 'A') return 'a';
     if (first === 'B') return 'b';
     if (first === 'EQUAL' || first === 'TIE') return 'equal';
@@ -136,7 +140,7 @@ export async function bestOfNWithSwiss(goal, backend, llm, opts = {}) {
         const response = await llm.complete([
             { role: 'user', content: `Goal: ${goal.type}\nPropose tactic:` }
         ]);
-        const tactic = response.text?.trim();
+        const tactic = sanitizeTacticText(response.text);
         if (tactic) unique.add(tactic);
     }
     const candidates = [...unique];

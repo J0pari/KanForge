@@ -9,6 +9,7 @@
 // reordering is exact for stateless backends and for the mock/fake backends used in tests.
 
 import { buildTacticPrompt } from '../agent/prompts.js';
+import { sanitizeTacticText } from '../agent/llm.js';
 
 export class BestFirstSearch {
     constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false } = {}) {
@@ -25,7 +26,7 @@ export class BestFirstSearch {
 
     async _propose(goal, attempt) {
         const response = await this.llm.complete(buildTacticPrompt(goal, attempt, this.maxTacticsPerGoal));
-        return response.text?.trim() || null;
+        return sanitizeTacticText(response.text) || null;
     }
 
     // Expand one goal class: try tactics until one applies cleanly. Returns true on progress.

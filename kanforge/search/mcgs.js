@@ -6,6 +6,7 @@
 // several transpositions).
 
 import { buildTacticPrompt } from '../agent/prompts.js';
+import { sanitizeTacticText } from '../agent/llm.js';
 
 export class MCGS {
     constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4, repulsion = false } = {}) {
@@ -45,7 +46,7 @@ export class MCGS {
         const attempted = this.repulsion ? new Set() : null;
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const response = await this.llm.complete(buildTacticPrompt(goal, attempt, this.maxTacticsPerGoal));
-            const tactic = response.text?.trim();
+            const tactic = sanitizeTacticText(response.text);
             if (!tactic) continue;
             if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
             attempted?.add(tactic);
