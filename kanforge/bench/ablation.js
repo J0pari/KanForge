@@ -227,6 +227,8 @@ function writeReport(outDir, report) {
     writeFileSync(path.join(outDir, 'report.md'), renderMarkdown(report));
 }
 
+export { summarize, writeReport };
+
 // Crash-safe progress: append each completed (recipe, problem) row to rows.ndjson inside the
 // outDir, so a partial run survives a crash and can be inspected while it is still running.
 function appendRow(outDir, row) {
