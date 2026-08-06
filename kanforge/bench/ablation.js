@@ -193,23 +193,38 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
     }
 
     const rows = [];
-    for (const recipe of recipes) {
-        const driver = RANKING_RECIPES.includes(recipe) ? driveLemmaByRanking : driveLemmaBySearch;
-        for (const p of problems) {
-            const outcome = await driver({ backend, llm, statement: p.statement, recipe, N, maxLlmCalls });
-            const row = { recipe, id: p.id, tier: p.tier, ...outcome };
-            rows.push(row);
-            onRow?.(row);
+    try {
+        for (const recipe of recipes) {
+            const driver = RANKING_RECIPES.includes(recipe) ? driveLemmaByRanking : driveLemmaBySearch;
+            for (const p of problems) {
+                const t0 = Date.now();
+                let outcome;
+                try {
+                    outcome = await driver({ backend, llm, statement: p.statement, recipe, N, maxLlmCalls });
+                } catch (err) {
+                    // A single row must never kill the run: a repl/LLM hiccup on one problem is
+                    // recorded as a failed row and the comparison continues (observed: a repl
+                    // session timeout at row 32/35 crashed the whole ablation).
+                    outcome = { solved: false, error: `driver crashed: ${err?.message ?? err}`, llmCalls: 0, tacticCalls: 0, ms: Date.now() - t0 };
+                }
+                const row = { recipe, id: p.id, tier: p.tier, ...outcome };
+                rows.push(row);
+                onRow?.(row);
+            }
         }
+    } finally {
+        // Write whatever we have even on an early exit, so a crash never discards the run.
+        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls }));
     }
 
     const report = summarize(rows, { recipes, problems, N, maxLlmCalls });
-    if (outDir) {
-        mkdirSync(outDir, { recursive: true });
-        writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(report, null, 2));
-        writeFileSync(path.join(outDir, 'report.md'), renderMarkdown(report));
-    }
     return report;
+}
+
+function writeReport(outDir, report) {
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(report, null, 2));
+    writeFileSync(path.join(outDir, 'report.md'), renderMarkdown(report));
 }
 
 // Crash-safe progress: append each completed (recipe, problem) row to rows.ndjson inside the

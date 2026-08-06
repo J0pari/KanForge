@@ -259,6 +259,24 @@ test('runAblation releases every proof session after each problem (no worker lea
     }
 });
 
+test('runAblation survives a driver crash on one problem and still reports all rows', async () => {
+    const { backend, llm } = makeWorld();
+    // Object.create keeps the prototype methods (extractGoals/endLemma) while overriding
+    // applyTactic to throw for one goal type — a `{ ...backend }` spread would lose them.
+    const crashing = Object.create(backend);
+    crashing.applyTactic = async (goal, tactic) => {
+        if (goal.type === 'p ∧ q') throw new Error('lean repl session timeout after 180000ms');
+        return backend.applyTactic(goal, tactic);
+    };
+    const report = await runAblation({ backend: crashing, llm, problems: PROBLEMS, recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 100 });
+    assert.strictEqual(report.detail.length, 2 * PROBLEMS.length, 'every row present despite the crash');
+    const conj = report.detail.filter(d => d.id === 'p_conj');
+    assert.ok(conj.every(d => d.solved === false), 'crashed problem recorded as failed');
+    assert.ok(conj.every(d => /driver crashed/.test(d.error ?? '')));
+    const lt = report.detail.find(d => d.id === 'p_lt' && d.recipe === 'mcgs');
+    assert.strictEqual(lt.solved, true, 'sibling problems still solve after the crash row');
+});
+
 test('renderMarkdown produces a table anchored to the acceptance criteria', () => {
     const md = renderMarkdown({
         generatedAt: new Date().toISOString(),
