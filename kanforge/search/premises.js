@@ -166,3 +166,64 @@ export function buildPremisePrompt(goal, premises = [], opts = {}) {
         { role: 'user', content: `Goal:\n  ${goal?.type ?? ''}${contextStr}${premisesStr}\n\nPropose ONE tactic (attempt ${attempt}/${maxAttempts}):` }
     ];
 }
+
+// --- Premise-aware proposal-prompt augmentation (ablation harness, build_order.md §5.2) ---
+// The search strategies build their own proposal prompts from `goal.type` and call
+// llm.complete() directly. To measure premise retrieval with/without WITHOUT touching every
+// strategy, a wrapper intercepts proposal prompts at the llm boundary, retrieves premises for
+// the goal, and routes them through buildPremisePrompt — mirroring what TacticLoop does
+// internally. Judge prompts are never augmented (they compare tactics, they do not propose).
+
+// Extract the prompt text from any shape this codebase passes to llm.complete(): an array of
+// { role, content }, a `{ user }` object, or a bare string.
+export function promptText(prompt) {
+    if (typeof prompt === 'string') return prompt;
+    if (Array.isArray(prompt)) {
+        const last = prompt.findLast(p => p.role === 'user');
+        return String(last?.content ?? '');
+    }
+    return String(prompt?.user ?? '');
+}
+
+// Pure: pull the goal type out of the proposal-prompt shapes the strategies emit, or null when
+// the prompt is not a tactic-proposal (swiss judge). Handles:
+//   "Goal: a * (b + c) = ...\nPropose tactic:"   (bestofn / swiss)
+//   "Goal:\n  a * (b + c) = ...\nPropose ONE tactic (attempt 1/8):"  (bfs / mcgs)
+// Premise-augmented prompts are NOT excluded: the wrapper chain is premises-outermost /
+// menu-innermost, so the menu augmenter sees premise-rebuilt prompts and must still extract
+// the goal (it appends the menu in place, never re-rebuilding the premise section).
+export function parseProposalGoal(prompt) {
+    const text = promptText(prompt);
+    if (!text) return null;
+    if (/Judge which/.test(text)) return null;                    // swiss judge, never augmented
+    const m = text.match(/^Goal:\s*\n?\s*([^\n]+)/);
+    return m ? m[1].trim() : null;
+}
+
+// llm wrapper: augments proposal prompts with retrieved premises (build_order.md §5.2 "with"
+// side of the ablation). `premiseLocked` restricts the generator to the retrieved set.
+export class PremiseAugmentingLLM {
+    constructor(llm, retriever, { premiseLocked = false, premiseTopK = 5 } = {}) {
+        if (!llm || !retriever) throw new Error('PremiseAugmentingLLM requires an llm and a retriever');
+        this.llm = llm;
+        this.retriever = retriever;
+        this.premiseLocked = premiseLocked;
+        this.premiseTopK = premiseTopK;
+        this.retrievedFor = new Map();
+    }
+
+    async complete(prompt, opts = {}) {
+        const goalType = parseProposalGoal(prompt);
+        if (goalType !== null) {
+            const premises = this.retriever.retrieve({ type: goalType }, this.premiseTopK);
+            this.retrievedFor.set(goalType, premises.map(p => p.name));
+            const augmented = buildPremisePrompt({ type: goalType }, premises, {
+                attempt: 1,
+                maxAttempts: 8,
+                premiseLocked: this.premiseLocked
+            });
+            return this.llm.complete(augmented, opts);
+        }
+        return this.llm.complete(prompt, opts);
+    }
+}

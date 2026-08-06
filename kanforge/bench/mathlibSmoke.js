@@ -67,6 +67,11 @@ export const MATHLIB_PROBLEMS = [
 
     // --- Tier 5: harder ---
     {
+        id: 'mul_add_distr', tier: 5, family: 'rw',
+        context: 'Distribution over Nat requires a lemma: `simp`/`omega`/`ring` do NOT close it, only `exact Nat.mul_add a b c` or `rw [Nat.mul_add]`. Premise-retrieval ablation (§5.2) must surface `Nat.mul_add`.',
+        statement: 'import Mathlib.Data.Nat.Basic\n\nexample (a b c : Nat) : a * (b + c) = a * b + a * c := by sorry'
+    },
+    {
         id: 'tauto_elim', tier: 5, family: 'tauto',
         context: 'Propositional tautology (disjunction elimination). `tauto` closes it.',
         statement: 'import Mathlib.Tactic.Tauto\n\nexample (p q r : Prop) : (p ∨ q) → (p → r) → (q → r) → r := by sorry'

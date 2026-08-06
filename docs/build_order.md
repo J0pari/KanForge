@@ -207,6 +207,13 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   reused worker dies with `INTERNAL PANIC: out of memory` after ~9 heavy imports. The measured
   comparison (`--set=mathlib`) can now run; prefer `--problems=<subset>` to bound wall time
   (each statement imports its modules, 5-35s per problem per recipe).
+- **Measured (§5.1 gate: MET).** First full Mathlib run: 5 problems × 7 recipes, N=8,
+  budget 400 (report in `bench/ablation/ablation_1785973978734/`). Every recipe solves 4/5;
+  **MCGS ≥ best-of-N at equal budget** — same accuracy with 6 LLM calls vs best-of-N's 15, and
+  the search recipes (bfs/mcgs) beat the ranking recipes (swiss: 105 calls) outright. Repulsion
+  only multiplies cost here. The single miss, `tauto_elim`, fails for EVERY recipe — a
+  **proposal-distribution gap**: the model never proposes `tauto`, so no search budget helps
+  (fails fast under bfs/mcgs, burns the judge budget under swiss).
 
 ### 5.2 Repulsion + premise retrieval
 - `search/repulsion.js` (Goedel-style diversity penalty) and `search/premises.js`
@@ -216,8 +223,22 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   (refuses duplicate re-proposals, steers with a "do not repeat" prompt note); `MCGS`/
   `BestFirstSearch` accept a `repulsion` flag that skips duplicate kernel re-checks. Premise
   retrieval is the lexical BM25 baseline wired into `TacticLoop`. The with/without ablation logs
-  are produced by `bench/ablation.js` (§5.1 status). The P0.1 Mathlib repl build that was the
-  gate is **done**; the real smoke-set numbers are the current open item.
+  are produced by `bench/ablation.js` (§5.1 status): a `--premises=on|off` axis wraps the llm in
+  `PremiseAugmentingLLM` (retrieve top-k from a curated corpus, inject "Premises (theorems you
+  may use)"; `--premise-locked=on` restricts the generator to them; `--corpus=full|no-mul-add`
+  is the lock-enforcement control). The P0.1 Mathlib repl build that was the gate is **done**;
+  the real smoke-set numbers are the current open item.
+- **Tactic-menu axis (coverage-before-RL).** The §5.1 run's `tauto_elim` gap proved the model's
+  proposal distribution can be blind to imported tactics the solver needs. Fix: an import-verified
+  capability layer at the `llm.complete` seam — `search/tacticMenu.js` builds a goal-shape-keyed,
+  hypercompressed menu (head-connective detector + `MODULE_TACTICS` import map, non-circular: never
+  consults a problem's `family`) injected into proposal prompts only. This is **not** an RL fix:
+  RL cannot reinforce a tactic it never samples (sparse exploration), so coverage mechanisms are a
+  *prerequisite* for P6, not a P6-side effect.
+- **Measured.** `--menu=on` on the same 5-problem set (report in `bench/ablation/ablation_menu_on/`):
+  `tauto_elim` flips FAILED→SOLVED on the first call under both best-of-N and MCGS, and the whole
+  set goes 4/5→5/5 at LOWER cost (best-of-N 15→10 calls, MCGS 6→5). Coverage widens recall; for
+  arg-less closers that is the whole fix.
 
 ### 5.3 Failure-aware search biasing
 - Use `optimization/causal.js` `getFailurePredictors()` to penalize action sequences known to

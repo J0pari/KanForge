@@ -19,8 +19,16 @@
 // CLI: node bench/ablation.js [--set=core|mathlib] [--recipes=bestofn,swiss]
 //                             [--problems=trans_lt,add_comm] [--N=8] [--max-llm-calls=400]
 //                             [--out=bench/ablation]
+//                             [--premises=on|off] [--premise-locked=on|off]
+//                             [--premise-topk=5] [--corpus=full|no-mul-add]
 // The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
 // per problem per recipe), so prefer --problems=<subset> to bound wall time.
+//
+// Premise-retrieval axis (§5.2): with --premises=on the proposal prompts are routed through a
+// PremiseAugmentingLLM that retrieves top-k premises from the curated corpus (bench/premisesCorpus.js)
+// and injects them as "Premises (theorems you may use)". --premise-locked=on restricts the
+// generator to those premises. The `no-mul-add` corpus is the lock-enforcement control: locked
+// mode must fail on mul_add_distr even though the model knows Nat.mul_add from training.
 
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
@@ -33,6 +41,9 @@ import { BestFirstSearch } from '../search/bfs.js';
 import { MCGS } from '../search/mcgs.js';
 import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
 import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
+import { PremiseRetriever, PremiseAugmentingLLM } from '../search/premises.js';
+import { PREMISE_CORPORA } from './premisesCorpus.js';
+import { TacticMenuAugmentingLLM } from '../search/tacticMenu.js';
 
 export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 export const RANKING_RECIPES = ['bestofn', 'swiss', 'swiss+repulsion'];
@@ -185,12 +196,20 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
     };
 }
 
-export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null } = {}) {
+export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000 } = {}) {
     if (!backend || !llm) throw new Error('runAblation requires a backend and an llm');
     validateSmokeSet(problems);
     for (const r of recipes) {
         if (!RECIPES.includes(r)) throw new Error(`unknown recipe: ${r}; known recipes: ${RECIPES.join(', ')}`);
     }
+
+    // Premise-retrieval axis (§5.2): wrap the llm so proposal prompts are augmented with
+    // retrieved premises before the strategy sees the response. Judge prompts (swiss) pass
+    // through untouched. The wrapper sits OUTSIDE the drivers' countingLLM, so llmCalls still
+    // counts every real LLM round-trip.
+    const premiseConfig = premises
+        ? { retriever: premises.retriever ?? new PremiseRetriever(premises.corpus ?? []), locked: !!premises.locked, topK: premises.topK ?? 5, corpusName: premises.corpusName ?? null }
+        : null;
 
     const rows = [];
     try {
@@ -200,11 +219,24 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
                 const t0 = Date.now();
                 let outcome;
                 try {
-                    outcome = await driver({ backend, llm, statement: p.statement, recipe, N, maxLlmCalls });
+                    // Per-row llm chain: premises OUTERMOST (rebuilds the prompt wholesale),
+                    // menu INNERMOST (appends in place after the premise rebuild), so the two
+                    // augmentation axes compose. The menu is keyed on the current statement's
+                    // imports, so it is rebuilt per problem.
+                    let rowLLM = llm;
+                    if (menu) rowLLM = new TacticMenuAugmentingLLM(rowLLM, { statement: p.statement });
+                    if (premiseConfig) rowLLM = new PremiseAugmentingLLM(rowLLM, premiseConfig.retriever, { premiseLocked: premiseConfig.locked, premiseTopK: premiseConfig.topK });
+                    outcome = await withTimeout(
+                        driver({ backend, llm: rowLLM, statement: p.statement, recipe, N, maxLlmCalls }),
+                        rowTimeoutMs,
+                        `${recipe}/${p.id}`
+                    );
                 } catch (err) {
                     // A single row must never kill the run: a repl/LLM hiccup on one problem is
                     // recorded as a failed row and the comparison continues (observed: a repl
-                    // session timeout at row 32/35 crashed the whole ablation).
+                    // session timeout at row 32/35 crashed the whole ablation, and a wedged
+                    // repl can HANG a row past its timeout, which a bare await would let freeze
+                    // the entire run).
                     outcome = { solved: false, error: `driver crashed: ${err?.message ?? err}`, llmCalls: 0, tacticCalls: 0, ms: Date.now() - t0 };
                 }
                 const row = { recipe, id: p.id, tier: p.tier, ...outcome };
@@ -214,11 +246,21 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
         }
     } finally {
         // Write whatever we have even on an early exit, so a crash never discards the run.
-        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls }));
+        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs }));
     }
 
-    const report = summarize(rows, { recipes, problems, N, maxLlmCalls });
+    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs });
     return report;
+}
+
+// Race a driver against a wall clock. A wedged repl must not freeze the comparison: the losing
+// promise keeps running in the background but its result is ignored, and workerPerProblem
+// isolates its (eventually failing) worker from the next row.
+function withTimeout(promise, ms, label) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`row timed out after ${ms}ms (${label})`)), ms))
+    ]);
 }
 
 function writeReport(outDir, report) {
@@ -241,7 +283,7 @@ function appendRow(outDir, row) {
     }
 }
 
-function summarize(rows, { recipes, problems, N, maxLlmCalls }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
+function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000 }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
         recipe: r,
         solved: 0,
         total: problems.length,
@@ -273,7 +315,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls }) {    const byRec
     });
     return {
         generatedAt: new Date().toISOString(),
-        config: { recipes, N, maxLlmCalls, problemCount: problems.length },
+        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs },
         perRecipe: recipes.map(r => {
             const { problems: _p, ...s } = byRecipe[r];
             return s;
@@ -311,6 +353,13 @@ export function renderMarkdown(report) {
     lines.push(`- Generated: ${report.generatedAt}`);
     lines.push(`- Budget: ${config.maxLlmCalls} LLM calls / lemma, N=${config.N}`);
     lines.push(`- Problems: ${config.problemCount}`);
+    if (config.premises) {
+        const p = config.premises;
+        lines.push(`- Premises: ${p.locked ? 'locked' : 'augment'} / top-${p.topK} / corpus=${p.corpusName ?? (p.retriever?.corpus?.length ?? '?')} premises`);
+    } else {
+        lines.push('- Premises: off');
+    }
+    lines.push(`- Tactic menu: ${config.menu ? 'on (import-verified)' : 'off'}`);
     lines.push('');
     lines.push('## Pass rate vs. budget');
     lines.push('');
@@ -354,6 +403,12 @@ async function main() {
     const nArg = process.argv.find(a => a.startsWith('--N='));
     const budgetArg = process.argv.find(a => a.startsWith('--max-llm-calls='));
     const outArg = process.argv.find(a => a.startsWith('--out='));
+    const premisesArg = process.argv.find(a => a.startsWith('--premises='));
+    const premiseLockedArg = process.argv.find(a => a.startsWith('--premise-locked='));
+    const premiseTopKArg = process.argv.find(a => a.startsWith('--premise-topk='));
+    const corpusArg = process.argv.find(a => a.startsWith('--corpus='));
+    const menuArg = process.argv.find(a => a.startsWith('--menu='));
+    const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : SMOKE_PROBLEMS;
@@ -373,6 +428,20 @@ async function main() {
     const maxLlmCalls = budgetArg ? Number(budgetArg.split('=')[1]) : 400;
     const outDir = outArg ? outArg.split('=')[1] : path.join(__dirname, 'ablation', `ablation_${Date.now()}`);
 
+    const premisesEnabled = premisesArg ? premisesArg.split('=')[1] === 'on' : false;
+    const premiseLocked = premiseLockedArg ? premiseLockedArg.split('=')[1] === 'on' : false;
+    const premiseTopK = premiseTopKArg ? Number(premiseTopKArg.split('=')[1]) : 5;
+    const corpusName = corpusArg ? corpusArg.split('=')[1] : 'full';
+    if (premisesEnabled && !(corpusName in PREMISE_CORPORA)) {
+        console.error(`unknown premise corpus; known corpora: ${Object.keys(PREMISE_CORPORA).join(', ')}`);
+        process.exit(2);
+    }
+    const premiseConfig = premisesEnabled
+        ? { retriever: new PremiseRetriever(PREMISE_CORPORA[corpusName]), locked: premiseLocked, topK: premiseTopK, corpusName }
+        : null;
+    const menuEnabled = menuArg ? menuArg.split('=')[1] === 'on' : false;
+    const rowTimeoutMs = rowTimeoutArg ? Number(rowTimeoutArg.split('=')[1]) : 300_000;
+
     const pool = new BackendRepl({
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
@@ -388,7 +457,7 @@ async function main() {
 
     try {
         const report = await runAblation({
-            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir,
+            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs,
             onRow: (row) => {
                 const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}`;
                 console.log(`[ablation] ${line}`);

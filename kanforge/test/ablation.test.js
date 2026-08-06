@@ -277,6 +277,39 @@ test('runAblation survives a driver crash on one problem and still reports all r
     assert.strictEqual(lt.solved, true, 'sibling problems still solve after the crash row');
 });
 
+test('runAblation plumbs menu and premises configs into the report', async () => {
+    const { backend, llm } = makeWorld();
+    const report = await runAblation({
+        backend, llm, problems: PROBLEMS, recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 100,
+        menu: true,
+        premises: { retriever: new (await import('../search/premises.js')).PremiseRetriever([]), locked: true, topK: 5, corpusName: 'test' }
+    });
+    assert.strictEqual(report.config.menu, true);
+    assert.strictEqual(report.config.premises.locked, true);
+    assert.strictEqual(report.config.premises.corpusName, 'test');
+    assert.strictEqual(report.detail.length, 2 * PROBLEMS.length);
+    assert.strictEqual(report.perRecipe.find(r => r.recipe === 'bestofn').solved, 2, 'wrappers must not break the mock solve');
+});
+
+test('runAblation row timeout prevents a wedged repl from hanging the run', async () => {
+    const { llm } = makeWorld();
+    // extractGoals never resolves — a wedged repl would freeze a bare await forever.
+    const hangBackend = {
+        async extractGoals() { return new Promise(() => {}); },
+        async applyTactic() { return new Promise(() => {}); },
+        endLemma() {},
+        async verifyProof() { return { status: 'verified' }; },
+        pin() { return {}; }
+    };
+    const t0 = Date.now();
+    const report = await runAblation({ backend: hangBackend, llm, problems: PROBLEMS, recipes: ['bestofn'], N: 4, maxLlmCalls: 100, rowTimeoutMs: 200 });
+    const elapsed = Date.now() - t0;
+    assert.strictEqual(report.detail.length, PROBLEMS.length);
+    assert.ok(report.detail.every(d => d.solved === false));
+    assert.ok(report.detail.every(d => /timed out/.test(d.error ?? '')), 'row must be recorded as timed out');
+    assert.ok(elapsed < 5_000, 'the run must return without waiting for the wedged repl');
+});
+
 test('renderMarkdown produces a table anchored to the acceptance criteria', () => {
     const md = renderMarkdown({
         generatedAt: new Date().toISOString(),
@@ -300,7 +333,7 @@ test('MATHLIB_PROBLEMS set is well-formed (stub shape, imports, known families)'
     assert.doesNotThrow(() => validateSmokeSet(MATHLIB_PROBLEMS));
     assert.ok(MATHLIB_PROBLEMS.length >= 10, 'mathlib set should cover the tactic families');
 
-    const known = ['ring', 'linarith', 'norm_num', 'decide', 'positivity', 'simp', 'field_simp', 'tauto'];
+    const known = ['ring', 'linarith', 'norm_num', 'decide', 'positivity', 'simp', 'field_simp', 'tauto', 'rw'];
     for (const p of MATHLIB_PROBLEMS) {
         assert.ok(p.statement.startsWith('import Mathlib.'), `${p.id} must import a Mathlib module`);
         assert.ok(known.includes(p.family), `${p.id} family '${p.family}' not in ${known.join('/')}`);
