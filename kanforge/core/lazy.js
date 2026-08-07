@@ -1,5 +1,5 @@
-// Ported from scripts/builder.js:79-155 (J0pari/Builder, MIT) via tools/extract_modules.py.
-// Telemetry globals (pullGraph, traceOrchestrator) stripped; pure memoized thunk.
+// Pure memoized thunk. A `Lazy` defers a computation until `.value` is first read, caches the
+// result, and can be re-armed via reset().
 
 export class Lazy {
     constructor(thunk) {

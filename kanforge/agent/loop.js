@@ -22,7 +22,9 @@
 
 import { Scheduler } from '../core/scheduler.js';
 import { PullGraph } from '../core/pullgraph.js';
-import { hashStatement, makePin } from '../lean/pin.js';
+import { hashStatement, makePin, checkPin } from '../lean/pin.js';
+import { hashChainEntry, verifyHashChain } from '../core/hasher.js';
+import { isGoalSolved, isLemmaProved } from './solve.js';
 import { GoalEGraph } from '../core/egraph.js';
 import { straighten, buildProofSource } from '../core/state.js';
 import { Guardrails } from '../core/guardrails.js';
@@ -65,6 +67,7 @@ export class TacticLoop {
         this.llmCalls = 0;
         this.tacticCalls = 0;
         this.lastOutcome = null;
+        this.hashChain = [];        // run-level statement hash chain (§7): one entry per verified lemma
 
         // Create checkpoint directory if specified
         if (this.checkpointDir) {
@@ -155,7 +158,7 @@ export class TacticLoop {
                         for (const subgoal of record.created) {
                             this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                         }
-                        if (swissResult.result.newGoals.length === 0) {
+                        if (isGoalSolved(swissResult.result)) {
                             solved = true;
                             this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
                         } else {
@@ -193,7 +196,7 @@ export class TacticLoop {
                         this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                     }
 
-                    if (result.newGoals.length === 0) {
+                    if (isGoalSolved(result)) {
                         solved = true;
                         this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
                         break;
@@ -228,7 +231,7 @@ export class TacticLoop {
                             solved = true;
                             lastResult = repairResult;
 
-                            if (repairResult.newGoals.length === 0) {
+                            if (isGoalSolved(repairResult)) {
                                 this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
                             }
                         } else {
@@ -245,8 +248,27 @@ export class TacticLoop {
                 goalCount += lastResult?.newGoals?.length ?? 0;
             }
 
-            if (!egraph.isRootSolved()) {
-                fail(`root goal not solved after ${goalCount} goals`);
+            const pin = this.pins.get(lemmaId);
+            if (!isLemmaProved(egraph, hashStatement(statement), pin?.statementHash ?? '')) {
+                if (!egraph.isRootSolved()) {
+                    fail(`root goal not solved after ${goalCount} goals`);
+                }
+                // Root solved but pin mismatch — record as a guardrail violation.
+                const v = { invariant: 1, type: 'STATEMENT_WEAKENED', message: 'statement hash differs from pin at commit' };
+                this._emit({ type: 'statement_weakened', lemmaId, violation: v }, lemmaId);
+                this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                fail('guardrails rejected the commit: STATEMENT_WEAKENED');
+            }
+
+            // Pin-context drift check (§3.1): the toolchain/norm context captured at pin
+            // time must still match the live backend, or the proof was built against a
+            // different Lean/mathlib than the one that will re-verify it.
+            const currentPin = makePin(statement, this.backend.pin?.() ?? {});
+            const pinStatus = checkPin(pin, currentPin);
+            if (!pinStatus.ok && !pinStatus.drift) {
+                const v = { invariant: 1, type: 'PIN_DRIFT', message: pinStatus.reason };
+                this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                fail(`guardrails rejected the commit: PIN_DRIFT (${pinStatus.reason})`);
             }
 
             // Compose the proof tree, straighten to a script, splice into the pinned
@@ -287,6 +309,19 @@ export class TacticLoop {
                 }
                 fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`);
             }
+
+            // Run-level statement hash chain (§7): every verified lemma appends a tamper-evident
+            // entry — sha256(prevHash || statementHash || proofHash || outcome).
+            const prevHash = this.hashChain.length > 0 ? this.hashChain[this.hashChain.length - 1].hash : null;
+            const statementHash = hashStatement(statement);
+            const proofHash = hashStatement(proofScript);
+            this.hashChain.push({
+                prevHash,
+                statementHash,
+                proofHash,
+                outcome: 'verified',
+                hash: hashChainEntry(prevHash, statementHash, proofHash, 'verified')
+            });
 
             const ms = Date.now() - start;
             this._emit({ type: 'lemma_verified', lemmaId, statement, proofScript, ms, goalCount }, lemmaId);
@@ -400,6 +435,16 @@ export class TacticLoop {
             }
 
             this._emit({ type: 'audit_packs_written', runId, runsDir, count: outcome.results.size });
+        }
+
+        // Hermeticity check (§7): the run's statement hash chain must be intact end to end.
+        outcome.hashChainOk = true;
+        if (this.hashChain.length > 0) {
+            const chain = verifyHashChain(this.hashChain);
+            if (!chain.ok) {
+                outcome.hashChainOk = false;
+                this._emit({ type: 'guardrail_trip', lemmaId: null, violation: { type: 'HASH_CHAIN_BROKEN', message: chain.reason } }, null);
+            }
         }
 
         return outcome;

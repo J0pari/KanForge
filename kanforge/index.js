@@ -23,7 +23,7 @@ export { straighten, unstraighten, assertRoundTrip, buildProofSource } from './c
 export { Patch, PATCH_OPS } from './core/patch.js';
 export { Lazy } from './core/lazy.js';
 export { Pipeline } from './core/pipeline.js';
-export { Hasher, hashChainEntry, verifyHashChain } from './core/hasher.js';
+export { hashChainEntry, verifyHashChain } from './core/hasher.js';
 
 // Search (premise retrieval, selection baselines)
 export { PremiseRetriever, buildPremisePrompt, findPremiseLockViolations, premisesUsedIn, tokenize, extractIdentifiers } from './search/premises.js';

@@ -1,6 +1,6 @@
 import { Lazy } from './lazy.js';
 
-export class LazyFunctor {
+export class LazyMapper {
     static map(f, lazyStructure) {
         if (lazyStructure instanceof Lazy) {
             return lazyStructure.map(f);
@@ -8,7 +8,7 @@ export class LazyFunctor {
         if (typeof lazyStructure === 'object' && lazyStructure !== null) {
             const result = {};
             for (const [k, v] of Object.entries(lazyStructure)) {
-                result[k] = LazyFunctor.map(f, v);
+                result[k] = LazyMapper.map(f, v);
             }
             return result;
         }
@@ -16,9 +16,8 @@ export class LazyFunctor {
     }
 
    
-    // FIX (deviation from template): original mapped lazies back into new lazies
-    // (LazyFunctor.map wraps through lazyStructure.map), so extract never
-    // unwrapped. Recursing directly forces each Lazy leaf to its value.
+    // extract forces each Lazy leaf to its value (a naive map would keep the
+    // structure lazy and never unwrap).
     static extract(lazyStructure) {
         if (lazyStructure instanceof Lazy) {
             return lazyStructure.value;
@@ -26,7 +25,7 @@ export class LazyFunctor {
         if (typeof lazyStructure === 'object' && lazyStructure !== null) {
             const result = {};
             for (const [k, v] of Object.entries(lazyStructure)) {
-                result[k] = LazyFunctor.extract(v);
+                result[k] = LazyMapper.extract(v);
             }
             return result;
         }

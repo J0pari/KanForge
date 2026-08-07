@@ -1,6 +1,5 @@
-// Ported from scripts/builder.js:281-321 (J0pari/Builder, MIT) via tools/extract_modules.py.
-// `ConfigContext.create()` dropped: it pulled Builder globals (TIME/LIMITS/CONFIG).
-// Per the architecture contract, the environment is passed in per-run.
+// Per the architecture contract, the environment is passed in per-run rather than read from
+// process-wide globals.
 
 import { Lazy } from './lazy.js';
 

@@ -1,6 +1,4 @@
-// Ported from scripts/builder.js:158-192 (J0pari/Builder, MIT) via tools/extract_modules.py.
-// The global `pull(part)` branch (which resolved PullGraph node objects) is stripped:
-// core templates handle Lazy/LazyTemplate/plain values only.
+// Core templates handle Lazy/LazyTemplate/plain values only (no PullGraph node resolution).
 
 import { Lazy } from './lazy.js';
 

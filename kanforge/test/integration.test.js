@@ -6,6 +6,8 @@ import { TacticLoop } from '../agent/loop.js';
 import { MockBackend, MockLLM } from './architectural.test.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
+import { hashChainEntry, verifyHashChain } from '../core/hasher.js';
+import { hashStatement } from '../lean/pin.js';
 
 test('TacticLoop emits events to EventBus/Store with causal parent chaining', async () => {
     const bus = new EventBus();
@@ -69,4 +71,42 @@ test('TacticLoop closes proof session in backend in finally block', async () => 
 
     // backend.endLemma should have been called with lemmaId
     assert.deepStrictEqual(backend.ended, [lemmaId]);
+});
+
+test('TacticLoop appends a statement hash chain entry per verified lemma and it verifies', async () => {
+    const backend = new MockBackend();
+    const llm = new MockLLM(['intro h', 'omega']);
+    const loop = new TacticLoop({ backend, llm, maxTacticsPerGoal: 2 });
+
+    const statement = 'example (P Q : Prop) : P → Q := by sorry';
+    const lemmaId = loop.addLemma(statement);
+    const outcome = await loop.proveAll();
+
+    assert.strictEqual(outcome.ok, true);
+    assert.strictEqual(outcome.hashChainOk, true);
+
+    // one entry per verified lemma, chained on prevHash, integrity-checkable end to end
+    assert.strictEqual(loop.hashChain.length, 1);
+    const entry = loop.hashChain[0];
+    assert.strictEqual(entry.prevHash, null);
+    assert.strictEqual(entry.statementHash, hashStatement(statement));
+    assert.strictEqual(entry.outcome, 'verified');
+    assert.strictEqual(entry.hash, hashChainEntry(null, entry.statementHash, entry.proofHash, 'verified'));
+    assert.deepStrictEqual(verifyHashChain(loop.hashChain), { ok: true });
+});
+
+test('TacticLoop hash chain stays intact across multiple verified lemmas', async () => {
+    const backend = new MockBackend();
+    const llm = new MockLLM(['intro h', 'omega']);
+    // sequential dispatch so the cycling mock LLM serves one lemma's tactics at a time
+    const loop = new TacticLoop({ backend, llm, concurrency: 1, maxTacticsPerGoal: 2 });
+
+    loop.addLemma('example (P Q : Prop) : P → Q := by sorry');
+    loop.addLemma('example (P Q : Prop) : Q → P := by sorry');
+    const outcome = await loop.proveAll();
+
+    assert.strictEqual(outcome.ok, true);
+    assert.strictEqual(loop.hashChain.length, 2);
+    assert.strictEqual(loop.hashChain[1].prevHash, loop.hashChain[0].hash);
+    assert.deepStrictEqual(verifyHashChain(loop.hashChain), { ok: true });
 });

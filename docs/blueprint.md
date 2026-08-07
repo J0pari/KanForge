@@ -5,11 +5,10 @@ The design is self-contained: every module below exists because the goal in §1 
 demands it. Implementation lineage (which existing libraries the foundational primitives adapt) is
 a provenance matter, documented in `research_notes_2026.md` §4, not argued here.
 
-**Working title:** *KanForge*. The name comes from an early "Kan-extension" framing — "find the
-best extension of a partial proof" — but the mechanisms are ordinary programming constructs
-(lazy evaluation, pipeline stage composition, a proof DAG, pinned statements). Nothing here
-implements or depends on category theory. The historical metaphor lineage is documented in
-`patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the agent.
+**Working title:** *KanForge*. The mechanisms are ordinary programming constructs (lazy
+evaluation, pipeline stage composition, a proof DAG, pinned statements). Historical name lineage
+is documented in `patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the
+agent.
 
 > This document is the design narrative. It states *why* and *what*. The *how* — module
 > contracts, file layout, event vocabulary, reward defaults, wire formats — lives in
@@ -112,13 +111,12 @@ contracts is `architecture.md`.
 
 ---
 
-## 4. Where the design came from (plain terms first, then the metaphors)
+## 4. Design patterns (plain terms)
 
-The transformed example documents (`output/primer.md`, `output/working.md`) are a 27-layer higher
-category theory curriculum that this project was seeded from; it is where several *names* for
-design elements originated. The mechanisms themselves are all ordinary programming constructs —
-nothing here is a category-theory object. The mappings below are historical lineage, not
-specification; `architecture.md` defines the actual contract in plain terms.
+The mechanisms below are ordinary programming constructs — lazy evaluation, pipeline stage
+composition, a proof DAG, pinned statements. Historical name lineage is documented in
+`patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the agent.
+`architecture.md` defines the actual contract in plain terms.
 
 The mechanisms in plain language (the only load-bearing part):
 
@@ -144,25 +142,6 @@ The mechanisms in plain language (the only load-bearing part):
 - **Distributed proving (P7)**: shard a development across agents with single-owner lemma edits
   and coherence checks on overlaps before merging (`growth/multibody.js`).
 
-The HCT names those mechanisms were derived from (historical; the full 27-layer walk-through and
-mapping table are in `patterns_from_hct.md`):
-
-| Design mechanism (plain) | HCT name it was derived from |
-|---|---|
-| lazily-forced unbounded search frontier | simplicial sets & ∞-categories (coinductive lazy search) |
-| error-driven repair of a failing goal | horn-filling |
-| proof-tree ↔ tactic-script duality | straightening / unstraightening |
-| lazy repair loop over the goal frontier | Kan extensions (the original working title) |
-| LLM-propose + kernel-verify stopping rule | adjunction (generator ⊣ verifier) |
-| pipeline stage composition | monad / Kleisli composition |
-| eager-vs-lazy caching split by object size | presentable/accessible categories |
-| open-goal accounting for progress | stable ∞-categories (residual tracking) |
-| sharded, coherence-checked distributed proving | descent / hypercovers |
-| skeleton → refine two-phase buildout | modalities (comonad/monad) |
-| minimal checkable invariant set | Giraud axioms |
-| prompts built from Lean terms | internal language |
-| generalize/instantiate over hypotheses (deferred, P7) | base change |
-
 ### 4.1 The resulting design patterns (summary, plain terms)
 
 - Dual proof representations with lossless straighten/unstraighten.
@@ -176,21 +155,10 @@ mapping table are in `patterns_from_hct.md`):
 
 ### 4.2 Inspiration vs specification
 
-The HCT mappings are historical heuristics that *named* the design; they are not the
-specification. Rule: wherever a mapping would require implementing the categorical object
-literally, the module contract in `architecture.md` wins.
-
-- "Kan extensions = the search primitive" named the lazy repair loop over the goal frontier. It
-  does **not** mean computing Kan extensions; `core/fix.js` is a lazy self-referential stream,
-  nothing more.
-- "Adjunctions = generator ⊣ verifier" named the LLM/Lean pairing with kernel-verified stopping
-  (`agent/solve.js`), not a theorem about adjoint functors.
-- "Monads = the loop" named stage composition of the pipeline (`core/pipeline.js`), not a
-  category-theory library.
-
-Implementors must not add a category-theory dependency or a "Kan-extension engine". If a mapping
-and a module contract disagree, the contract wins and the mapping is re-framed — never the
-reverse. (`patterns_from_hct.md` framing caveat states the same rule at the source.)
+The name lineage in `patterns_from_hct.md` is historical; it is not the specification. The rule:
+wherever a historical mapping would require implementing its literal mathematical object, the module
+contract in `architecture.md` wins and the mapping is re-framed — never the reverse. Implementors
+must not add a category-theory dependency or a "Kan-extension engine".
 
 ---
 

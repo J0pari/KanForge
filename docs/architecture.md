@@ -4,9 +4,6 @@
 vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, module inventory.
 Everything else references this document rather than restating it.
 
-Related docs: `blueprint.md` (design narrative + module inventory), `build_order.md`
-(phases + acceptance), `patterns_from_hct.md` (HCT → design patterns), `research_notes_2026.md`
-(evidence base). Ownership map: `docs/README.md`.
 
 ---
 
@@ -22,9 +19,9 @@ kanforge/
     lazy.js                  # Lazy (memoized thunks)
     lazify.js                # lazify (memoized proxied calls)
     template.js              # LazyTemplate (defer string building)
-    functor.js               # LazyFunctor (map/extract over structured results)
+    functor.js               # LazyMapper (map/extract over structured results)
     stream.js                # LazyStream (head-strict / tail-lazy)
-    pipeline.js              # Pipeline.kleisli / compose
+    pipeline.js              # Pipeline.compose (stage composition)
     context.js               # ConfigContext (per-run config threading)
     fix.js                   # lazy self-referential streams (memoized fixpoint)
     promise.js               # PullPromise (async thunk)
@@ -90,11 +87,13 @@ kanforge/
     dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
   bench/
-    harness.js               # run targets, collect KPIs
-    kpis.js                  # pass@k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, subgoals/tactic, reuse, guardrail trips
-    smoke.js                 # 23-problem miniF2F-style smoke set (5 tiers), runs over real repl
+    ablation.js              # search-strategy ablation harness: smoke set × every recipe
+    mathlibSmoke.js          # mathlib-backed smoke set (imports take 5-35s cold)
+    premisesCorpus.js        # premise corpus for retrieval experiments
     run.js                   # benchmark run driver
-    complex.js               # complexity analysis helpers
+    smoke.js                 # 23-problem miniF2F-style smoke set (5 tiers), runs over real repl
+    stepSmoke.js             # multi-step tier problems (build_order.md §5.4)
+    verifyStepSet.js         # full-paces chain verifier for the step tier
   test/                      # unit + integration tests (Node built-in test runner)
     core.test.js             # core/ primitives
     state.test.js            # tree ↔ script round-trip
@@ -116,15 +115,14 @@ kanforge/
 ### 2.1 `Lazy`
 ```js
 Lazy.of(fn)         // memoized thunk
-lazy.map(fn)        // functor map
-lazy.flatMap(fn)    // sequential composition (bind)
+lazy.map(fn)        // transform
+lazy.flatMap(fn)    // sequential composition
 lazy.get()          // force
 ```
 
 ### 2.2 `Pipeline`
 ```js
-Pipeline.kleisli(...stages)      // (a) => b, stages applied in order (preserves lazy/promise wrapping)
-Pipeline.compose(a, b)           // stage composition, checked
+Pipeline.compose(...stages)      // stages applied in order (preserves lazy/promise wrapping)
 stage = { run(ctx, input) -> Promise<output>, name, track(evt) }
 ```
 
@@ -358,7 +356,7 @@ The agent loop operates at Level 2 (goal e-graph within a single lemma). The sch
 **Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application reduces the current goal to zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
 
 ```js
-const agent = Pipeline.kleisli(observe, propose, act, verify, repair, commit)
+const agent = Pipeline.compose(observe, propose, act, verify, repair, commit)
 observe(goal)   -> PromptInput        // goal (type + context) + retrieved premises → prompt
 propose(input)  -> Patch[]            // LLM: ONE tactic patch per call (§2.7)
 act(patch)      -> Applied            // backend.applyTactic(goal, tactic) → new subgoals

@@ -62,7 +62,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `check("example : 1 + 1 = 2 := by rfl")` returns verified (CLI).
 
 ### 0.2 Build the core
-- Implement `Lazy`, `LazyTemplate`, `LazyFunctor`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
+- Implement `Lazy`, `LazyTemplate`, `LazyMapper`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
   `fix`, `PullPromise`, `PullCache`, `PullGraph`, `StateSerializer`, `Hasher` in `core/` with
   unit tests (file mapping: `architecture.md` §1).
 - Add `core/patch.js` (typed patch envelope, `architecture.md` §2.7) and `core/scheduler.js`
@@ -328,8 +328,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   reviews candidate proofs (statement-match + readability).
 
 ### 7.3 Full digestion + audit
-- Auto-generate per-target writeups with assumption accounts; assemble a research summary doc
-  (HCT-doc style). `core/hasher.js` audit + git history = reproducibility pack.
+- Auto-generate per-target writeups with assumption accounts; assemble a research summary doc.
+  `core/hasher.js` audit + git history = reproducibility pack.
 - **Acceptance:** for every claimed result: Lean source, blueprint JSON, writeup, audit hash, and
   git commits all consistent and queryable via `/integrity/verify`.
 

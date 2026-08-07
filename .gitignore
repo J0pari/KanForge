@@ -20,3 +20,7 @@ node_modules/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# HCT lineage material (historical naming intuition only; see kanforge/core for the contracts)
+docs/patterns_from_hct.md
+src/HCT_primer.txt

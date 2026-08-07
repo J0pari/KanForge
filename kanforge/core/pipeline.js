@@ -1,14 +1,10 @@
-// Ported from scripts/builder.js:222-278 (J0pari/Builder, MIT) via tools/extract_modules.py.
-// `withCache` dropped: it wired directly into Builder's global pullGraph/traceOrchestrator
-// and is not part of the KanForge core contract.
-
 import { Lazy } from './lazy.js';
-import { LazyFunctor } from './functor.js';
+import { LazyMapper } from './functor.js';
 import { PullPromise } from './promise.js';
 
 export class Pipeline {
-    static kleisli(...stages) {
-        if (stages.length === 0) return x => LazyFunctor.lift(x);
+    static compose(...stages) {
+        if (stages.length === 0) return x => LazyMapper.lift(x);
         if (stages.length === 1) return stages[0];
 
         return stages.reduce((f, g) => {
@@ -31,9 +27,5 @@ export class Pipeline {
                 return g(fx);
             };
         });
-    }
-
-    static compose(...stages) {
-        return Pipeline.kleisli(...stages);
     }
 }

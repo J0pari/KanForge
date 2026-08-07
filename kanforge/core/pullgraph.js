@@ -1,6 +1,5 @@
-// Ported from scripts/builder.js:481-786 (J0pari/Builder, MIT) via tools/extract_modules.py.
-// Telemetry stripped: traceOrchestrator traces, performance marks, process.memoryUsage,
-// CONFIG.processing.progress thresholds. Progress callback kept as an opt-in hook.
+// Dependency graph of memoized computations (architecture.md §2.3): pulling a node forces its
+// dependencies first; error boundaries and an opt-in progress hook are supported.
 
 import { Lazy } from './lazy.js';
 

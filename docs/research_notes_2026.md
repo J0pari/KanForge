@@ -121,8 +121,8 @@ All tricks below apply at the **tactic level** (Level 2, `architecture.md` §2.2
 
 The foundational lazy/pull primitives in `kanforge/core/` (`lazy`, `stream`, `promise`, `cache`,
 `pipeline`, `context`, `fix`, `functor`, `template`, `serialize`, `hasher`) and the
-telemetry/instrumentation modules (`optimization/*`, `query/*`) are adaptations of the lazy
-build-system machinery in the `J0pari/Builder` repository (MIT licensed). The adaptation is a
-re-implementation under KanForge's domain (proofs, not documents); correctness is enforced by the
-unit-test suite, not by trust in the source. This provenance is recorded here — the evidence doc —
-so that `architecture.md` and `blueprint.md` can state contracts without external attribution.
+telemetry/instrumentation modules (`optimization/*`, `query/*`) are re-implementations of lazy
+build-system machinery under KanForge's domain (proofs, not documents); correctness is enforced by
+the unit-test suite, not by trust in the source. Detailed name lineage is recorded in
+`patterns_from_hct.md` so that `architecture.md` and `blueprint.md` can state contracts without
+external attribution.

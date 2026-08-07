@@ -262,10 +262,17 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
 // promise keeps running in the background but its result is ignored, and workerPerProblem
 // isolates its (eventually failing) worker from the next row.
 function withTimeout(promise, ms, label) {
-    return Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`row timed out after ${ms}ms (${label})`)), ms))
-    ]);
+    let timer;
+    const guard = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`row timed out after ${ms}ms (${label})`)), ms);
+    });
+    const raced = Promise.race([promise, guard]);
+    // The guard timer must be cleared once the race has a winner, otherwise a driver that
+    // finishes normally leaves a pending timer (up to rowTimeoutMs) that keeps Node's event
+    // loop alive — the full-suite run then hangs minutes past its last reported result.
+    const settle = () => clearTimeout(timer);
+    raced.then(settle, settle);
+    return raced;
 }
 
 function writeReport(outDir, report) {
