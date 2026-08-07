@@ -10,6 +10,7 @@
 // baselines (26% -> 43% vs 26% -> 36%) on its 134-problem best-of-n subset.
 
 import { sanitizeTacticText } from '../agent/llm.js';
+import { formatGoalPrompt } from '../agent/prompts.js';
 
 // Fit Bradley-Terry ratings over the outcomes of a round-robin tournament.
 //
@@ -93,8 +94,7 @@ export function buildJudgePrompt(goal, tacticA, tacticB) {
     return [
         'Judge which of two tactic proposals for the same Lean goal is more promising.',
         '',
-        `Goal:`,
-        `    ${String(goal.type).trim()}`,
+        formatGoalPrompt(goal),
         '',
         `Tactic A:`,
         `    ${String(tacticA).trim()}`,
@@ -138,7 +138,7 @@ export async function bestOfNWithSwiss(goal, backend, llm, opts = {}) {
     const unique = new Set();
     for (let i = 0; i < N; i++) {
         const response = await llm.complete([
-            { role: 'user', content: `Goal: ${goal.type}\nPropose tactic:` }
+            { role: 'user', content: `${formatGoalPrompt(goal)}\n\nPropose tactic:` }
         ]);
         const tactic = sanitizeTacticText(response.text);
         if (tactic) unique.add(tactic);

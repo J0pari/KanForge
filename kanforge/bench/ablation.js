@@ -16,13 +16,16 @@
 // Cost model: every LLM call (proposal + swiss judge) and every kernel applyTactic is counted
 // per problem per recipe, so the tables report pass rate AND budget, not pass rate alone.
 //
-// CLI: node bench/ablation.js [--set=core|mathlib] [--recipes=bestofn,swiss]
+// CLI: node bench/ablation.js [--set=core|mathlib|step] [--recipes=bestofn,swiss]
 //                             [--problems=trans_lt,add_comm] [--N=8] [--max-llm-calls=400]
 //                             [--out=bench/ablation]
 //                             [--premises=on|off] [--premise-locked=on|off]
 //                             [--premise-topk=5] [--corpus=full|no-mul-add]
 // The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
-// per problem per recipe), so prefer --problems=<subset> to bound wall time.
+// per problem per recipe), so prefer --problems=<subset> to bound wall time. The step set
+// (--set=step) is the multi-step goal-directed tier (build_order.md §5.4; bench/stepSmoke.js):
+// 2-4 tactic chains with no trivial closer, verified by bench/verifyStepSet.js against the real
+// kernel before any run.
 //
 // Premise-retrieval axis (§5.2): with --premises=on the proposal prompts are routed through a
 // PremiseAugmentingLLM that retrieves top-k premises from the curated corpus (bench/premisesCorpus.js)
@@ -41,9 +44,11 @@ import { BestFirstSearch } from '../search/bfs.js';
 import { MCGS } from '../search/mcgs.js';
 import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
 import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
+import { STEP_PROBLEMS } from './stepSmoke.js';
 import { PremiseRetriever, PremiseAugmentingLLM } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { TacticMenuAugmentingLLM } from '../search/tacticMenu.js';
+import { formatGoalPrompt } from '../agent/prompts.js';
 
 export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 export const RANKING_RECIPES = ['bestofn', 'swiss', 'swiss+repulsion'];
@@ -90,7 +95,7 @@ async function pickSwissWithRepulsion(goal, backend, llm, sampler, tried, N) {
     const candidates = [];
     const seen = new Set();
     for (let i = 0; i < N; i++) {
-        const t = await sampler.propose(`Goal: ${goal.type}\nPropose tactic:`, { tried: [...tried] });
+        const t = await sampler.propose(`${formatGoalPrompt(goal)}\n\nPropose tactic:`, { tried: [...tried] });
         if (t && !seen.has(t)) {
             seen.add(t);
             candidates.push(t);
@@ -411,9 +416,9 @@ async function main() {
     const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
-    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : SMOKE_PROBLEMS;
-    if (set !== 'core' && set !== 'mathlib') {
-        console.error('unknown problem set; known sets: core, mathlib');
+    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : set === 'step' ? STEP_PROBLEMS : SMOKE_PROBLEMS;
+    if (set !== 'core' && set !== 'mathlib' && set !== 'step') {
+        console.error('unknown problem set; known sets: core, mathlib, step');
         process.exit(2);
     }
     const recipes = recipesArg ? recipesArg.split('=')[1].split(',') : RECIPES;

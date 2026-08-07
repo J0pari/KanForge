@@ -1,9 +1,17 @@
 // Prompt builder from Lean terms (architecture.md §4).
-export function buildTacticPrompt(goal, attempt, maxAttempts = 8) {
+//
+// Shared goal renderer: `Goal:\n  <type>` + a Context block of hypotheses when present. All
+// proposal prompts must show the context — a root goal for `example (p q r : Prop) (h : p ∨ q)
+// ... : r` is type `r`, which is unprovable without the telescope in scope (the multi-step tier
+// in bench/stepSmoke.js, §5.4, lives on this).
+export function formatGoalPrompt(goal) {
     const contextStr = goal.context && goal.context.length > 0
         ? `\nContext:\n${goal.context.map(c => `  ${c.name} : ${c.type}`).join('\n')}`
         : '';
-    
+    return `Goal:\n  ${goal.type}${contextStr}`;
+}
+
+export function buildTacticPrompt(goal, attempt, maxAttempts = 8) {
     return [
         {
             role: 'system',
@@ -11,7 +19,7 @@ export function buildTacticPrompt(goal, attempt, maxAttempts = 8) {
         },
         {
             role: 'user',
-            content: `Goal:\n  ${goal.type}${contextStr}\n\nPropose ONE tactic (attempt ${attempt}/${maxAttempts}):`
+            content: `${formatGoalPrompt(goal)}\n\nPropose ONE tactic (attempt ${attempt}/${maxAttempts}):`
         }
     ];
 }

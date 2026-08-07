@@ -14,14 +14,19 @@
 
 import { parseProposalGoal, promptText } from './premises.js';
 
-// Core Lean tactics always available in any Mathlib session. `when` is only a hint; a card
-// shows when its shape tag is present.
+// Core Lean tactics available in ANY repl session (Mathlib or not). The base env is core Lean +
+// Std: the core smoke set (bench/smoke.js) uses omega, rcases, rintro, induction, constructor,
+// native_decide against the real repl, so they are core cards — NOT module-provided. `when` is
+// only a hint; a card shows when its shape tag is present.
 const CORE_CARD_META = {
     intro: { when: 'goal is → or ∀', compose: 'then work in the body' },
     exact: { when: 'goal matches a hypothesis or lemma', compose: 'closes outright' },
     rw: { when: 'equality goal with a matching lemma', compose: 'then simp or rfl' },
     apply: { when: 'goal applies a lemma/constructor', compose: 'closes or makes progress' },
     cases: { when: 'a hypothesis is ∨/∧/inductive', compose: 'splits it; solve each case' },
+    rcases: { when: 'a hypothesis is ∧/∨/∃/inductive', compose: 'split it into named cases (e.g. rcases h with ⟨a, ha⟩ | hb)' },
+    rintro: { when: 'goal is →/∀ and hypotheses need splitting', compose: 'intro + case-split in one' },
+    induction: { when: 'a variable admits induction', compose: 'then solve base + step' },
     by_contra: { when: 'negation goal or by contradiction', compose: 'then derive False' },
     contradiction: { when: 'hypotheses clash', compose: 'closes outright' },
     assumption: { when: 'goal equals a hypothesis', compose: 'closes outright' },
@@ -30,7 +35,9 @@ const CORE_CARD_META = {
     right: { when: '∨ goal', compose: 'prove the right disjunct' },
     rfl: { when: 'definitionally-equal goal', compose: 'closes outright' },
     simp: { when: 'goal simplifies by definitions', compose: 'then rfl; use simp [<lemma>]' },
-    decide: { when: 'closed decidable proposition', compose: 'closes by computation' }
+    decide: { when: 'closed decidable proposition', compose: 'closes by computation' },
+    native_decide: { when: 'closed decidable proposition', compose: 'closes by compiled computation' },
+    omega: { when: 'linear arithmetic (Nat/Int/Real)', compose: 'closes outright' }
 };
 
 // Module-provided tactics, curated against the imports our statements actually use. Only the
@@ -121,12 +128,13 @@ function cardShown(card, s) {
     switch (card) {
         case 'intro': return s.tags.has('implication') || s.tags.has('forall');
         case 'rw': case 'rfl': return s.tags.has('arithmetic') && headIs(s.head, ['=', '≠']);
-        case 'cases': return s.tags.has('disjunction') || s.tags.has('conjunction') || s.tags.has('implication');
+        case 'cases': case 'rcases': case 'rintro': return s.tags.has('disjunction') || s.tags.has('conjunction') || s.tags.has('implication');
+        case 'induction': return s.tags.has('arithmetic') || s.tags.has('forall');
         case 'by_contra': case 'contradiction': return s.tags.has('negation');
         case 'constructor': return headIs(s.head, ['∧']);
         case 'left': case 'right': return headIs(s.head, ['∨']);
         case 'assumption': return !s.tags.has('implication') || s.tags.has('conjunction');
-        case 'decide': return s.propositional;
+        case 'decide': case 'native_decide': return s.propositional;
         case 'tauto': return s.propositional;
         case 'ring': case 'ring_nf': return s.tags.has('arithmetic') && headIs(s.head, ['=']);
         case 'omega': case 'linarith': case 'nlinarith': return s.tags.has('arithmetic');
@@ -154,10 +162,10 @@ export function tacticMenuFor(statement, goalType) {
     s.type = goalType;
 
     const cards = [];
-    for (const name of ['tauto', 'ring', 'ring_nf', 'omega', 'linarith', 'nlinarith', 'norm_num', 'positivity', 'field_simp', 'decide']) {
+    for (const name of ['tauto', 'ring', 'ring_nf', 'omega', 'linarith', 'nlinarith', 'norm_num', 'positivity', 'field_simp', 'decide', 'native_decide']) {
         if (available.has(name) && cardShown(name, s)) cards.push(name);
     }
-    for (const name of ['intro', 'cases', 'by_contra', 'contradiction', 'constructor', 'left', 'right']) {
+    for (const name of ['intro', 'cases', 'rcases', 'rintro', 'induction', 'by_contra', 'contradiction', 'constructor', 'left', 'right']) {
         if (available.has(name) && cardShown(name, s)) cards.push(name);
     }
     for (const name of ['exact', 'apply', 'simp', 'rw', 'rfl', 'assumption']) {

@@ -88,7 +88,8 @@ test('menu for an unknown import keeps core cards only (no unverified module tac
     const menu = tacticMenuFor('import Foo.Bar\n\nexample : True := by sorry', 'True');
     assert.ok(menu, 'core cards always produce a menu');
     assert.ok(menu.includes('simp') && menu.includes('exact'));
-    assert.ok(!menu.includes('tauto') && !menu.includes('ring') && !menu.includes('omega'), 'no unverified module tactics');
+    assert.ok(!menu.includes('tauto') && !menu.includes('ring'), 'no unverified module tactics');
+    assert.ok(menu.includes('omega'), 'omega is core-available');
 });
 
 // --- wrapper chain ---

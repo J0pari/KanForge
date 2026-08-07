@@ -246,6 +246,32 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance:** predictor list is non-empty and search budget spent on non-predictor branches
   increases.
 
+### 5.4 Multi-step goal-directed ablation tier
+- The core (§5.1) and mathlib sets are each closable by ONE headline tactic, so they cannot
+  separate a greedy single-tactic ranker from a multi-step searcher — exactly the divide the
+  P6 gate (§6) must measure. Fix: a multi-step tier where every problem needs a 2–4 tactic
+  `chain` and admits **no trivial closer**.
+- **Tier definition** (`bench/stepSmoke.js`, `STEP_PROBLEMS`, 10 problems over the core repl):
+  - **T4 logic decomposition** (families `rcases`/`intro`/`constructor`): `or_elim`, `or_comm`,
+    `and_intro_chain`, `imp_trans`, `modus_tollens`.
+  - **T5 rewrite + hypothesis composition** (family `rw`): `distrib_twice`, `square_expand`,
+    `mul_comm_rw`, `func_compose`, `eq_trans_chain`.
+  - Each problem carries a golden `chain`; `validateSmokeSet` rejects malformed chains.
+- **Full-paces harness** (`bench/verifyStepSet.js`): every stub must typecheck, the golden chain
+  must replay through the SAME `GoalEGraph`/`open[0]` frontier discipline as the ablation drivers
+  (`replayChain`) AND re-verify once assembled via `assembleProofSource`, and each of the trivial
+  closers `rfl`, `simp`, `omega`, `decide`, `assumption` must FAIL on the root goal. CLI:
+  `node bench/verifyStepSet.js [--set=step] [--problems=id,...] [--out=dir]` → report.json/report.md.
+- **Measured (real kernel, all 10 PASS):** `node bench/verifyStepSet.js` — every problem
+  `stub=true chain=true asm=true neg=true` (report in `bench/ablation/verifyStep_1786002349245/`).
+  Chain shape lessons: `rw` rewrites only the FIRST matching occurrence (repeat `rw [Nat.mul_add]`
+  twice) and auto-closes definitionally via `rfl` (a trailing `rfl` fails with "No goals to be
+  solved"); `(a+b)*(c+d)` reassociation is NOT definitional under left-assoc `+`, so the final
+  `omega` is required, not cosmetic; `simp` closes `(p → q → r) → (p ∧ q → r)`, which is why the
+  tier rejects trivial closers *empirically*, not by assumption.
+- **Open item:** the tier ablation (bestofn vs MCGS × `--menu=on|off` × `--premises=on|off`) on
+  `--set=step`; this is the pass@1/cost table the P6 gate (§6) is judged on.
+
 ---
 
 ## Phase 6 — RL optimization
