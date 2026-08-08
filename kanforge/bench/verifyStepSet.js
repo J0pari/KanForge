@@ -208,7 +208,10 @@ async function main() {
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency: 2,
-        timeoutMs: 60_000
+        timeoutMs: 60_000,
+        // Fresh repl processes take ~60s to elaborate their first command; warm each worker so
+        // the first check/extractGoals isn't charged against the 60s request timeout.
+        warmupStatement: 'example : True := by trivial'
     });
     try {
         const report = await verifyStepSet(pool, problems, {

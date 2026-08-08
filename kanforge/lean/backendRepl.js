@@ -245,6 +245,12 @@ export class BackendRepl {
         // memory". workerPerProblem retires a session's worker when its lemma ends, giving each
         // problem a fresh process (use for Mathlib-heavy workloads).
         this.workerPerProblem = options.workerPerProblem ?? false;
+        // A fresh repl process takes tens of seconds to elaborate its FIRST command (initial
+        // environment build), which otherwise lands on the first caller's clock and trips its
+        // timeout before any real work. warmup fires a trivial statement on each worker at
+        // spawn, absorbing the cold start so leased sessions never pay it.
+        this.warmupStatement = options.warmupStatement ?? null;
+        this.warmupTimeoutMs = options.warmupTimeoutMs ?? 180_000;
         this.startedAt = Date.now();
         this._env = resolveReplEnv(this.toolchain, this.leanProject);
 
@@ -271,7 +277,28 @@ export class BackendRepl {
             onIdle: () => this._wakeWaiters()
         });
         this._workers.push(worker);
+        // Warm the new worker in the background (also covers retire-replacements). The worker
+        // stays busy until its warmup response lands, so _acquire never hands it out cold.
+        if (this.warmupStatement) {
+            worker.busy = true;
+            this._warm(worker);
+        }
         return worker;
+    }
+
+    // Send one trivial statement on a fresh worker so the first-elaboration cold start happens
+    // off the caller's clock. Failures retire+replace the worker, which re-warms itself.
+    async _warm(worker) {
+        try {
+            await this._requestOnWorker(worker, { cmd: this.warmupStatement, env: null }, { timeoutMs: this.warmupTimeoutMs });
+        } catch {
+            // timeout path already retired the worker and spawned a warm replacement
+        } finally {
+            if (worker.isAlive() && !worker._retired) {
+                worker.busy = false;
+                this._wakeWaiters();
+            }
+        }
     }
 
     _retire(worker) {
@@ -322,14 +349,13 @@ export class BackendRepl {
                 timer = setTimeout(() => {
                     this.timeouts++;
                     this.hangs++;
-                    if (!lease) {
-                        // Stateless check: kill worker and replace
-                        this._retire(worker);
-                        reject(Object.assign(new Error(`lean repl timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
-                    } else {
-                        // Leased session: fail request but keep worker alive
-                        reject(Object.assign(new Error(`lean repl session timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
-                    }
+                    // Reject first so the caller sees the timeout, not the kill's worker-exit.
+                    reject(Object.assign(new Error(`lean repl ${lease ? 'session ' : ''}timeout after ${timeoutMs}ms`), { kind: 'timeout' }));
+                    // The repl answers requests FIFO on one pipe. A request that timed out is
+                    // still in flight, so its response would desync any request we send next on
+                    // this worker. Kill and replace the worker — leased or not — so the pool
+                    // never hands out a wedged worker (header contract: kill-on-hang).
+                    this._retire(worker);
                 }, timeoutMs);
             });
         } finally {

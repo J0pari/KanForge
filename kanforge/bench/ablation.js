@@ -462,7 +462,11 @@ async function main() {
         // Mathlib imports take 5-35s cold; the core set is near-instant.
         timeoutMs: set === 'mathlib' ? 180_000 : 60_000,
         // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
-        workerPerProblem: set === 'mathlib'
+        workerPerProblem: set === 'mathlib',
+        // A fresh repl takes ~60s to elaborate its first command; warm each worker so the first
+        // row pays that cost off the timer (the failed `or_elim` row was exactly this: it timed
+        // out at 60020ms before the LLM was ever called).
+        warmupStatement: 'example : True := by trivial'
     });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });

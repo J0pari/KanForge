@@ -5,6 +5,7 @@ kanforge/lean-project/.lake/
 kanforge/_extracted/
 
 # Smoke test run artifacts
+runs/
 kanforge/runs/
 kanforge/bench/ablation/
 
