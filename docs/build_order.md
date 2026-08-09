@@ -198,6 +198,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
   reported. Compare, then decide. (§5.6 sharpens this to a held-out, cost-normalized comparison;
   a "can solve something" anecdote is not acceptance.)
+- **Toggleable live path (architecture.md §5 integration contract).** The loop accepts every
+  strategy as a `searchRecipe` toggle (`loop` / `bestofn` / `bfs` / `mcgs` / `swiss`) plus
+  orthogonal `repulsion` / `premises` / `tacticMenu` / `predictors` toggles, and the open-problem
+  pipeline (`blueprint/refine.js`) passes the configured recipe through. The ablation graph and
+  the live loop consume the SAME toggles, so "compare, then decide" is a runtime switch, not a
+  rebuild. Deliverable: `TacticLoop({ searchRecipe })` delegates per-lemma proving to the named
+  strategy; `blueprint/run.js` accepts `--recipe=` and the toggle flags; unit tests cover each
+  recipe path in the loop.
 - **Status:** the comparison apparatus ships in `bench/ablation.js` (recipes: `bestofn`, `swiss`,
   `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`; shared LLM-call budget;
   per-recipe + per-problem cost/pass tables written to `bench/ablation/`). The P0.1 Mathlib repl
@@ -547,12 +555,26 @@ a measured effect; retrieval never bypasses kernel verification.
 ### 6.3 Test-time RL
 - `optimization/ttrl.js`: on hard goals, allow the policy to adapt within the run from accumulated
   verification outcomes (AlphaProof-style).
+- **Built (toggleable, P6 on the live loop):** `TestTimePolicy` escalates the tactic budget of a
+  goal class after repeated failures (`stateFor`), computed from the run's own event stream; the
+  loop takes `ttrl: true` and the escalated budget flows into the `loop` recipe's attempt bound.
+  The GRPO harness (`optimization/grpo.js`) records episode batches from the same runs and
+  computes the clipped-surrogate update quantities a trainer would apply (group-relative
+  advantages, loss, clip rate) — it records and computes, it does not fake a training run
+  (applying a gradient step is the §6.4 trainer's job).
 - **Acceptance (provisional):** pass@1 improves on hard targets with adaptation vs frozen policy;
   sample efficiency reported.
 
 ### 6.4 Data flywheel
 - `growth/dataset.js`: every verified attempt → training sample (state, tactic, outcome);
   self-generated problem corpus from the target list; held-out split maintained.
+- **Built (P6):** degeneracy monitors (`optimization/patterns.js`) run as a pure analysis of any
+  run's event stream (`monitor: true` on the loop) — error clusters, same-failure cycles,
+  repair loops, stuck proposals, guardrail spikes, degradation, budget exhaustion — and the
+  observations feed the guardrail layer and the reward-refresh loop. Telemetry export
+  (`optimization/exporter.js`, `exportTo: <file>` on the loop or `--export-to=` on
+  `blueprint/run.js`) persists the causal stream as JSONL plus a KPI summary sidecar. `reward.js`
+  keeps its P6 initial defaults; refresh it from `patterns.js` observations once measured.
 - **Acceptance:** dataset grows monotonically; contamination check (overlap with benchmark splits)
   reported per release.
 
@@ -623,6 +645,16 @@ a measured effect; retrieval never bypasses kernel verification.
   instances into kernel-checked `example`s; (3) the consensus step reusing `search/swiss.js`
   pairwise judgment for candidate selection among formalizations; (4) the assumption-ledger +
   pin commit path.
+- **Status of deliverables:** (1) the shortlist entry carries formalizability, shape, and the
+  substrate-cost estimate (`estimateSubstrateCost`: def-node count, import profile, probe count —
+  labeled an estimate, true cost measured at prove time); (2) the probe harness
+  (`_verifyProbes`: one batched LLM call → per-instance kernel checks, evidence recorded); (3)
+  the consensus step (`consensusFormalize`: two independent formalizations A/B, swiss pairwise
+  statement judge, agreement + winner reported); (4) the assumption ledger
+  (`assumptionLedger`: every asserted instance with its kernel evidence) + pin commit
+  (`commitPin`: statement pin + ledger hash). The consensus/ledger paths are exercised by
+  `test/toggles.test.js` where the deterministic parts are testable; the LLM+repl path is
+  exercised live via `bench/validateFormalization.js`.
 - **Acceptance (provisional):** ≥ 50% of curated candidates formalize; each formalization is
   human-reviewed and statement-pinned before search begins; every mission has a recorded
   shortlist + human selection in its digest provenance; a candidate that fails a probe or a
@@ -666,6 +698,15 @@ a measured effect; retrieval never bypasses kernel verification.
   single-agent-workspace lock in `core/guardrails.js`; run parallel prover
   agents over the corpus with single-owner lemma edits (AxiomProver-style: autoformalizer /
   conjecturer / prover / critic under `agent/roles/`).
+- **Built (toggleable, P7):** `growth/multibody.js` (`partitionLanes` + `MultibodyCoordinator`)
+  shards a development into per-owner regions, runs lanes in parallel, and enforces coherence —
+  a lemma may reference a cross-region lemma only if it was kernel-verified before the dependent
+  committed; stalled lanes and coherence violations are reported, never silently merged. The
+  role ensemble exists: `conjecturer.js` (proposes targets in the four §0.2 shapes, strict JSON),
+  `prover.js` (the TacticLoop-backed proving unit a lane worker wraps), `critic.js`
+  (statement-match + readability heuristics deterministically, optional LLM judgment pass). The
+  single-agent-workspace lock remains in `core/guardrails.js` backlog; a real multi-process run
+  (2+ agents on disjoint targets) is a live-validation item.
 - **Acceptance:** 2+ agents run concurrently on disjoint targets without file conflicts; critic
   reviews candidate proofs (statement-match + readability).
 

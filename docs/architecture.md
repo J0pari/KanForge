@@ -173,11 +173,11 @@ kanforge/
     repair.js                # error-driven repair (classify, retry)
     prompts.js               # prompt builder from Lean terms
     llm.js                   # sole LLM client: drives the opencode CLI (no API key; KANFORGE_LLM_MODEL selects the model)
-    roles/                   # P7 only (multi-agent ensemble)
-      autoformalizer.js
-      conjecturer.js
-      prover.js
-      critic.js
+    roles/                   # multi-agent ensemble (P7)
+      autoformalizer.js      # prose → kernel-typechecked statement (+ probes, consensus, ledger, pin)
+      conjecturer.js         # proposes targets in the four §0.2 shapes (strict JSON)
+      prover.js              # the ensemble's proving unit (TacticLoop-backed)
+      critic.js              # statement-match + readability review (deterministic + optional LLM)
   blueprint/
     skeleton.js              # theorem → DAG of kernel-typechecked sorry-stubs (LLM decomposition; every stub backend-checked; lemma→theorem normalization)
     dag.js                   # blueprint validation, topological order, cycle detection, dependents index
@@ -197,11 +197,11 @@ kanforge/
     store.js                 # bounded event store (causal parent links)
     causal.js                # causal TELEMETRY / trace analysis (Markov transitions, failure correlations, timing, critical path) — NOT causal inference (see §6)
     metrics.js               # KPI calculator (wired into the loop's per-run outcome; catalog in §6.1)
-    patterns.js              # degeneracy / reward-hacking monitors
-    exporter.js              # telemetry export
+    patterns.js              # degeneracy / reward-hacking monitors (pure function of the event stream)
+    exporter.js              # telemetry export (JSONL events + KPI summary sidecar)
     reward.js                # reward function (initial defaults, §6)
-    grpo.js                  # GRPO update harness
-    ttrl.js                  # test-time RL
+    grpo.js                  # GRPO update harness (trajectories, group advantages, clipped loss)
+    ttrl.js                  # test-time RL (within-run budget adaptation from outcomes)
   digest/
     writeup.js               # Markdown/HTML with KaTeX
     auditPack.js             # per-lemma publication unit (§7)
@@ -605,17 +605,16 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   choice" or "MCGS beats best-of-N" into a *measured* claim at normalized LLM + kernel cost, not a
   solved-any-problem anecdote.
 
-**Integration contract (what is in the live path).** The live loop (`agent/loop.js`, the only
-goal-selection path the open-problem pipeline consumes) uses the default single-tactic strategy,
-with `swiss` (`useSwiss: true`) and `premises` (`premises: [...]`) as opt-in per-goal
-augmentations. The remaining strategies — `bestofn`, `bfs`, `mcgs`, `repulsion`, `tacticMenu` —
-are **not in the live loop**; they are reachable only through the ablation harness
-(`bench/ablation.js`) as recipes and factorial-graph components. The §5 acceptance ("compare,
-then decide") is precisely the gate for wiring a strategy into the loop: a strategy enters the
-live path only when it shows a measured advantage over the default at normalized cost
-(`build_order.md` §5.1/§5.6). Until then, the ablation harness is where every strategy lives and
-is exercised; the loop is not the only consumer of the search modules, but it is the only one the
-open-problem workflow uses.
+**Integration contract (what is in the live path).** The live loop (`agent/loop.js`) is fully
+ablatable: every strategy is a toggle, not a one-way gate. The loop accepts a `searchRecipe`
+option naming which strategy handles per-lemma goal selection and proposal —
+`loop` (default inline single-tactic), `bestofn`, `bfs`, `mcgs`, or `swiss` — plus orthogonal
+toggles for `repulsion`, `premises`, `tacticMenu`, and `predictors`. The open-problem pipeline
+(`blueprint/refine.js`) passes the configured recipe through, so a mission runs under whatever
+strategy combination is selected, and the ablation graph (`bench/ablation.js --ablate`) measures
+the same toggles the loop can take. This makes "compare, then decide" (build_order.md §5.1) a
+runtime switch, not a rebuild: a strategy with a measured advantage is enabled by configuration,
+and one without is disabled — both without code change.
 
 ### 5.7 Benchmark discipline (fixed corpus, ablation graph, provenance)
 
@@ -732,8 +731,15 @@ in hand cannot produce it (it needs instrumentation the loop does not yet emit �
 The metrics module's contract: pure function of the event stream; never calls the backend or LLM;
 every emitted value is derivable from events (or `null` with a documented reason).
 
-`grpo.js`: GRPO over episode batches, policy model only; `patterns.js` monitors reward hacking /
-loop degeneracy (error clusters, same-failure cycles). `ttrl.js`: test-time RL for hard goals.
+The learning/adaptation modules are all toggleable on the live loop and pure where they can be:
+`patterns.js` runs as a pure analysis of any run's event stream (`monitor: true`) and detects
+error clusters, same-failure cycles, repair loops, stuck proposals, guardrail spikes,
+degradation, and budget exhaustion; `ttrl.js` (`ttrl: true`) escalates the tactic budget of a
+goal class after repeated failures — within-run adaptation from the run's own outcomes; `grpo.js`
+(`grpo: true`) records episode batches and computes the clipped-surrogate update quantities a
+trainer would apply (group-relative advantages, loss, clip rate), but does not fake a training
+run — applying a gradient step is the offline trainer's job; `exporter.js` (`exportTo: <file>`)
+persists the causal stream and KPI summary. The observer never calls the backend or LLM.
 
 ---
 

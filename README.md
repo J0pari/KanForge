@@ -185,10 +185,20 @@ kanforge/
 │   ├── backendCli.js   # Lean CLI backend
 │   ├── goalText.js     # Goal string parsing
 │   └── pin.js          # Statement pinning
-├── optimization/       # Telemetry and metrics
+├── optimization/       # Telemetry, metrics, and the toggleable learning/adaptation modules
 │   ├── bus.js          # Event bus
 │   ├── store.js        # Causal event store
-│   └── metrics.js      # Performance metrics
+│   ├── metrics.js      # Performance metrics
+│   ├── patterns.js     # Degeneracy monitors (monitor toggle)
+│   ├── exporter.js     # Telemetry export (exportTo toggle)
+│   ├── ttrl.js         # Test-time budget adaptation (ttrl toggle)
+│   ├── grpo.js         # GRPO update harness (grpo toggle)
+│   └── reward.js       # Reward function (initial defaults, §6)
+├── agent/roles/        # Multi-agent ensemble (P7)
+│   ├── autoformalizer.js
+│   ├── conjecturer.js
+│   ├── prover.js
+│   └── critic.js
 ├── blueprint/          # Theorem → DAG of stubs, then fill bottom-up
 │   ├── skeleton.js     # LLM decomposition → kernel-typechecked sorry-stubs
 │   ├── dag.js          # Blueprint validation + topological order
@@ -197,19 +207,20 @@ kanforge/
 ├── growth/             # Persistence for the growth loop
 │   ├── lemmaStore.js   # Content-addressed lemma store (write-through JSON)
 │   ├── dataset.js      # Append-only training samples + held-out split
-│   └── commit.js       # Per-lemma git commits to a scratch repo
+│   ├── commit.js       # Per-lemma git commits to a scratch repo
+│   └── multibody.js    # Multi-agent lemma-ownership lanes + coherence checks (P7)
 ├── digest/             # Publication units
 │   ├── writeup.js      # Markdown/HTML proof writeups
 │   ├── auditPack.js    # Per-lemma audit pack
 │   └── development.js  # Whole-development digest (writeup + audit + hash chain)
-├── search/             # Search strategies — ablation-recipes + live-loop augmentations
-│   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B) — wired into the loop (opt-in)
-│   ├── bestofn.js      # Naive best-of-n baseline — ablation recipe
-│   ├── bfs.js          # Best-first search — ablation recipe
-│   ├── mcgs.js         # UCB-guided graph search — ablation recipe
-│   ├── premises.js     # BM25 premise retriever (premise-locked) — wired into the loop (opt-in)
+├── search/             # Search strategies — every one is a toggleable live-loop recipe
+│   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B) — searchRecipe 'swiss'
+│   ├── bestofn.js      # Naive best-of-n baseline — searchRecipe 'bestofn'
+│   ├── bfs.js          # Best-first search — searchRecipe 'bfs'
+│   ├── mcgs.js         # UCB-guided graph search — searchRecipe 'mcgs'
+│   ├── premises.js     # BM25 premise retriever (premise-locked) — premises toggle
 │   ├── tacticMenu.js   # Goal-shape-keyed tactic capability menu — ablation component
-│   └── repulsion.js    # Goedel diversity penalty — ablation recipe modifier
+│   └── repulsion.js    # Goedel diversity penalty — recipe modifier (swiss+repulsion, +repulsion)
 ├── bench/              # Benchmarking
 │   ├── run.js          # Smoke test runner
 │   ├── smoke.js        # 23-problem smoke set (tiers 1–5)
@@ -273,17 +284,19 @@ Mathlib-enabled repl in `lean-project`):
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **Search baselines in the live loop** — `agent/loop.js` consumes `swiss` (via `useSwiss: true`)
-  as a per-goal strategy. `bestofn`, `bfs`, `mcgs`, `repulsion` are runnable as standalone
-  strategies and as recipes of the ablation harness (`bench/ablation.js`), but the loop has no
-  goal-selection mode that consumes them directly yet — that wiring is the measured next step once
-  the ablation comparison exists.
 - **`kanforge/runs/`** — older entries are audit packs from **mock-backend test runs** (e.g.
   `P → Q` "proved" by `intro h; omega`) that are **not** kernel-verified; do not cite them as
   evidence. Newer runs from `blueprint/run.js` write a kernel-verified development digest
   (writeup + audit + hash chain) plus per-lemma commits; those are real.
 - **CI** — no CI configuration; `npm test` runs locally only. The `*.live.test.js` suites (real
   repl binary) skip automatically when the binary/project is unavailable.
+- **Single-agent-workspace lock** (`core/guardrails.js` backlog) — the multibody coordinator
+  (`growth/multibody.js`) enforces coherence at the orchestration level; the per-agent file lock
+  that prevents two processes from editing the same workspace file is still backlog. A real
+  2+ process multi-agent run is a live-validation item.
+- **GRPO gradient application** — `optimization/grpo.js` records episode batches and computes the
+  update quantities (advantages, clipped loss); applying a gradient step to the LLM policy is the
+  offline trainer's job (§6.4), not implemented here.
 
 **Foundations:** `core/lazy` and `core/hasher` are the surviving foundational primitives; the
 `query/` API is deferred (architecture.md §8). The patch algebra lives in `core/patch.js`
@@ -315,12 +328,15 @@ captured per lemma into the retrieval index + development digest as the transfor
   (`premises`/`premiseLocked`/`premiseTopK` options). The LeanDojo-style *learned* retriever needs
   the Mathlib-enabled repl build (P0.1) for a real Mathlib corpus — a placeholder corpus can be
   exercised today.
-- **Search strategies in the live path**: the loop consumes the default single-tactic strategy,
-  with `swiss` (`useSwiss: true`) and `premises` as opt-in augmentations. `bestofn`, `bfs`, `mcgs`,
-  `repulsion`, and `tacticMenu` are not in the loop — they are exercised by the ablation harness
-  (`bench/ablation.js`) as recipes and factorial-graph components. Per `build_order.md` §5.1's
-  "compare, then decide", a strategy enters the live path only when it shows a measured advantage
-  at normalized cost; that wiring is gated on the §5.6 held-out comparison.
+- **Search strategies in the live path**: the loop is fully ablatable — every strategy is a
+  `searchRecipe` toggle (`loop` / `bestofn` / `swiss` / `swiss+repulsion` / `bfs` / `mcgs`) plus
+  orthogonal `repulsion` / `premises` / `tacticMenu` / `predictors` toggles, passed through
+  `blueprint/refine.js` and selectable on `blueprint/run.js --recipe=`. The ablation graph
+  (`bench/ablation.js --ablate`) measures the same toggles, so "compare, then decide"
+  (`build_order.md` §5.1) is a runtime switch, not a rebuild. The measured §5.1 comparison
+  (5-problem Mathlib run, all recipes) found the search recipes (bfs/mcgs) beat ranking recipes
+  on cost; tacticMenu adds a pass at higher cost — those results inform which toggle a mission
+  runs under, not which toggles exist.
 - **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalEGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
@@ -350,9 +366,15 @@ captured per lemma into the retrieval index + development digest as the transfor
       repl build).
 - [x] **Search ablation harness** — `bench/ablation.js`: smoke set × every recipe (bestofn, swiss,
       ±repulsion, bfs, mcgs) under a shared budget, with per-recipe/per-problem comparison tables
-      (pass rate + Wilson CI + LLM/kernel cost). This is the "compare, then decide" machinery that settles
-      swiss-vs-mcgs empirically; wiring a strategy into the live loop is gated on the §5.6
-      held-out, cost-normalized comparison (architecture.md §5 integration contract).
+      (pass rate + Wilson CI + LLM/kernel cost). Measured on a 5-problem Mathlib run (all recipes,
+      N=8, budget 400): every recipe solves 4/5, with the search recipes (bfs/mcgs) beating the
+      ranking recipes outright on cost (report under `bench/ablation/`).
+- [x] **Toggleable live loop (architecture.md §5 integration contract)** — `TacticLoop({ searchRecipe })`
+      runs any strategy in the live path: `loop` / `bestofn` / `swiss` / `swiss+repulsion` / `bfs` /
+      `mcgs`, plus orthogonal `repulsion` / `premises` / `predictors` / `monitor` / `ttrl` / `grpo` /
+      `exportTo` toggles; `blueprint/run.js --recipe=` selects it on a mission. The ablation graph
+      and the loop consume the SAME toggles, so "compare, then decide" is a runtime switch
+      (build_order.md §5.1).
 - [x] **Ablation graph + benchmark discipline** — `bench/ablation.js --ablate=<comps>` runs the
       full factorial over component toggles with main effects + pairwise interactions
       (build_order.md §5.8); every report carries a full provenance block (toolchain, model,
@@ -379,6 +401,24 @@ captured per lemma into the retrieval index + development digest as the transfor
       candidate's mathlib imports are paid once (~18s) and subsequent checks are ~0.2s. Validated
       on 7 distinct Erdős problems across number theory, geometry, and combinatorics.
       `bench/validateFormalization.js` + `bench/validateBatch.js` are the harnesses.
+- [x] **Consensus + ledger + shortlist (P7.1 d1/d3/d4)** — `consensusFormalize` (dual
+      formalization A↔B with a swiss pairwise statement judge), `assumptionLedger` +
+      `commitPin` (every asserted instance with its kernel evidence, statement pinned to the
+      backend context), and the shortlist entry with `estimateSubstrateCost` (def-node count,
+      import profile, probe checks — an estimate, labeled as such).
+- [x] **Degeneracy monitors + telemetry export (P6)** — `optimization/patterns.js`
+      (`monitor: true`): error clusters, same-failure cycles, repair loops, stuck proposals,
+      guardrail spikes, degradation, budget exhaustion — pure analysis of the run's event stream;
+      `optimization/exporter.js` (`exportTo: <file>`): JSONL causal stream + KPI summary.
+- [x] **Test-time adaptation (P6)** — `optimization/ttrl.js` (`ttrl: true`): escalates a goal
+      class's tactic budget after repeated failures, within-run. `optimization/grpo.js`
+      (`grpo: true`): records episode batches and computes the clipped-surrogate update
+      quantities (group advantages, loss, clip rate) — recording and math, not a fake training run.
+- [x] **Multi-agent ensemble (P7.3)** — `growth/multibody.js`: one-owner-per-region lanes with
+      coherence-checked merges (a lemma may reference a cross-region lemma only if kernel-verified
+      first). Roles: `conjecturer.js` (proposes targets in the four §0.2 shapes), `prover.js`
+      (TacticLoop-backed proving unit), `critic.js` (statement-match + readability review with an
+      optional LLM pass).
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops

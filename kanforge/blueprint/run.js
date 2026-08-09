@@ -121,7 +121,7 @@ async function main() {
     const args = process.argv.slice(2);
     const theorem = args.find(a => !a.startsWith('--'));
     if (!theorem) {
-        console.error('usage: node blueprint/run.js "<theorem>" [--out-dir=<dir>] [--max-rounds=<n>] [--max-tactics=<n>] [--concurrency=<n>] [--repo-dir=<dir>]');
+        console.error('usage: node blueprint/run.js "<theorem>" [--out-dir=<dir>] [--max-rounds=<n>] [--max-tactics=<n>] [--concurrency=<n>] [--recipe=loop|bestofn|swiss|swiss+repulsion|bfs|mcgs] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]');
         process.exit(2);
     }
     const outDir = argValue(args, '--out-dir=');
@@ -129,6 +129,10 @@ async function main() {
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? 8);
     const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
     const repoDir = argValue(args, '--repo-dir=');
+    const recipe = argValue(args, '--recipe=') ?? null;
+    const useSwiss = args.includes('--use-swiss');
+    const swissN = Number(argValue(args, '--swiss-n=') ?? 8);
+    const repulsion = args.includes('--repulsion');
 
     const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: 60_000 });
     const llmConfig = loadLLMConfig(ENV);
@@ -153,7 +157,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion },
             maxRounds,
             repoDir,
             provenance

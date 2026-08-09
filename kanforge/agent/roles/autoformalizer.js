@@ -10,7 +10,8 @@
 // generated in ONE batched LLM call. The backend is warmed with the target's imports once, so
 // statement + probe checks reuse the same warm worker (import cost paid at most once).
 
-import { hashStatement } from '../../lean/pin.js';
+import { hashStatement, makePin } from '../../lean/pin.js';
+import { swissRank, parseJudgeVerdict } from '../../search/swiss.js';
 import { normalizeFormalization, suggestImportsForError, SYMBOL_MODULES } from './normalize.js';
 
 const SHAPE_EQUIV = /(↔|≃|≅|⇔)/;
@@ -316,7 +317,7 @@ export class Autoformalizer {
             probes,
             justification: {
                 formalizability: probes.length ? 'kernel-typechecked, probes verified' : 'kernel-typechecked',
-                substrateCost: null, // §7.2: def-node count + import profile; filled by substrate estimator
+                substrateCost: estimateSubstrateCost(statement, { probes }),
                 shape: this._shapeOf(statement),
                 novelty: null // no-known-proof evidence; filled by intake (absent-from-mathlib check)
             }
@@ -330,4 +331,85 @@ export class Autoformalizer {
         if (SHAPE_EQ.test(s)) return 'closed-form';
         return 'universal-claim';
     }
+
+    // Consensus (§0.1.4, P7.1 d3): TWO independent formalizations of the same prose, then a
+    // swiss pairwise judge ranks which is more faithful. Agreement is not required for entry —
+    // the winner is, and both statements are returned so a human (or the kernel) can adjudicate.
+    async consensusFormalize(prose, { instances = [], source = null } = {}) {
+        const A = await this.formalize(prose, { instances, source });
+        const B = await this.formalize(prose, { instances, source });
+        if (!A.ok || !B.ok) {
+            return { ok: false, error: `dual formalization incomplete: A=${A.ok ? 'ok' : A.error}, B=${B.ok ? 'ok' : B.error}`, A, B };
+        }
+        const judge = buildStatementJudge(prose, { llm: this.llm });
+        const ranking = await swissRank([A.statement, B.statement], judge);
+        const winnerKey = ranking[0]?.candidate === A.statement ? 'A' : 'B';
+        return {
+            ok: true,
+            A: A.statement,
+            B: B.statement,
+            agreement: A.statement === B.statement,
+            ranking,
+            winner: winnerKey === 'A' ? A.statement : B.statement,
+            winnerEntry: winnerKey === 'A' ? A.shortlistEntry : B.shortlistEntry,
+            bothEntries: [A.shortlistEntry, B.shortlistEntry]
+        };
+    }
+
+    // Assumption ledger + pin commit (§0.1.4, P7.1 d4): every asserted instance is recorded with
+    // its kernel verification evidence; the formalized statement is pinned to the backend
+    // context so a later environment drift trips the pin rather than silently re-verifying.
+    assumptionLedger(statement, instances, probeResults = []) {
+        const results = new Map((probeResults ?? []).map(r => [r.instance, r]));
+        return (instances ?? []).map(inst => {
+            const r = results.get(inst);
+            return { instance: inst, verified: r?.verified ?? false, example: r?.example ?? null, error: r?.error ?? null };
+        });
+    }
+
+    async commitPin(statement, ledger) {
+        const pin = makePin(statement, this.backend.pin?.() ?? {});
+        return { pin, ledgerHash: hashStatement(JSON.stringify(ledger)) };
+    }
+}
+
+// Substrate-cost estimate (§7.2): the statement's definitional footprint — how many distinct
+// identifiers it references, how heavy its import profile is, and how many probe checks its
+// verification demanded. An ESTIMATE for mission selection, not a measured cost: the true cost
+// is measured at prove time (metrics.secondsPerTheorem).
+export function estimateSubstrateCost(statement = '', { probes = [] } = {}) {
+    const s = String(statement);
+    const importLines = (s.match(/^import\s+([^\n]+)/gm) ?? []);
+    const imports = importLines.flatMap(l => l.replace(/^import\s+/, '').split(/\s+/)).filter(Boolean);
+    const identifiers = new Set();
+    const tokens = s.split(/[^A-Za-z0-9_'\\]+/).filter(Boolean);
+    for (const t of tokens) {
+        if (t.length >= 3 && !/^(theorem|example|import|by|sorry)$/.test(t)) identifiers.add(t);
+    }
+    const heavyImport = imports.filter(i => /BigOperators|Topology|MeasureTheory|Analysis|Algebra\.(Group|Ring)\.Finset/.test(i)).length;
+    return {
+        defNodes: identifiers.size,
+        importCount: imports.length,
+        heavyImports: heavyImport,
+        probeChecks: probes.length,
+        estimate: identifiers.size + imports.length * 2 + heavyImport * 4 + probes.length,
+        unit: 'relative (estimate, not a measured cost)'
+    };
+}
+
+// A swiss-rankable judge over formalized STATEMENTS (fidelity to the prose), the A↔B consensus
+// comparator. Reuses the swiss ranker; verdicts parse exactly like tactic-pair judgments.
+export function buildStatementJudge(prose, { llm } = {}) {
+    if (!llm) throw new Error('buildStatementJudge requires an llm client');
+    return async (a, b) => {
+        try {
+            const response = await llm.complete([
+                { role: 'system', content: 'You judge which Lean 4 formalization is more faithful to the prose problem statement. Return only A, B, or EQUAL.' },
+                { role: 'user', content: `Prose:\n${prose}\n\nFormalization A:\n${a}\n\nFormalization B:\n${b}\n\nMore faithful: A, B, or EQUAL?` }
+            ]);
+            return parseJudgeVerdict(response.text);
+        } catch {
+            return null; // a null verdict is a draw — swissRank handles it
+        }
+    };
 }

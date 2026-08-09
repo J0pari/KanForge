@@ -33,13 +33,28 @@ import { EventStore } from '../optimization/store.js';
 import { computeMetrics } from '../optimization/metrics.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
-import { bestOfNWithSwiss, buildPairwiseJudge } from '../search/swiss.js';
+import { formatGoalPrompt } from './prompts.js';
+import { bestOfNWithSwiss, buildPairwiseJudge, swissRank } from '../search/swiss.js';
+import { bestOfN } from '../search/bestofn.js';
+import { BestFirstSearch } from '../search/bfs.js';
+import { MCGS } from '../search/mcgs.js';
+import { RepulsionSampler } from '../search/repulsion.js';
+import { tacticHead } from '../optimization/causal.js';
+import { analyzePatterns } from '../optimization/patterns.js';
+import { exportTelemetry } from '../optimization/exporter.js';
+import { TestTimePolicy } from '../optimization/ttrl.js';
+import { GRPOHarness } from '../optimization/grpo.js';
 import { PremiseRetriever, buildPremisePrompt, findPremiseLockViolations } from '../search/premises.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Search recipes the loop can run (architecture.md §5 integration contract). Per-goal recipes
+// dispatch inside the frontier loop; whole-graph recipes delegate the entire e-graph search and
+// share the commit gate.
+export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
+
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5 } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -51,9 +66,19 @@ export class TacticLoop {
         this.checkpointDir = checkpointDir;
         this.useSwiss = useSwiss;
         this.swissN = swissN;
+        const recipe = LOOP_SEARCH_RECIPES.includes(searchRecipe) ? searchRecipe : 'loop';
+        this.searchRecipe = (useSwiss && recipe === 'loop') ? 'swiss' : recipe;
+        this.repulsion = repulsion;
+        this.predictors = predictors;
         this.premiseLocked = premiseLocked;
         this.premiseTopK = premiseTopK;
         this.retriever = (premises && premises.length > 0) ? new PremiseRetriever(premises) : null;
+        this.monitor = monitor === true;
+        this.exportTo = exportTo ?? null;
+        this.ttrl = ttrl === true;
+        this.grpo = grpo === true;
+        this.ttrlPolicy = this.ttrl ? new TestTimePolicy() : null;
+        this.grpoHarness = this.grpo ? new GRPOHarness() : null;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -133,124 +158,150 @@ export class TacticLoop {
             const rootId = egraph.addGoal(rootGoals[0]);
             egraph.setRoot(rootGoals[0]);
 
-            let goalCount = 1;
-            while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
-                if (signal?.aborted) break;
-
-                // Frontier order: the first open class is the head goal of the current
-                // proof state; its freshest concrete goal carries the live proofState.
-                const openGoals = egraph.getOpenGoals();
-                if (openGoals.length === 0) break;
-
-                const currentGoalClass = openGoals[0];
-                const goal = egraph.currentGoal(currentGoalClass.id);
-                this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
-
-                let solved = false;
-                let lastResult = null;
-
-                if (this.useSwiss) {
-                    this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId: currentGoalClass.id, N: this.swissN }, lemmaId);
-                    const swissResult = await bestOfNWithSwiss(goal, this.backend, this.llm, { N: this.swissN });
-                    this.llmCalls += this.swissN;
-
-                    if (swissResult.ok) {
-                        this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId: currentGoalClass.id, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
-                        const record = egraph.applyTactic(currentGoalClass.id, swissResult.tactic, swissResult.result.newGoals);
-                        this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
-                        for (const subgoal of record.created) {
-                            this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
-                        }
-                        if (isGoalSolved(swissResult.result)) {
-                            solved = true;
-                            this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic, via: 'swiss' }, lemmaId);
-                        } else {
-                            solved = true;
-                        }
-                        lastResult = swissResult.result;
-                    } else {
-                        this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId: currentGoalClass.id, rankingSize: swissResult.ranking.length }, lemmaId);
-                    }
-                } else {
-                    for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
+            let goalCount = 0;
+            if (this.searchRecipe === 'bfs' || this.searchRecipe === 'mcgs') {
+                // Whole-graph delegation (architecture.md §5 integration contract): the strategy
+                // owns goal selection AND proposals over the e-graph; the loop keeps the commit
+                // gate below. Cost is counted via counting proxies so the loop's llmCalls and
+                // tacticCalls stay honest for metrics/audit.
+                const countedLLM = this._countingLLM(this.llm);
+                const countedBackend = this._countingBackend(this.backend);
+                const searcher = this.searchRecipe === 'mcgs'
+                    ? new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
+                    : new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors });
+                this._emit({ type: 'search_start', lemmaId, recipe: this.searchRecipe, budget: this.maxGoalsPerLemma }, lemmaId);
+                const searchResult = await searcher.search(egraph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
+                goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
+                this.llmCalls += countedLLM.llmCalls;
+                this.tacticCalls += countedBackend.tacticCalls;
+                this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: egraph.isRootSolved(), llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
+                if (!egraph.isRootSolved()) {
+                    fail(`search recipe ${this.searchRecipe} exhausted budget ${this.maxGoalsPerLemma} without solving`);
+                }
+            } else {
+                const triedTactics = [];
+                goalCount = 1;
+                while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
                     if (signal?.aborted) break;
 
-                    this.llmCalls++;
-                    const proposed = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
-                    const tactic = proposed?.tactic;
-                    if (!tactic) {
-                        this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
-                        continue;
-                    }
+                    // Frontier order: the first open class is the head goal of the current
+                    // proof state; its freshest concrete goal carries the live proofState.
+                    const openGoals = egraph.getOpenGoals();
+                    if (openGoals.length === 0) break;
 
-                    this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
+                    const currentGoalClass = openGoals[0];
+                    const goal = egraph.currentGoal(currentGoalClass.id);
+                    this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
 
-                    this.tacticCalls++;
-                    const result = await this.backend.applyTactic(goal, tactic);
-                    lastResult = result;
+                    let solved = false;
+                    let lastResult = null;
 
-                    if (result.status === 'error') {
-                        this._emit({ type: 'tactic_failed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' }, lemmaId);
-                        continue;
-                    }
+                    if (this.searchRecipe === 'loop') {
+                        // Test-time policy (§6.3): a goal class that keeps failing gets a larger
+                        // tactic budget — within-run adaptation from this run's own outcomes.
+                        if (this.ttrlPolicy) this.ttrlPolicy.observe(this.store.events);
+                        const maxAttempts = this.ttrlPolicy?.stateFor(currentGoalClass.id).maxAttempts ?? this.maxTacticsPerGoal;
+                        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                            if (signal?.aborted) break;
 
-                    const record = egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
-                    this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
-                    for (const subgoal of record.created) {
-                        this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
-                    }
+                            this.llmCalls++;
+                            const proposed = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
+                            const tactic = proposed?.tactic;
+                            if (!tactic) {
+                                this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
+                                continue;
+                            }
 
-                    if (isGoalSolved(result)) {
-                        solved = true;
-                        this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal' }, lemmaId);
-                        break;
-                    }
+                            this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
 
-                    solved = true; // decomposed into subgoals; they join the frontier
-                    break;
-                }
-                } // end else (non-Swiss path)
+                            this.tacticCalls++;
+                            const result = await this.backend.applyTactic(goal, tactic);
+                            lastResult = result;
 
-                if (!solved) {
-                    // P3.1: Attempt repair before giving up
-                    const lastError = lastResult?.error?.message ?? 'unknown error';
-                    const errorType = classifyError(lastError);
-                    this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
+                            if (result.status === 'error') {
+                                this._emit({ type: 'tactic_failed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' }, lemmaId);
+                                continue;
+                            }
 
-                    const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
-                    const repaired = await this._proposeTacticFromPrompt(repairPrompt);
-                    const repairedTactic = repaired?.tactic;
+                            const record = egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
+                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
+                            for (const subgoal of record.created) {
+                                this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
+                            }
 
-                    if (repairedTactic) {
-                        this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, llmMs: repaired.llmMs, promptTokens: repaired.promptTokens, completionTokens: repaired.completionTokens }, lemmaId);
+                            if (isGoalSolved(result)) {
+                                solved = true;
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal' }, lemmaId);
+                                break;
+                            }
 
-                        this.tacticCalls++;
-                        const repairResult = await this.backend.applyTactic(goal, repairedTactic);
+                            solved = true; // decomposed into subgoals; they join the frontier
+                            break;
+                        }
+                    } else {
+                        // Per-goal delegated recipes: bestofn / swiss / swiss+repulsion
+                        const pick = await this._pickByRecipe(goal, lemmaId, currentGoalClass.id, triedTactics);
+                        this.llmCalls += pick.llmCalls ?? 0;
+                        this.tacticCalls += pick.tacticCalls ?? 0;
 
-                        if (repairResult.status === 'ok') {
-                            const record = egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
-                            this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                        if (pick.ok) {
+                            const record = egraph.applyTactic(currentGoalClass.id, pick.tactic, pick.result.newGoals);
+                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                             }
                             solved = true;
-                            lastResult = repairResult;
-
-                            if (isGoalSolved(repairResult)) {
-                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
+                            lastResult = pick.result;
+                            if (isGoalSolved(pick.result)) {
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via }, lemmaId);
                             }
                         } else {
-                            this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
+                            lastResult = { error: { message: pick.lastError ?? 'no tactic proposed' } };
+                            this._emit({ type: 'recipe_failed', lemmaId, goalClassId: currentGoalClass.id, recipe: this.searchRecipe, lastError: lastResult.error.message }, lemmaId);
                         }
                     }
 
                     if (!solved) {
-                        egraph.markFailed(currentGoalClass.id);
-                        fail(`could not solve goal class ${currentGoalClass.id} after ${this.maxTacticsPerGoal} attempts + repair`);
-                    }
-                }
+                        // P3.1: Attempt repair before giving up
+                        const lastError = lastResult?.error?.message ?? 'unknown error';
+                        const errorType = classifyError(lastError);
+                        this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
 
-                goalCount += lastResult?.newGoals?.length ?? 0;
+                        const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
+                        const repaired = await this._proposeTacticFromPrompt(repairPrompt);
+                        const repairedTactic = repaired?.tactic;
+
+                        if (repairedTactic) {
+                            this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, llmMs: repaired.llmMs, promptTokens: repaired.promptTokens, completionTokens: repaired.completionTokens }, lemmaId);
+
+                            this.tacticCalls++;
+                            const repairResult = await this.backend.applyTactic(goal, repairedTactic);
+
+                            if (repairResult.status === 'ok') {
+                                const record = egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
+                                this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                                for (const subgoal of record.created) {
+                                    this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
+                                }
+                                solved = true;
+                                lastResult = repairResult;
+
+                                if (isGoalSolved(repairResult)) {
+                                    this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
+                                }
+                            } else {
+                                this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
+                            }
+                        }
+
+                        if (!solved) {
+                            egraph.markFailed(currentGoalClass.id);
+                            fail(`could not solve goal class ${currentGoalClass.id} after ${this.maxTacticsPerGoal} attempts + repair`);
+                        }
+                    }
+
+                    goalCount += lastResult?.newGoals?.length ?? 0;
+                }
             }
 
             const pin = this.pins.get(lemmaId);
@@ -366,6 +417,94 @@ export class TacticLoop {
     async _proposeTactic(goal, attempt, lemmaId = null, goalClassId = null) {
         const prompt = this._buildTacticPrompt(goal, attempt, lemmaId, goalClassId);
         return this._proposeTacticFromPrompt(prompt);
+    }
+
+    // Per-goal delegated recipes (architecture.md §5): pick a tactic for the current goal via the
+    // named strategy, applying candidates through a counting backend. Returns
+    // { ok, tactic, result, via, llmCalls, tacticCalls, lastError }.
+    async _pickByRecipe(goal, lemmaId, goalClassId, triedTactics) {
+        const countedLLM = this._countingLLM(this.llm);
+        const countedBackend = this._countingBackend(this.backend);
+        const N = this.swissN > 1 ? this.swissN : this.maxTacticsPerGoal;
+
+        if (this.searchRecipe === 'bestofn') {
+            const pick = await bestOfN(goal, countedBackend, countedLLM, N, this.predictors);
+            return { ...pick, via: 'bestofn', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: pick.ok ? null : 'no tactic accepted in best-of-N' };
+        }
+
+        if (this.searchRecipe === 'swiss') {
+            this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId, N }, lemmaId);
+            const swissResult = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors: this.predictors });
+            if (swissResult.ok) {
+                this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
+                return { ...swissResult, via: 'swiss', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
+            }
+            this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: swissResult.ranking.length }, lemmaId);
+            return { ...swissResult, via: 'swiss', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no tactic accepted in tournament' };
+        }
+
+        // swiss+repulsion: candidates drawn through a RepulsionSampler seeded with every tactic
+        // tried (and failed) so far in this lemma, ranked by swiss, applied in order.
+        this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId, N, repulsion: true }, lemmaId);
+        const sampler = new RepulsionSampler({ llm: countedLLM });
+        const candidates = [];
+        const seen = new Set();
+        for (let i = 0; i < N; i++) {
+            const t = await sampler.propose(`${formatGoalPrompt(goal)}\n\nPropose tactic:`, { tried: [...triedTactics] });
+            if (t && !seen.has(t)) {
+                seen.add(t);
+                candidates.push(t);
+            }
+        }
+        if (candidates.length === 0) {
+            this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: 0, repulsion: true }, lemmaId);
+            return { ok: false, via: 'swiss+repulsion', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no candidates sampled' };
+        }
+        const judge = buildPairwiseJudge(goal, { llm: countedLLM });
+        const ranking = await swissRank(candidates, judge);
+        let skipped = 0;
+        const history = [];
+        for (const { candidate } of ranking) {
+            if (this.predictors?.rejects(tacticHead(candidate), history)) {
+                skipped++;
+                continue;
+            }
+            history.push(tacticHead(candidate));
+            const result = await countedBackend.applyTactic(goal, candidate);
+            if (result.status === 'ok') {
+                this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId, winner: candidate, rankingSize: ranking.length, repulsion: true }, lemmaId);
+                return { ok: true, tactic: candidate, result, via: 'swiss+repulsion', skipped, llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
+            }
+            triedTactics.push(candidate);
+        }
+        this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: ranking.length, repulsion: true }, lemmaId);
+        return { ok: false, via: 'swiss+repulsion', skipped, llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'all ranked candidates failed kernel' };
+    }
+
+    // Counting proxies (mirror bench/ablation.js): make delegated strategies' LLM/backend cost
+    // visible to the loop's metrics and audit without touching their interfaces.
+    _countingLLM(llm) {
+        const counted = { ...llm };
+        counted.llmCalls = 0;
+        const complete = llm.complete.bind(llm);
+        counted.complete = async (...args) => {
+            counted.llmCalls++;
+            return complete(...args);
+        };
+        return counted;
+    }
+
+    _countingBackend(backend) {
+        const counted = { ...backend };
+        counted.tacticCalls = 0;
+        const applyTactic = backend.applyTactic.bind(backend);
+        const extractGoals = backend.extractGoals.bind(backend);
+        counted.applyTactic = async (goal, tactic) => {
+            counted.tacticCalls++;
+            return applyTactic(goal, tactic);
+        };
+        counted.extractGoals = async (statement) => extractGoals(statement);
+        return counted;
     }
 
     async _proposeTacticFromPrompt(prompt) {
@@ -484,6 +623,27 @@ export class TacticLoop {
             model: this.llm?.getModel?.() ?? null,
             provider: this.llm?.getProvider?.() ?? null
         };
+
+        // Degeneracy monitors (architecture.md §6, optimization/patterns.js): pure analysis of
+        // the run's own event stream — error clusters, same-failure cycles, guardrail spikes.
+        if (this.monitor) {
+            const patterns = analyzePatterns(this.store.events);
+            for (const o of patterns.observations) {
+                this._emit({ type: 'pattern_observation', severity: o.severity, pattern: o.type, count: o.count, message: o.message }, null);
+            }
+            outcome.patterns = patterns;
+        }
+
+        // GRPO harness (architecture.md §6): record episode batches from this run's outcomes.
+        if (this.grpoHarness) {
+            this.grpoHarness.record(this.store.events);
+            outcome.grpo = this.grpoHarness.summary();
+        }
+
+        // Telemetry export (optimization/exporter.js): persist the causal stream + KPI summary.
+        if (this.exportTo) {
+            outcome.export = exportTelemetry({ file: this.exportTo, events: this.store.events, metrics: outcome.metrics, meta: { model: outcome.metrics.model, provider: outcome.metrics.provider } });
+        }
 
         return outcome;
     }
