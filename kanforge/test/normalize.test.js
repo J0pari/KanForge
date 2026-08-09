@@ -4,7 +4,7 @@
 // pinned mathlib.
 import test from 'node:test';
 import assert from 'node:assert';
-import { normalizeStatement, normalizeStatementText, normalizeFormalization } from '../agent/roles/normalize.js';
+import { normalizeStatement, normalizeStatementText, normalizeFormalization, suggestImportsForError } from '../agent/roles/normalize.js';
 import { resolveModule, resolveImports } from '../lean/moduleResolver.js';
 
 test('unicode math symbols normalize to ASCII Lean type names', () => {
@@ -38,4 +38,13 @@ test('module resolver maps directory aliases to real modules, drops unresolvable
     assert.strictEqual(resolveModule('Mathlib.Data.Real.Basic'), 'Mathlib.Data.Real.Basic');
     assert.strictEqual(resolveModule('Mathlib.Data.Nope'), null);
     assert.deepStrictEqual(resolveImports(['Mathlib.Data.Nat.Prime', 'Mathlib.Data.Real.Basic', 'Mathlib.Nope.X']), ['Mathlib.Data.Nat.Prime.Defs', 'Mathlib.Data.Real.Basic']);
+});
+
+test('suggestImportsForError maps a missing symbol to its providing module', () => {
+    const r = suggestImportsForError('Invalid field `sum`: The environment does not contain `Finset.sum`');
+    assert.ok(r);
+    assert.strictEqual(r.symbol, 'Finset.sum');
+    assert.ok(r.modules.includes('Mathlib.Algebra.BigOperators.Ring.Finset'));
+    assert.ok(r.notationFix.includes('∑'));
+    assert.strictEqual(suggestImportsForError('no symbols here'), null);
 });

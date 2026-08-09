@@ -362,10 +362,16 @@ captured per lemma into the retrieval index + development digest as the transfor
       formalizations, both Apache-2.0).
 - [x] **Autoformalizer (P7.1)** — `agent/roles/autoformalizer.js`: prose → kernel-typechecked
       Lean statement via the §0.1 pipeline (strict-JSON propose → static validation → warm
-      session → kernel check → batched probes → pin). The repl pool gained statement-mode
-      **environment chaining** (`backend.warm` + `useWarmEnv`), so a candidate's mathlib imports
-      are paid once (~18s) and every subsequent check is ~0.2s (with an `∃`/`∀`-ascription
-      chain-safety fallback that checks fresh on the warm worker).
+      session → kernel check → batched probes → pin). Format-agnostic input: `normalize.js`
+      converts unicode/LaTeX/ASCII to canonical Lean, and `lean/moduleResolver.js` resolves
+      proposed imports to modules that exist in the pinned mathlib (e.g. stale
+      `Mathlib.Data.Nat.Prime` → `.Prime.Defs`). Repair is classified and targeted: missing
+      symbols map to their providing modules + a notation fix (e.g. obsolete `s.sum f` →
+      `∑ x ∈ s, f x`), and heavy-import timeouts fall back to the light module. The repl pool
+      gained statement-mode **environment chaining** (`backend.warm` + `useWarmEnv`), so a
+      candidate's mathlib imports are paid once (~18s) and subsequent checks are ~0.2s. Validated
+      on 7 distinct Erdős problems across number theory, geometry, and combinatorics.
+      `bench/validateFormalization.js` + `bench/validateBatch.js` are the harnesses.
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops

@@ -585,6 +585,13 @@ a measured effect; retrieval never bypasses kernel verification.
   the substrate cost (how many new `def` nodes / which §0.2 field substrate), the shape
   (§0.2), and the no-known-proof evidence (absent from mathlib, no golden chain). **The human
   selects the mission target from the shortlist.** The agent does not run search until selection.
+- **Status:** the intake gate (§7.0) is populated (`corpus/index/corpus.json`, 322 candidates)
+  and the autoformalizer (`agent/roles/autoformalizer.js`) formalizes corpus candidates — format-
+  agnostic (unicode/LaTeX/ASCII via `normalize.js`), import-resolving (`lean/moduleResolver.js`),
+  classified-repair (missing-symbol module + notation fixes, heavy-import fallback), with the
+  repl's statement-mode env chaining (`backend.warm`/`useWarmEnv`) paying imports once. Validated
+  on 7 distinct open problems across number theory, geometry, combinatorics (harness:
+  `bench/validateFormalization.js` single, `bench/validateBatch.js` random-N).
 - **Deliverables in order:** (1) the intake gate (§7.0) + shortlist generator (formalizability
   verdict + substrate cost + shape per candidate); (2) the probe harness that turns asserted
   instances into kernel-checked `example`s; (3) the consensus step reusing `search/swiss.js`

@@ -11,7 +11,7 @@
 // statement + probe checks reuse the same warm worker (import cost paid at most once).
 
 import { hashStatement } from '../../lean/pin.js';
-import { normalizeFormalization } from './normalize.js';
+import { normalizeFormalization, suggestImportsForError, SYMBOL_MODULES } from './normalize.js';
 
 const SHAPE_EQUIV = /(↔|≃|≅|⇔)/;
 const SHAPE_EXISTS = /∃/;
@@ -80,12 +80,12 @@ export function stripImports(statement) {
     return String(statement ?? '').split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n').trim();
 }
 
-// Chain-safety: the repl's `env: n` continuation rejects `∃`/`∀` ascription with "expected
-// token" (verified empirically — cold `env: null` parses them fine). Statements with top-level
-// quantifier ascription must check fresh (env: null) on the WARM worker (still fast — the
-// process has the modules; only the env chain is unsafe).
+// Chain-safety: the repl's `env: n` continuation rejects statements with quantifier binders
+// (∃/∀, with : , or ∈ ascription) with "expected token" (verified empirically — cold `env: null`
+// parses them fine). Any such statement checks fresh (env: null) on the WARM worker (still fast —
+// the process has the modules; only the env chain is unsafe). Conservative: ANY ∃/∀ → fresh.
 export function isChainSafe(statement) {
-    return !/(∃|∀)\s+[A-Za-z_][A-Za-z0-9_']*\s*(:|,)/.test(String(statement ?? ''));
+    return !/[∃∀]/.test(String(statement ?? ''));
 }
 
 // --- prompts ---
@@ -95,7 +95,10 @@ function buildFormalizationPrompt(prose, instances, repair = null) {
         ? `\n\nAsserted instances (the instance ledger — each must hold under your formalization):\n${instances.map(i => `- ${i}`).join('\n')}`
         : '';
     const repairText = repair
-        ? `\n\nYour previous attempt was rejected:\n- stage: ${repair.stage}\n- reason: ${repair.reason}\nFix ONLY what the reason identifies and return the corrected JSON.`
+        ? `\n\nYour previous attempt was rejected:\n- stage: ${repair.stage}\n- reason: ${repair.reason}`
+          + (repair.suggestModules?.length ? `\n- Add these imports (the symbol is missing from the current environment): ${repair.suggestModules.join(', ')}` : '')
+          + (repair.notationFix ? `\n- Rewrite: ${repair.notationFix}` : '')
+          + '\nFix ONLY what the reason identifies and return the corrected JSON.'
         : '';
     return [
         {
@@ -183,9 +186,15 @@ export class Autoformalizer {
             }
             // Normalize the candidate: resolve imports to modules that exist in the pinned
             // mathlib, and normalize the theorem text (unicode/LaTeX/ASCII → canonical Lean).
-            const normalized = normalizeFormalization(proposed.imports, proposed.theorem);
-            if (!normalized.imports.length && (proposed.imports?.length ?? 0) > 0) {
-                last = { stage: 'imports', reason: `no proposed import resolved: ${proposed.imports.join(', ')}` };
+            // Merge any repair-suggested modules (missing-symbol fixes) into the import set,
+            // PREFERRING them over the LLM's heavy imports (the suggested module is the light
+            // symbol-providing one, e.g. Data.Finset.Sum over BigOperators.Group.Finset.Defs).
+            const extraImports = last?.suggestModules ?? [];
+            const suggested = new Set(extraImports);
+            const proposedImports = [...extraImports, ...(proposed.imports ?? []).filter(i => !suggested.has(i))];
+            const normalized = normalizeFormalization(proposedImports, proposed.theorem);
+            if (!normalized.imports.length && proposedImports.length > 0) {
+                last = { stage: 'imports', reason: `no proposed import resolved: ${proposedImports.join(', ')}; propose modules that exist in mathlib` };
                 continue;
             }
             const statement = normalized.statement;
@@ -202,7 +211,24 @@ export class Autoformalizer {
             }
             const verdict = await this._verifyStatement(statement);
             if (!verdict.ok) {
-                last = { stage: 'typecheck', reason: verdict.error };
+                // If the failure is a missing symbol ("environment does not contain X") OR a
+                // timeout on a heavy import, suggest the light module(s) that provide the
+                // statement's symbols so the next attempt uses them instead.
+                let suggest = suggestImportsForError(verdict.error);
+                if (!suggest && /timeout|timed out/i.test(verdict.error ?? '')) {
+                    // Heavy import blew the budget: suggest the light module for any known symbol
+                    // in the statement, and drop the heavy imports.
+                    for (const sym of Object.keys(SYMBOL_MODULES)) {
+                        if (statement.includes(sym)) {
+                            const e = SYMBOL_MODULES[sym];
+                            suggest = { symbol: sym, modules: e.modules, notationFix: e.notationFix ?? null };
+                            break;
+                        }
+                    }
+                }
+                last = suggest
+                    ? { stage: 'typecheck', reason: verdict.error, suggestModules: suggest.modules, notationFix: suggest.notationFix ?? null }
+                    : { stage: 'typecheck', reason: verdict.error };
                 continue;
             }
             const probes = await this._verifyProbes(statement, instances);
