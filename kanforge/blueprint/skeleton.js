@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashStatement } from '../lean/pin.js';
+import { stripImports } from '../agent/roles/autoformalizer.js';
 import { validateBlueprint } from './dag.js';
 
 export function buildSkeletonPrompt(theoremStatement) {
@@ -81,9 +82,28 @@ export class SkeletonGenerator {
         this.maxRetries = maxRetries;
     }
 
+    // Check a stub: try the fast chained path (strip imports, warm env) first. If that passes,
+    // validate with the same rigor extractGoals will use — a fresh (env: null) check with the
+    // FULL statement (imports included). A stub that typechecks only in the warm env but not
+    // fresh will fail in the loop's leased session; it must be rejected here.
+    async _tryCheck(statement) {
+        const stripped = stripImports(statement);
+        const fast = await this.backend.check(stripped, { useWarmEnv: true });
+        if (fast.status !== 'verified') {
+            if (/expected token/i.test(fast.error?.message ?? '')) return this.backend.check(statement);
+            return fast;
+        }
+        // Warm-env check passed — but does it typecheck in a fresh session? The loop's
+        // extractGoals opens a fresh leased session and sends the full statement (with imports).
+        // A stub that passes warm-only but fails fresh (e.g. name collision with mathlib — "has
+        // already been declared") must NOT enter the blueprint.
+        const fresh = await this.backend.check(statement);
+        return fresh;
+    }
+
     async generate(theoremStatement) {
         const rootStatement = normalizeStub(theoremStatement);
-        const rootCheck = await this.backend.check(rootStatement);
+        const rootCheck = await this._tryCheck(rootStatement);
         if (rootCheck.status !== 'verified') {
             return { ok: false, error: `theorem does not typecheck: ${rootCheck.error?.message ?? rootCheck.error ?? 'unknown error'}`, blueprint: null };
         }
@@ -130,7 +150,7 @@ export class SkeletonGenerator {
                 nameToId.set(cand.name, id); // duplicate helper — alias, don't re-add
                 continue;
             }
-            const check = await this.backend.check(stub);
+            const check = await this._tryCheck(stub);
             if (check.status !== 'verified') {
                 warnings.push(`dropped lemma ${cand.name}: does not typecheck (${check.error?.message ?? check.error})`);
                 continue;

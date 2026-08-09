@@ -38,8 +38,9 @@ export class BlueprintRefiner {
         const working = JSON.parse(JSON.stringify(blueprint));
         const rounds = [];
         let guard = 0;
+        let idleCount = 0;
 
-        for (; guard < this.maxRounds; guard++) {
+        while (guard < this.maxRounds) {
             const drift = checkDrift(working.lemmas);
             if (!drift.ok) {
                 return { ok: false, error: 'drift detected', drifts: drift.drifts, refined: working, proved: [], unproved: working.lemmas.filter(l => !l.proof).map(l => l.id), rounds };
@@ -50,14 +51,36 @@ export class BlueprintRefiner {
                 return { ok: false, error: 'blueprint became cyclic', refined: working, proved: [], unproved: working.lemmas.filter(l => !l.proof).map(l => l.id), rounds };
             }
 
-            const next = order.map(id => working.lemmas.find(l => l.id === id)).find(l => !l.proof);
-            if (!next) break;
+            const provenIds = new Set(working.lemmas.filter(l => l.proof).map(l => l.id));
+            const next = order.map(id => working.lemmas.find(l => l.id === id))
+                .find(l => !l.proof && !l.stalled && (l.deps ?? []).every(d => provenIds.has(d)));
+            if (!next) {
+                const stillWorkable = working.lemmas.find(l => !l.proof && !l.stalled
+                    && (l.deps ?? []).every(d => provenIds.has(d)));
+                if (!stillWorkable) break;
+                // A lemma is ready but blocked on deps — idle; don't count as a real round.
+                idleCount++;
+                if (idleCount >= 3) break;
+                continue;
+            }
+            idleCount = 0;
 
             const before = working.lemmas.length;
             const round = await this._attempt(next, working);
+            guard++;
+            console.log(`[refine] round ${guard}/${this.maxRounds} lemma ${next.id.slice(0, 10)}… proved=${round.proved} resplit=${round.resplit} added=${round.added} error=${round.error ?? '(none)'}`);
             rounds.push({ id: next.id, ok: round.proved, resplit: round.resplit, added: round.added, error: round.error ?? null });
             const madeProgress = round.proved || working.lemmas.length > before;
-            if (!madeProgress) break;
+            if (!madeProgress) {
+                // This lemma can't be proved and can't be decomposed further — stall it so
+                // other ready lemmas get attempted. A re-split that produced zero new children
+                // (resplit=true, added=0) is also a dead end.
+                next.stalled = true;
+                continue;
+            }
+            if (round.proved || round.added > 0) {
+                for (const l of working.lemmas) delete l.stalled;
+            }
         }
 
         const proved = working.lemmas.filter(l => l.proof).map(l => l.id);
@@ -126,12 +149,14 @@ export class BlueprintRefiner {
         // The stub statement itself is never edited; only child stubs are added.
         const sub = await this.skeleton.generate(stub.statement);
         if (!sub.ok) {
+            console.log(`[refine]   skeleton re-split failed: ${sub.error ?? 'unknown'}`);
             return { proved: false, resplit: false, added: 0, error: loopError };
         }
 
         const rootId = hashStatement(normalizeStub(stub.statement));
         const subRoot = sub.blueprint.lemmas.find(l => l.id === rootId);
         if (!subRoot) {
+            console.log(`[refine]   skeleton root not found in re-split (rootId=${rootId.slice(0,10)}…)`);
             return { proved: false, resplit: false, added: 0 };
         }
 
@@ -144,6 +169,7 @@ export class BlueprintRefiner {
                 added++;
             }
         }
+        console.log(`[refine]   re-split produced ${sub.blueprint.lemmas.length} lemmas, ${added} new`);
         stub.deps = (subRoot.deps ?? []).filter(d => d !== stub.id);
         return { proved: false, resplit: true, added };
     }

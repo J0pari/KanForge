@@ -150,9 +150,14 @@ export class TacticLoop {
         try {
             // Level 2: Goal e-graph. extractGoals opens the backend proof session.
             const egraph = new GoalEGraph();
-            const rootGoals = await this.backend.extractGoals(statement);
+            let rootGoals;
+            try {
+                rootGoals = await this.backend.extractGoals(statement);
+            } catch (err) {
+                fail(`could not extract root goal: ${err?.message ?? String(err)}`, { extractFailed: true });
+            }
             if (!rootGoals || rootGoals.length === 0) {
-                fail('could not extract root goal');
+                fail('could not extract root goal (empty goal list)', { extractFailed: true });
             }
 
             const rootId = egraph.addGoal(rootGoals[0]);
@@ -363,7 +368,16 @@ export class TacticLoop {
                     }
                     this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
                 }
-                fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`);
+                // Surface the kernel error and the assembled source so the refine cohort can
+                // diagnose what the kernel rejected — silent KERNEL_REJECTED is unactionable.
+                const verr = verification.error?.message ?? verification.error ?? 'no kernel message';
+                const srcHead = source.slice(0, 400);
+                console.log(`[loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
+                console.log(`[loop] assembled source head:\n${srcHead}`);
+                fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`, {
+                    kernelError: String(verr),
+                    sourceHead: srcHead
+                });
             }
 
             // Run-level statement hash chain (§7): every verified lemma appends a tamper-evident

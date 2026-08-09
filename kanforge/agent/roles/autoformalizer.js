@@ -83,14 +83,6 @@ export function stripImports(statement) {
     return String(statement ?? '').split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n').trim();
 }
 
-// Chain-safety: the repl's `env: n` continuation rejects statements with quantifier binders
-// (∃/∀, with : , or ∈ ascription) with "expected token" (verified empirically — cold `env: null`
-// parses them fine). Any such statement checks fresh (env: null) on the WARM worker (still fast —
-// the process has the modules; only the env chain is unsafe). Conservative: ANY ∃/∀ → fresh.
-export function isChainSafe(statement) {
-    return !/[∃∀]/.test(String(statement ?? ''));
-}
-
 // --- prompts ---
 
 function buildFormalizationPrompt(prose, instances, repair = null) {
@@ -287,21 +279,21 @@ export class Autoformalizer {
     }
 
     async _verifyStatement(statement) {
-        // Continue the statement-mode session established by warm() when chain-safe (the imports
-        // are already in the repl env, so the check is fast; import lines are stripped because the
-        // env already has them). Statements with top-level ∃/∀ ascription are NOT chain-safe (repl
-        // "expected token" quirk) — check fresh WITH the imports on the warm worker instead (still
-        // fast: the process has the modules; only the env chain is unsafe).
-        const chainSafe = isChainSafe(statement);
-        const checkTarget = chainSafe ? stripImports(statement) : statement;
-        const check = await this.backend.check(checkTarget, { timeoutMs: this.checkTimeoutMs, useWarmEnv: chainSafe });
-        if (check.status !== 'verified') {
-            // Surface the FULL kernel error, not a truncated first line: the location-bearing
-            // second line (caret/span) is what the repair pass needs to fix the candidate.
-            const msg = String(check.error?.message ?? check.error ?? 'unknown error');
+        // Try the fast chained path first (strip imports, warm env — 0.4s). If the repl quirk
+        // surfaces for this particular statement shape, fall back to the fresh-env path (full
+        // statement with imports — cold, ~200s but correct).
+        const stripped = stripImports(statement);
+        const fast = await this.backend.check(stripped, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
+        if (fast.status === 'verified') return { ok: true };
+        if (!/expected token/i.test(fast.error?.message ?? '')) {
+            const msg = String(fast.error?.message ?? fast.error ?? 'unknown error');
             return { ok: false, error: msg.slice(0, 1500) };
         }
-        return { ok: true };
+        // Repl quirk: fall back to fresh env with imports.
+        const fresh = await this.backend.check(statement, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
+        if (fresh.status === 'verified') return { ok: true };
+        const msg = String(fresh.error?.message ?? fresh.error ?? 'unknown error');
+        return { ok: false, error: msg.slice(0, 1500) };
     }
 
     // One batched LLM call produces all probe examples; each is kernel-checked on the warm
@@ -315,13 +307,19 @@ export class Autoformalizer {
             const results = [];
             for (let i = 0; i < instances.length; i++) {
                 const full = parsed.examples[i];
-                const chainSafe = isChainSafe(full);
-                const example = chainSafe ? stripImports(full) : full;
+                const example = stripImports(full);
                 let verified = false, error = null;
                 try {
-                    const check = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: chainSafe });
-                    verified = check.status === 'verified';
-                    error = check.status === 'verified' ? null : (check.error?.message ?? 'unverified');
+                    const fast = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
+                    if (fast.status === 'verified') {
+                        verified = true;
+                    } else if (/expected token/i.test(fast.error?.message ?? '')) {
+                        const fresh = await this.backend.check(full, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
+                        verified = fresh.status === 'verified';
+                        error = verified ? null : (fresh.error?.message ?? 'unverified');
+                    } else {
+                        error = fast.error?.message ?? 'unverified';
+                    }
                 } catch (err) {
                     error = err?.message ?? String(err);
                 }
