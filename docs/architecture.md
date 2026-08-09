@@ -72,30 +72,32 @@ failure) → `commit` (pin + ledger + human gate). Selection among surviving can
 pairwise-judge machinery of `search/swiss.js`. This is the only formalization path in the design;
 there is no "trust the model, translate it" path to shorten it.
 
-### 0.2 Field substrates: crossing into a field mathlib does not cover
+### 0.2 Field substrates and target shapes (any field)
 
-Some targets sit on vocabulary an entire field, not a handful of terms. The geometric Langlands
-conjecture (proved in 2024 by Gaitsgory et al., five papers, >1000 pages) is the canonical case:
-it is built on **derived algebraic geometry, ∞-categories, D-modules, ind-coherent sheaves, the
-moduli stacks `Bun_G` and `LocSys_G`, Kac-Moody localization, ambidexterity, and parabolic
-induction** — infrastructure mathlib does not ship (it has category theory and basic scheme
-theory, not derived geometry or D-modules at the depth a GLC-scale proof needs).
+The mechanisms in this section are field-agnostic. A notable result in *any* field — low-dimensional
+topology, derived algebraic geometry, analytic number theory, condensed mathematics, extremal
+combinatorics — lands in this system as an instance of a small set of **target shapes** over a
+**substrate** whose vocabulary mathlib may not ship. The design names the mechanisms; the field
+supplies instances. (The two results that motivated this section — the unknotting-number
+non-additivity counterexample and the geometric Langlands equivalence — appear below only as
+illustrations of two shapes, never as special cases.)
 
-The pipeline does not *translate* such a target; it **grows the field's substrate as a pinned Lean
-library first**, under the same verification discipline as every lemma. This is what "preloading a
-field" means, and it is a first-class architectural mechanism, not an ad-hoc `import`:
+**Substrate: vocabulary the target needs.** Whether the gap is one term or an entire field's
+infrastructure, the situation is the same: the target uses vocabulary mathlib does not provide. The
+pipeline does not *translate*; it **grows the substrate as a pinned Lean library first**, under the
+same verification discipline as every lemma.
 
-1. **Field libraries are lake packages.** A field is represented by one or more pinned
-   `require`s in `lean-project/lakefile.lean` (mathlib and the repl are already pinned this way).
-   Their oleans join `LEAN_PATH` automatically (the backend scans `.lake/packages/*`), and each
-   target imports the specific module subset it needs. Preloading a field = adding the pinned
-   package + recording the target's **import profile**; no backend code changes. A target that
-   needs vocabulary no package ships declares those `def`/`structure`/`abbrev` nodes and the
-   pipeline builds them as a substrate DAG (§0.1.2).
+1. **Field libraries are lake packages.** A field is represented by one or more pinned `require`s
+   in `lean-project/lakefile.lean` (mathlib and the repl are already pinned this way). Their oleans
+   join `LEAN_PATH` automatically (the backend scans `.lake/packages/*`), and each target imports
+   the specific module subset it needs. Preloading a field = adding the pinned package + recording
+   the target's **import profile**; no backend code changes. A target that needs vocabulary no
+   package ships declares those `def`/`structure`/`abbrev` nodes and the pipeline builds them as a
+   substrate DAG (§0.1.2).
 
 2. **The substrate is pinned as a unit.** `makePin`/`checkPin` carry a `substrateHash` — a hash of
-   the resolved library set (lakefile + pinned package revs). A DAG-library revision changes the
-   meaning of "derived scheme" without changing the toolchain, so it must report **DRIFT** (re-pin
+   the resolved library set (lakefile + pinned package revs). A substrate-library revision can
+   change the meaning of a term without changing the toolchain, so it must report **DRIFT** (re-pin
    deliberately), never silently re-verify. Today's pin fingerprints only toolchain + mathlib; the
    field mechanism extends it to the whole substrate so a substrate change is a reviewed event.
 
@@ -106,23 +108,38 @@ field" means, and it is a first-class architectural mechanism, not an ad-hoc `im
    the only source of vocabulary. The blueprint's `refine` loop picks the lowest unbuilt node
    regardless of kind; a `def` is "proved" when its body typechecks and its probe examples verify.
 
-4. **Probes may be proofs, not computations.** `native_decide`-style probes work where a field has
-   a decidable oracle. For higher-categorical claims (an equivalence of categories, a sheaf
-   condition, an adjunction), the instance ledger records asserted instances as *lemmas the loop
-   must prove* — the probe gate is a small theorem-proving task, not a `norm_num` call. A probe
-   that fails to verify is a formalization failure with its evidence, never silently corrected.
+4. **Automation is part of the substrate declaration.** A target's import profile bundles the
+   field's decision procedures: which goal shapes `native_decide`/`omega`/`ring`/`linarith`/custom
+   oracles close outright, and which need proof-backed fallbacks. The probe ledger (below) spans
+   the same spectrum — some probes are computations, some are lemmas the loop must prove.
 
-5. **Consensus extends to definitions.** The dual-formalization check for a field-level statement
-   is kernel-checked equivalence of the whole substrate: two candidate formalizations must produce
-   structures the kernel proves equivalent (definitional equality or an explicit isomorphism), not
-   merely two strings that both typecheck.
+**Target shapes: what "solved" means.** The loop's stopping rule and probe set are not
+field-dependent but *shape*-dependent, and the same shapes recur across every field:
 
-Consequence for the target scale: the system's claim is never "prove GLC"; it is "build `Bun_G`,
-`LocSys_G`, `IndCoh`, `D-mod` in a verified substrate, then prove the equivalence on top." The open
-target is the top node of a field DAG the pipeline constructed under the same rules as any lemma,
-and the substrate build is itself a measured deliverable (nodes built, kernel-checked, pinned,
-committed) before the theorem above it is attempted. Sequencing and acceptance for field
-bootstrap live in `build_order.md` §7.
+1. **Universal claim** — `∀ x, P x`. Prove it via the tactic loop; subgoals are instances of `P x`.
+2. **Witness discovery (prove-or-refute)** — "is property P universal?" When the universal claim
+   stalls, invert the search: enumerate a *bounded space of candidate structures* and, for each,
+   try to certify a witness to the negation **two-sided** — an explicit construction verifying one
+   inequality/direction, plus an invariant or obstruction forcing the other. Both halves must be
+   kernel-verified or the witness is discarded, never asserted. (The unknotting-number result is
+   this shape: the search found a pair of knots, the construction certified
+   `u(K₁#K₂) ≤ u(K₁)+u(K₂)`, and a non-additive invariant certified strictness.) This is a
+   metalevel search: candidate structures at Level 1, the tactic loop at Level 2 within each.
+3. **Equivalence / isomorphism** — "these two structures are the same" (e.g. the geometric
+   Langlands claim `IndCoh(LocSys_G) ≃ D-mod(Bun_G)`). Build both maps, then prove the round-trip
+   (unit/counit, or bijectivity on objects and morphisms). Solved iff both halves close.
+4. **Closed form / explicit value** — "this construction equals N." The probe ledger pins small
+   asserted cases; the loop proves the general equality.
+
+Consensus (§0.1.4) extends to definitions: two candidate formalizations must produce structures the
+kernel proves equivalent (definitional equality or an explicit isomorphism), not merely two strings
+that both typecheck.
+
+Consequence for target scale: the system's claim is never "prove <the famous result>" in one shot.
+It is "build the substrate, then prove the top node" — the open target is the top of a substrate
+DAG constructed under the same rules as any lemma, and the substrate build is itself a measured
+deliverable (nodes built, kernel-checked, pinned, committed) before the theorem above it is
+attempted. Sequencing and acceptance live in `build_order.md` §7.
 
 
 ---

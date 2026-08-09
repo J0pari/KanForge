@@ -398,13 +398,16 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 **Est. 4+ weeks, ongoing.**
 
 ### 7.1 Curated corpus + autoformalization
-- Start with 20 Erdős problems / OEIS conjectures whose statements are *formalizable* and
-  auditable. `agent/roles/autoformalizer.js` (ALA-style: generalist orchestrator + Lean-tuned
-  model). **Methodology is per `architecture.md` §0.1** — the formalization pipeline, not a
-  translation call: kernel typecheck → explicit kernel-checked `def` nodes → behavioral probes
-  (asserted true/false instances verified/refuted by the kernel) → dual-formalization consensus
-  (kernel-provable `A ↔ B`; a failure is a semantic-drift trip, not a disagreement) → assumption
-  ledger surfaced by `digest/writeup.js` → human gate + pin before search.
+- Build a corpus spanning *many* fields, so the pipeline is exercised against the full §0.2 shape
+  and substrate spectrum rather than one neighborhood: start with a set of formalizable targets
+  from OEIS/Erdős-style combinatorics, number theory, algebra, and analysis, deliberately chosen
+  to overlap only lightly with mathlib's existing vocabulary (so the substrate mechanisms are the
+  thing being tested). `agent/roles/autoformalizer.js` (ALA-style: generalist orchestrator +
+  Lean-tuned model). **Methodology is per `architecture.md` §0.1** — the formalization pipeline,
+  not a translation call: kernel typecheck → explicit kernel-checked `def` nodes → behavioral
+  probes (asserted true/false instances verified/refuted by the kernel) → dual-formalization
+  consensus (kernel-provable `A ↔ B`; a failure is a semantic-drift trip, not a disagreement) →
+  assumption ledger surfaced by `digest/writeup.js` → human gate + pin before search.
 - **Deliverables in order:** (1) the definitional substrate (`def` nodes) for the first targets;
   (2) the probe harness that turns asserted instances into kernel-checked `example`s; (3) the
   consensus step reusing `search/swiss.js` pairwise judgment for candidate selection; (4) the
@@ -414,15 +417,18 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   consensus equivalence check is recorded as a formalization failure with its evidence, never
   silently corrected.
 
-### 7.2 Field substrate bootstrap (per `architecture.md` §0.2)
-- **Purpose:** make a *whole field* addressable when mathlib does not cover it — the geometric
-  Langlands substrate (derived algebraic geometry, ∞-categories, D-modules, ind-coherent sheaves,
-  `Bun_G`/`LocSys_G`) is the motivating scale, but the mechanism is field-agnostic and must land
-  before any such target is attempted.
+### 7.2 Field substrates + target shapes (per `architecture.md` §0.2)
+- **Purpose:** make a *whole field* addressable when mathlib does not cover it, so any notable
+  target (not a curated handful) can be grown from its vocabulary upward. The mechanism is
+  field-agnostic: the target's field is a substrate to be built, and the target itself is an
+  instance of one of the §0.2 shapes (universal claim / witness discovery / equivalence /
+  closed-form). This must land before any such target is attempted.
 - **Deliverables in order:**
   1. **Lake-package field preload** — declare field libraries as pinned `require`s in
      `lean-project/lakefile.lean`; verify `LEAN_PATH` reconstruction picks them up (backendRepl
-     already scans `.lake/packages/*`); record a per-target **import profile**.
+     already scans `.lake/packages/*`); record a per-target **import profile** that also declares
+     which decision procedures (`native_decide`/`omega`/`ring`/`linarith`/custom oracles) apply
+     to which goal shapes.
   2. **`substrateHash` in pins** — extend `makePin`/`checkPin` (`lean/pin.js`) with a hash of the
      resolved library set (lakefile + package revs); a substrate change reports DRIFT, not silent
      re-verify; unit tests for the drift-vs-weakened split.
@@ -430,13 +436,15 @@ results*, not by code volume. The product scope is unchanged — this is orderin
      + `refine.js` from theorem-stubs to body-carrying vocabulary nodes (kernel-checked bodies,
      probe examples, pinned + committed); the refine loop picks the lowest unbuilt node regardless
      of kind.
-  4. **Proof-backed probes** — instance ledger entries may be *lemmas the loop must prove*
-     (higher-categorical claims), not just `norm_num`/`native_decide` checks.
-  5. **Definition-level consensus** — kernel-checked equivalence of structures between candidate
-     formalizations.
+  4. **Proof-backed probes** — instance ledger entries may be *lemmas the loop must prove* (no
+     decidable oracle), not just `norm_num`/`native_decide` checks.
+  5. **Shape-aware stopping rules** — the loop knows whether the target is a universal claim, a
+     witness discovery (prove-or-refute with two-sided certification), an equivalence (both
+     round-trip halves), or a closed form; the stopping rule and probe set follow the shape.
 - **Acceptance (provisional):** a field substrate of ≥ 100 kernel-checked, pinned, committed
   vocabulary nodes builds bottom-up with no `sorry` and no unimported bare symbols; a substrate
-  library revision flips the pin to DRIFT (never silent re-verify).
+  library revision flips the pin to DRIFT (never silent re-verify); a witness-discovery target
+  returns either a proof or a two-sided certified counterexample — never a bare assertion.
 
 ### 7.3 Multi-agent ensemble
 - Implement `growth/multibody.js` (one-owner-per-region lemma edits, processing lanes) + the
