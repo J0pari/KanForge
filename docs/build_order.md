@@ -569,32 +569,79 @@ a measured effect; retrieval never bypasses kernel verification.
 ## Phase 7 — Open-target missions + digestion at scale
 **Est. 4+ weeks, ongoing.**
 
+> **P7 start gate (intake discipline — hard).** An "open problem" is a target with **no known
+> proof in hand** (not present in mathlib, no golden chain anywhere in this repo). Phase 7 does
+> not begin with an agent picking a target. It begins with a **human-curated corpus** and ends,
+> per target, at a **human selection** of a candidate the agent proposed with justification. The
+> sequence is:
+>
+> ```
+> 7.0 human-curated corpus (canonical lists: Erdős, OEIS, open-source problem registries)
+>   → agent formalizes CANDIDATES (≥ 3 per shortlist)
+>   → agent presents SHORTLIST: statement + justification (formalizability, substrate cost,
+>     shape per §0.2, novelty, no-known-proof evidence) for each
+>   → HUMAN SELECTS the target
+>   → formalization review gate (probes, consensus, ledger) → pin → search
+> ```
+>
+> The agent never self-selects a mission target. If no curated corpus exists, the correct action
+> is to **stop and request the corpus**, not to improvise a target. A target with a known proof
+> in this repo (any smoke/step/mathlib statement) is a **harness problem, not a mission** — this
+> phase is how the earlier phases' machinery is consumed, not a repeat of it.
+
+### 7.0 Intake: human-curated corpus (gate, not deliverable of the agent)
+- **The corpus is human-supplied.** The agent does not curate open problems. Sources are
+  canonical and external: Erdős problem lists, OEIS conjecture pages, formalizable-conjecture
+  registries, a human's own list. The corpus file (e.g. `corpus/` as JSON lines) records per
+  target: source URL/reference, statement in natural language, provenance, and the human's
+  formalizability note.
+- **Acceptance:** a `corpus/` entry exists with ≥ 3 targets from a cited source BEFORE any P7
+  mission runs; the entry is human-authored or human-approved, never agent-generated.
+- **Corpus status (populated).** `corpus/index/corpus.json` (built by `bench/buildCorpusIndex.js`
+  from primary sources) lists **322 open + Lean-formalized Erdős mission candidates** joined from:
+  (1) `teorth/erdosproblems` — the status/OEIS/tags database of erdosproblems.com (1,216
+  problems, Apache-2.0); (2) `google-deepmind/formal-conjectures` — human-authored Lean
+  formalizations of 605 Erdős problems with verbatim docstrings and `sorry` bodies (statement-
+  pinned, kernel-typechecked, unproved — exactly the open-problem shape). Verbatim per-problem
+  statements are at `corpus/sources/erdos_problem_003.md` and `erdosproblems.com/latex/<N>`.
+  Wikipedia is NOT a corpus source (tertiary index).
+- **Failure mode this gate prevents (recorded):** an agent "open problem" run was attempted on a
+  mathlib lemma with a known proof (`mul_le_mul_nat`) — no corpus, no shortlist, no human
+  selection. That run is a harness problem and is excluded from missions by definition.
+
 ### 7.1 Curated corpus + autoformalization
-- Build a corpus spanning *many* fields, so the pipeline is exercised against the full §0.2 shape
-  and substrate spectrum rather than one neighborhood: start with a set of formalizable targets
-  from OEIS/Erdős-style combinatorics, number theory, algebra, and analysis, deliberately chosen
-  to overlap only lightly with mathlib's existing vocabulary (so the substrate mechanisms are the
-  thing being tested). `agent/roles/autoformalizer.js` (ALA-style: generalist orchestrator +
-  Lean-tuned model). **Methodology is per `architecture.md` §0.1** — the formalization pipeline,
-  not a translation call: kernel typecheck → explicit kernel-checked `def` nodes → behavioral
-  probes (asserted true/false instances verified/refuted by the kernel) → dual-formalization
-  consensus (kernel-provable `A ↔ B`; a failure is a semantic-drift trip, not a disagreement) →
-  assumption ledger surfaced by `digest/writeup.js` → human gate + pin before search.
-- **Deliverables in order:** (1) the definitional substrate (`def` nodes) for the first targets;
-  (2) the probe harness that turns asserted instances into kernel-checked `example`s; (3) the
-  consensus step reusing `search/swiss.js` pairwise judgment for candidate selection; (4) the
-  assumption-ledger + pin + human-gate commit path.
-- **Acceptance (provisional):** ≥ 50% of curated statements formalize; each formalization is
-  human-reviewed and statement-pinned before search begins. A candidate that fails a probe or a
+- **Candidates, not targets.** Given the human-curated corpus, the autoformalizer processes
+  candidates (`agent/roles/autoformalizer.js`, ALA-style: generalist orchestrator + Lean-tuned
+  model). **Methodology is per `architecture.md` §0.1** — the formalization pipeline, not a
+  translation call: kernel typecheck → explicit kernel-checked `def` nodes → behavioral probes
+  (asserted true/false instances verified/refuted by the kernel) → dual-formalization consensus
+  (kernel-provable `A ↔ B`; a failure is a semantic-drift trip, not a disagreement) → assumption
+  ledger surfaced by `digest/writeup.js` → pin.
+- **The shortlist is the deliverable of formalization.** For each corpus target the agent
+  formalizes, it produces a shortlist entry: the Lean statement, its formalizability verdict,
+  the substrate cost (how many new `def` nodes / which §0.2 field substrate), the shape
+  (§0.2), and the no-known-proof evidence (absent from mathlib, no golden chain). **The human
+  selects the mission target from the shortlist.** The agent does not run search until selection.
+- **Deliverables in order:** (1) the intake gate (§7.0) + shortlist generator (formalizability
+  verdict + substrate cost + shape per candidate); (2) the probe harness that turns asserted
+  instances into kernel-checked `example`s; (3) the consensus step reusing `search/swiss.js`
+  pairwise judgment for candidate selection among formalizations; (4) the assumption-ledger +
+  pin commit path.
+- **Acceptance (provisional):** ≥ 50% of curated candidates formalize; each formalization is
+  human-reviewed and statement-pinned before search begins; every mission has a recorded
+  shortlist + human selection in its digest provenance; a candidate that fails a probe or a
   consensus equivalence check is recorded as a formalization failure with its evidence, never
-  silently corrected.
+  silently corrected. A target with a known proof in this repo never appears on a mission
+  shortlist.
 
 ### 7.2 Field substrates + target shapes (per `architecture.md` §0.2)
 - **Purpose:** make a *whole field* addressable when mathlib does not cover it, so any notable
   target (not a curated handful) can be grown from its vocabulary upward. The mechanism is
   field-agnostic: the target's field is a substrate to be built, and the target itself is an
   instance of one of the §0.2 shapes (universal claim / witness discovery / equivalence /
-  closed-form). This must land before any such target is attempted.
+  closed-form). This must land before any such target is attempted — and the target must still
+  come from the §7.0 human-curated corpus + §7.1 human-selected shortlist; substrate work never
+  overrides intake.
 - **Deliverables in order:**
   1. **Lake-package field preload** — declare field libraries as pinned `require`s in
      `lean-project/lakefile.lean`; verify `LEAN_PATH` reconstruction picks them up (backendRepl

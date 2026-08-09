@@ -93,10 +93,17 @@ process; statements should import the specific Mathlib modules they need.
 ### Running the open-problem workflow (the one intended use)
 
 KanForge exists to take an open target theorem and produce a kernel-verified proof plus a
-reproducible audit trail (architecture.md §0). The blueprint runner is that pipeline:
+reproducible audit trail (architecture.md §0). **The intake gate is non-negotiable:** a mission
+target must come from a human-curated corpus (§7.0) and be human-selected from a formalized
+shortlist (§7.1) — the agent never self-selects an "open problem." A statement with a known proof
+in this repo is a harness problem, not a mission.
+
+The blueprint runner below is the pipeline that runs *after* intake — skeleton → refine →
+digest → per-lemma commits. The example is a **harness/smoke statement** (known proof, present in
+the smoke set), shown only to exercise the machinery:
 
 ```bash
-# Prove a theorem with no known answer in hand: skeleton → refine → digest → per-lemma commits
+# Exercise the pipeline on a harness statement (known proof — NOT an open problem):
 node blueprint/run.js "import Mathlib.Data.Nat.Basic
 
 example (a b c d : Nat) (hab : a ≤ b) (hcd : c ≤ d) : a * c ≤ b * d := by sorry" \
@@ -108,7 +115,8 @@ node blueprint/run.js "<same theorem>" --out-dir=runs/my_target_rerun
 
 The run writes `development.md` / `development.html` / `development.json` (writeup + audit pack +
 hash chain) and commits each verified lemma to the scratch repo with its statement hash in the
-commit message.
+commit message. A true mission additionally records the corpus entry + shortlist + human
+selection in the digest's provenance.
 
 ### Running the component ablation graph (the measurement apparatus)
 

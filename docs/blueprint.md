@@ -225,8 +225,9 @@ Detailed contracts: `architecture.md`. This is the shape.
 - **Ablations** (log, don't pre-commit): best-of-N vs BFS vs MCGS; no-repair vs repair;
   no-RL vs GRPO; no-blueprint vs blueprint; no-premise-retrieval vs premise-locked. Each maps to
   a build-order phase.
-- **Open-target corpus**: curated Erdős/OEIS problems with *formalizable*, auditable statements;
-  start at 20 targets.
+- **Open-target corpus**: HUMAN-curated Erdős/OEIS problems with *formalizable*, auditable
+  statements; start at 20 targets (build_order.md §7.0 — the agent never curates or self-selects;
+  it formalizes candidates and the human selects the mission target from the shortlist).
 - **Gating**: evaluation is how phases *earn* progression, not a report card at the end. Each
   phase's acceptance metric is a stage gate (`build_order.md` "Stage gates"); no later phase
   starts until the earlier metric passes. Benchmarks are earned by the loop, not by the

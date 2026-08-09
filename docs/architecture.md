@@ -12,14 +12,22 @@ no known answer in hand — and produce a kernel-verified Lean proof plus a repr
 trail. Everything in the design below is load-bearing for that single workflow:
 
 ```
-intake (natural language or Lean statement)
-  → autoformalize into a Lean statement (agent/roles/autoformalizer.js)
+7.0 intake gate: HUMAN-CURATED corpus of open problems (canonical external sources; the agent
+    never curates or self-selects a target — build_order.md §7.0)
+  → agent formalizes CANDIDATES (autoformalizer; kernel-checked, probes, consensus)
+  → agent presents SHORTLIST with justification (formalizability, substrate cost, shape, novelty)
+  → HUMAN SELECTS the mission target (build_order.md §7.1)
   → blueprint DAG of kernel-typechecked sorry stubs (blueprint/skeleton.js)
   → prove bottom-up via tactic-level search (blueprint/refine.js → agent/loop.js):
       LLM proposes ONE tactic → kernel disposes → repair → repeat until root solved
   → verify the assembled full statement against the kernel (commit gate, §4)
   → digest: writeup + audit pack + per-lemma commit + hash chain (digest/, growth/commit.js)
 ```
+
+The intake gate is the definition of the workflow: a target with a known proof anywhere in this
+repo (any smoke/step/mathlib statement) is a **harness problem, not a mission**. If no
+human-curated corpus exists, the correct action is to stop and request it — never to improvise a
+target.
 
 Known-answer harnesses (the smoke sets, the ablation runner) are a safety net and nothing more:
 they exist only to check that the machinery behaves as expected before it is pointed at an open
@@ -220,7 +228,7 @@ kanforge/
     stepSmoke.js             # multi-step tier problems (build_order.md §5.4)
     verifyStepSet.js         # full-paces chain verifier for the step tier
   test/                      # unit + integration tests (Node built-in test runner)
-  corpus/                    # open-target corpus (P7) — not yet populated
+  corpus/                    # open-target corpus (P7 intake gate §7.0): sources/ (primary docs) + index/corpus.json (322 open + Lean-formalized Erdős candidates)
 ```
 
 ---

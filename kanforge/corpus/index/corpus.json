@@ -1,0 +1,6151 @@
+{
+  "generatedAt": "2026-08-09T09:15:10.256Z",
+  "generator": "bench/buildCorpusIndex.js",
+  "gate": "build_order.md §7.0 — human-curated intake",
+  "sources": [
+    {
+      "id": "erdosproblems-db",
+      "url": "https://github.com/teorth/erdosproblems",
+      "license": "Apache-2.0",
+      "note": "status/OEIS/tags database of erdosproblems.com"
+    },
+    {
+      "id": "formal-conjectures",
+      "url": "https://github.com/google-deepmind/formal-conjectures",
+      "license": "Apache-2.0",
+      "note": "Lean formalizations of Erdős problems (verbatim docstrings, sorry bodies)"
+    }
+  ],
+  "stats": {
+    "totalProblems": 1216,
+    "open": 607,
+    "openFormalized": 322
+  },
+  "missions": [
+    {
+      "id": "erdos-3",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "3.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$5000",
+      "oeis": [
+        "A003002",
+        "A003003",
+        "A003004",
+        "A003005"
+      ],
+      "tags": [
+        "number theory",
+        "additive combinatorics",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/3",
+      "latex": "https://www.erdosproblems.com/latex/3"
+    },
+    {
+      "id": "erdos-9",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "9.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006286"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/9",
+      "latex": "https://www.erdosproblems.com/latex/9"
+    },
+    {
+      "id": "erdos-10",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "10.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A387053"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/10",
+      "latex": "https://www.erdosproblems.com/latex/10"
+    },
+    {
+      "id": "erdos-11",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "11.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A001220",
+        "A377587"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/11",
+      "latex": "https://www.erdosproblems.com/latex/11"
+    },
+    {
+      "id": "erdos-12",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "12.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/12",
+      "latex": "https://www.erdosproblems.com/latex/12"
+    },
+    {
+      "id": "erdos-14",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "14.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A143824",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "sidon sets",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/14",
+      "latex": "https://www.erdosproblems.com/latex/14"
+    },
+    {
+      "id": "erdos-15",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "15.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/15",
+      "latex": "https://www.erdosproblems.com/latex/15"
+    },
+    {
+      "id": "erdos-17",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "17.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A038133"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/17",
+      "latex": "https://www.erdosproblems.com/latex/17"
+    },
+    {
+      "id": "erdos-18",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "18.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005153"
+      ],
+      "tags": [
+        "number theory",
+        "divisors",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/18",
+      "latex": "https://www.erdosproblems.com/latex/18"
+    },
+    {
+      "id": "erdos-20",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "20.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$1000",
+      "oeis": [
+        "A332077"
+      ],
+      "tags": [
+        "combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/20",
+      "latex": "https://www.erdosproblems.com/latex/20"
+    },
+    {
+      "id": "erdos-25",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "25.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/25",
+      "latex": "https://www.erdosproblems.com/latex/25"
+    },
+    {
+      "id": "erdos-28",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "28.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/28",
+      "latex": "https://www.erdosproblems.com/latex/28"
+    },
+    {
+      "id": "erdos-30",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "30.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$1000",
+      "oeis": [
+        "A143824",
+        "A227590",
+        "A003022"
+      ],
+      "tags": [
+        "number theory",
+        "sidon sets",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/30",
+      "latex": "https://www.erdosproblems.com/latex/30"
+    },
+    {
+      "id": "erdos-32",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "32.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/32",
+      "latex": "https://www.erdosproblems.com/latex/32"
+    },
+    {
+      "id": "erdos-33",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "33.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/33",
+      "latex": "https://www.erdosproblems.com/latex/33"
+    },
+    {
+      "id": "erdos-36",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "36.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A393584",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/36",
+      "latex": "https://www.erdosproblems.com/latex/36"
+    },
+    {
+      "id": "erdos-39",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "39.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "sidon sets",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/39",
+      "latex": "https://www.erdosproblems.com/latex/39"
+    },
+    {
+      "id": "erdos-40",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "40.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/40",
+      "latex": "https://www.erdosproblems.com/latex/40"
+    },
+    {
+      "id": "erdos-41",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "41.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "sidon sets",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/41",
+      "latex": "https://www.erdosproblems.com/latex/41"
+    },
+    {
+      "id": "erdos-44",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "44.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "sidon sets",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/44",
+      "latex": "https://www.erdosproblems.com/latex/44"
+    },
+    {
+      "id": "erdos-50",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "50.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$250",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/50",
+      "latex": "https://www.erdosproblems.com/latex/50"
+    },
+    {
+      "id": "erdos-51",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "51.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A002202",
+        "A014197"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/51",
+      "latex": "https://www.erdosproblems.com/latex/51"
+    },
+    {
+      "id": "erdos-52",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "52.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$250",
+      "oeis": [
+        "A263996"
+      ],
+      "tags": [
+        "number theory",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/52",
+      "latex": "https://www.erdosproblems.com/latex/52"
+    },
+    {
+      "id": "erdos-60",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "60.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006855"
+      ],
+      "tags": [
+        "graph theory",
+        "cycles"
+      ],
+      "statement": "https://www.erdosproblems.com/60",
+      "latex": "https://www.erdosproblems.com/latex/60"
+    },
+    {
+      "id": "erdos-61",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "61.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory"
+      ],
+      "statement": "https://www.erdosproblems.com/61",
+      "latex": "https://www.erdosproblems.com/latex/61"
+    },
+    {
+      "id": "erdos-66",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "66.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/66",
+      "latex": "https://www.erdosproblems.com/latex/66"
+    },
+    {
+      "id": "erdos-68",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "68.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A331373"
+      ],
+      "tags": [
+        "number theory",
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/68",
+      "latex": "https://www.erdosproblems.com/latex/68"
+    },
+    {
+      "id": "erdos-70",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "70.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory",
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/70",
+      "latex": "https://www.erdosproblems.com/latex/70"
+    },
+    {
+      "id": "erdos-74",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "74.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number",
+        "cycles"
+      ],
+      "statement": "https://www.erdosproblems.com/74",
+      "latex": "https://www.erdosproblems.com/latex/74"
+    },
+    {
+      "id": "erdos-75",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "75.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/75",
+      "latex": "https://www.erdosproblems.com/latex/75"
+    },
+    {
+      "id": "erdos-82",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "82.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A120414",
+        "A390256",
+        "A390257",
+        "A390919",
+        "A392636",
+        "A394400",
+        "A394462",
+        "A394539",
+        "A394563",
+        "A394564",
+        "A394573",
+        "A394574",
+        "A394930",
+        "A394933"
+      ],
+      "tags": [
+        "graph theory"
+      ],
+      "statement": "https://www.erdosproblems.com/82",
+      "latex": "https://www.erdosproblems.com/latex/82"
+    },
+    {
+      "id": "erdos-85",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "85.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006672",
+        "possible"
+      ],
+      "tags": [
+        "graph theory"
+      ],
+      "statement": "https://www.erdosproblems.com/85",
+      "latex": "https://www.erdosproblems.com/latex/85"
+    },
+    {
+      "id": "erdos-89",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "89.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "A186704",
+        "A131628"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/89",
+      "latex": "https://www.erdosproblems.com/latex/89"
+    },
+    {
+      "id": "erdos-91",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "91.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A186704",
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/91",
+      "latex": "https://www.erdosproblems.com/latex/91"
+    },
+    {
+      "id": "erdos-96",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "96.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances",
+        "convex"
+      ],
+      "statement": "https://www.erdosproblems.com/96",
+      "latex": "https://www.erdosproblems.com/latex/96"
+    },
+    {
+      "id": "erdos-98",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "98.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/98",
+      "latex": "https://www.erdosproblems.com/latex/98"
+    },
+    {
+      "id": "erdos-99",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "99.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$100",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/99",
+      "latex": "https://www.erdosproblems.com/latex/99"
+    },
+    {
+      "id": "erdos-100",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "100.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/100",
+      "latex": "https://www.erdosproblems.com/latex/100"
+    },
+    {
+      "id": "erdos-101",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "101.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$100",
+      "oeis": [
+        "A006065",
+        "possible"
+      ],
+      "tags": [
+        "geometry"
+      ],
+      "statement": "https://www.erdosproblems.com/101",
+      "latex": "https://www.erdosproblems.com/latex/101"
+    },
+    {
+      "id": "erdos-108",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "108.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number",
+        "cycles"
+      ],
+      "statement": "https://www.erdosproblems.com/108",
+      "latex": "https://www.erdosproblems.com/latex/108"
+    },
+    {
+      "id": "erdos-120",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "120.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$100",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/120",
+      "latex": "https://www.erdosproblems.com/latex/120"
+    },
+    {
+      "id": "erdos-124",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "124.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "base representations"
+      ],
+      "statement": "https://www.erdosproblems.com/124",
+      "latex": "https://www.erdosproblems.com/latex/124"
+    },
+    {
+      "id": "erdos-126",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "126.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$250",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/126",
+      "latex": "https://www.erdosproblems.com/latex/126"
+    },
+    {
+      "id": "erdos-130",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "130.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/130",
+      "latex": "https://www.erdosproblems.com/latex/130"
+    },
+    {
+      "id": "erdos-137",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "137.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/137",
+      "latex": "https://www.erdosproblems.com/latex/137"
+    },
+    {
+      "id": "erdos-138",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "138.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "A005346"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/138",
+      "latex": "https://www.erdosproblems.com/latex/138"
+    },
+    {
+      "id": "erdos-141",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "141.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006560"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "primes",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/141",
+      "latex": "https://www.erdosproblems.com/latex/141"
+    },
+    {
+      "id": "erdos-142",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "142.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$10000",
+      "oeis": [
+        "A003002",
+        "A003003",
+        "A003004",
+        "A003005"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/142",
+      "latex": "https://www.erdosproblems.com/latex/142"
+    },
+    {
+      "id": "erdos-143",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "143.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "primitive sets"
+      ],
+      "statement": "https://www.erdosproblems.com/143",
+      "latex": "https://www.erdosproblems.com/latex/143"
+    },
+    {
+      "id": "erdos-145",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "145.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005117"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/145",
+      "latex": "https://www.erdosproblems.com/latex/145"
+    },
+    {
+      "id": "erdos-146",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "146.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "turan number"
+      ],
+      "statement": "https://www.erdosproblems.com/146",
+      "latex": "https://www.erdosproblems.com/latex/146"
+    },
+    {
+      "id": "erdos-153",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "153.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/153",
+      "latex": "https://www.erdosproblems.com/latex/153"
+    },
+    {
+      "id": "erdos-155",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "155.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A143824",
+        "A227590",
+        "A003022"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/155",
+      "latex": "https://www.erdosproblems.com/latex/155"
+    },
+    {
+      "id": "erdos-156",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "156.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A382397"
+      ],
+      "tags": [
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/156",
+      "latex": "https://www.erdosproblems.com/latex/156"
+    },
+    {
+      "id": "erdos-158",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "158.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/158",
+      "latex": "https://www.erdosproblems.com/latex/158"
+    },
+    {
+      "id": "erdos-160",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "160.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/160",
+      "latex": "https://www.erdosproblems.com/latex/160"
+    },
+    {
+      "id": "erdos-168",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "168.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A004059",
+        "A057561",
+        "A094708",
+        "A386439"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/168",
+      "latex": "https://www.erdosproblems.com/latex/168"
+    },
+    {
+      "id": "erdos-170",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "170.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A046693"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/170",
+      "latex": "https://www.erdosproblems.com/latex/170"
+    },
+    {
+      "id": "erdos-172",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "172.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/172",
+      "latex": "https://www.erdosproblems.com/latex/172"
+    },
+    {
+      "id": "erdos-180",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "180.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "turan number"
+      ],
+      "statement": "https://www.erdosproblems.com/180",
+      "latex": "https://www.erdosproblems.com/latex/180"
+    },
+    {
+      "id": "erdos-183",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "183.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$250",
+      "oeis": [
+        "A003323"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/183",
+      "latex": "https://www.erdosproblems.com/latex/183"
+    },
+    {
+      "id": "erdos-184",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "184.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "graph theory",
+        "cycles"
+      ],
+      "statement": "https://www.erdosproblems.com/184",
+      "latex": "https://www.erdosproblems.com/latex/184"
+    },
+    {
+      "id": "erdos-188",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "188.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/188",
+      "latex": "https://www.erdosproblems.com/latex/188"
+    },
+    {
+      "id": "erdos-193",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "193.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A231255"
+      ],
+      "tags": [
+        "geometry"
+      ],
+      "statement": "https://www.erdosproblems.com/193",
+      "latex": "https://www.erdosproblems.com/latex/193"
+    },
+    {
+      "id": "erdos-195",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "195.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/195",
+      "latex": "https://www.erdosproblems.com/latex/195"
+    },
+    {
+      "id": "erdos-196",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "196.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/196",
+      "latex": "https://www.erdosproblems.com/latex/196"
+    },
+    {
+      "id": "erdos-197",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "197.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/197",
+      "latex": "https://www.erdosproblems.com/latex/197"
+    },
+    {
+      "id": "erdos-200",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "200.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005115"
+      ],
+      "tags": [
+        "primes",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/200",
+      "latex": "https://www.erdosproblems.com/latex/200"
+    },
+    {
+      "id": "erdos-203",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "203.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "primes",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/203",
+      "latex": "https://www.erdosproblems.com/latex/203"
+    },
+    {
+      "id": "erdos-208",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "208.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005117",
+        "A076259"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/208",
+      "latex": "https://www.erdosproblems.com/latex/208"
+    },
+    {
+      "id": "erdos-212",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "212.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/212",
+      "latex": "https://www.erdosproblems.com/latex/212"
+    },
+    {
+      "id": "erdos-213",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "213.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/213",
+      "latex": "https://www.erdosproblems.com/latex/213"
+    },
+    {
+      "id": "erdos-218",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "218.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A333230",
+        "A333231",
+        "A064113"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/218",
+      "latex": "https://www.erdosproblems.com/latex/218"
+    },
+    {
+      "id": "erdos-233",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "233.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A074741"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/233",
+      "latex": "https://www.erdosproblems.com/latex/233"
+    },
+    {
+      "id": "erdos-234",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "234.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/234",
+      "latex": "https://www.erdosproblems.com/latex/234"
+    },
+    {
+      "id": "erdos-236",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "236.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A039669",
+        "A109925"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/236",
+      "latex": "https://www.erdosproblems.com/latex/236"
+    },
+    {
+      "id": "erdos-238",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "238.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/238",
+      "latex": "https://www.erdosproblems.com/latex/238"
+    },
+    {
+      "id": "erdos-241",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "241.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$100",
+      "oeis": [
+        "A387704"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/241",
+      "latex": "https://www.erdosproblems.com/latex/241"
+    },
+    {
+      "id": "erdos-243",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "243.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A000058"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/243",
+      "latex": "https://www.erdosproblems.com/latex/243"
+    },
+    {
+      "id": "erdos-244",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "244.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/244",
+      "latex": "https://www.erdosproblems.com/latex/244"
+    },
+    {
+      "id": "erdos-247",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "247.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/247",
+      "latex": "https://www.erdosproblems.com/latex/247"
+    },
+    {
+      "id": "erdos-249",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "249.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A256936"
+      ],
+      "tags": [
+        "number theory",
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/249",
+      "latex": "https://www.erdosproblems.com/latex/249"
+    },
+    {
+      "id": "erdos-251",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "251.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A098990"
+      ],
+      "tags": [
+        "number theory",
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/251",
+      "latex": "https://www.erdosproblems.com/latex/251"
+    },
+    {
+      "id": "erdos-252",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "252.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A227988",
+        "A227989",
+        "A307036",
+        "A359060",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/252",
+      "latex": "https://www.erdosproblems.com/latex/252"
+    },
+    {
+      "id": "erdos-254",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "254.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/254",
+      "latex": "https://www.erdosproblems.com/latex/254"
+    },
+    {
+      "id": "erdos-257",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "257.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/257",
+      "latex": "https://www.erdosproblems.com/latex/257"
+    },
+    {
+      "id": "erdos-260",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "260.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/260",
+      "latex": "https://www.erdosproblems.com/latex/260"
+    },
+    {
+      "id": "erdos-263",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "263.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/263",
+      "latex": "https://www.erdosproblems.com/latex/263"
+    },
+    {
+      "id": "erdos-264",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "264.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/264",
+      "latex": "https://www.erdosproblems.com/latex/264"
+    },
+    {
+      "id": "erdos-267",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "267.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/267",
+      "latex": "https://www.erdosproblems.com/latex/267"
+    },
+    {
+      "id": "erdos-269",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "269.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/269",
+      "latex": "https://www.erdosproblems.com/latex/269"
+    },
+    {
+      "id": "erdos-272",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "272.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "arithmetic progressions"
+      ],
+      "statement": "https://www.erdosproblems.com/272",
+      "latex": "https://www.erdosproblems.com/latex/272"
+    },
+    {
+      "id": "erdos-273",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "273.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/273",
+      "latex": "https://www.erdosproblems.com/latex/273"
+    },
+    {
+      "id": "erdos-274",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "274.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "group theory",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/274",
+      "latex": "https://www.erdosproblems.com/latex/274"
+    },
+    {
+      "id": "erdos-276",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "276.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/276",
+      "latex": "https://www.erdosproblems.com/latex/276"
+    },
+    {
+      "id": "erdos-279",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "279.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "covering systems",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/279",
+      "latex": "https://www.erdosproblems.com/latex/279"
+    },
+    {
+      "id": "erdos-282",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "282.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/282",
+      "latex": "https://www.erdosproblems.com/latex/282"
+    },
+    {
+      "id": "erdos-288",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "288.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/288",
+      "latex": "https://www.erdosproblems.com/latex/288"
+    },
+    {
+      "id": "erdos-289",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "289.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/289",
+      "latex": "https://www.erdosproblems.com/latex/289"
+    },
+    {
+      "id": "erdos-291",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "291.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A110566"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/291",
+      "latex": "https://www.erdosproblems.com/latex/291"
+    },
+    {
+      "id": "erdos-295",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "295.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A192881"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/295",
+      "latex": "https://www.erdosproblems.com/latex/295"
+    },
+    {
+      "id": "erdos-302",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "302.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A390395"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/302",
+      "latex": "https://www.erdosproblems.com/latex/302"
+    },
+    {
+      "id": "erdos-304",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "304.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A097847",
+        "A097849"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/304",
+      "latex": "https://www.erdosproblems.com/latex/304"
+    },
+    {
+      "id": "erdos-306",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "306.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/306",
+      "latex": "https://www.erdosproblems.com/latex/306"
+    },
+    {
+      "id": "erdos-312",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "312.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/312",
+      "latex": "https://www.erdosproblems.com/latex/312"
+    },
+    {
+      "id": "erdos-313",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "313.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A054377"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/313",
+      "latex": "https://www.erdosproblems.com/latex/313"
+    },
+    {
+      "id": "erdos-317",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "317.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/317",
+      "latex": "https://www.erdosproblems.com/latex/317"
+    },
+    {
+      "id": "erdos-319",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "319.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "unit fractions"
+      ],
+      "statement": "https://www.erdosproblems.com/319",
+      "latex": "https://www.erdosproblems.com/latex/319"
+    },
+    {
+      "id": "erdos-323",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "323.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A004825",
+        "A004831",
+        "A004832",
+        "A004833",
+        "A004842",
+        "A004843",
+        "A004844",
+        "A004845",
+        "A004857",
+        "A004869",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "powers"
+      ],
+      "statement": "https://www.erdosproblems.com/323",
+      "latex": "https://www.erdosproblems.com/latex/323"
+    },
+    {
+      "id": "erdos-324",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "324.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "powers"
+      ],
+      "statement": "https://www.erdosproblems.com/324",
+      "latex": "https://www.erdosproblems.com/latex/324"
+    },
+    {
+      "id": "erdos-325",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "325.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A004825",
+        "A004832",
+        "A004843",
+        "A004854",
+        "A004865",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "powers"
+      ],
+      "statement": "https://www.erdosproblems.com/325",
+      "latex": "https://www.erdosproblems.com/latex/325"
+    },
+    {
+      "id": "erdos-326",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "326.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/326",
+      "latex": "https://www.erdosproblems.com/latex/326"
+    },
+    {
+      "id": "erdos-329",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "329.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/329",
+      "latex": "https://www.erdosproblems.com/latex/329"
+    },
+    {
+      "id": "erdos-332",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "332.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/332",
+      "latex": "https://www.erdosproblems.com/latex/332"
+    },
+    {
+      "id": "erdos-340",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "340.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A080200",
+        "A005282"
+      ],
+      "tags": [
+        "number theory",
+        "additive combinatorics",
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/340",
+      "latex": "https://www.erdosproblems.com/latex/340"
+    },
+    {
+      "id": "erdos-341",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "341.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/341",
+      "latex": "https://www.erdosproblems.com/latex/341"
+    },
+    {
+      "id": "erdos-342",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "342.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A002858"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/342",
+      "latex": "https://www.erdosproblems.com/latex/342"
+    },
+    {
+      "id": "erdos-346",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "346.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "complete sequences"
+      ],
+      "statement": "https://www.erdosproblems.com/346",
+      "latex": "https://www.erdosproblems.com/latex/346"
+    },
+    {
+      "id": "erdos-348",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "348.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "complete sequences"
+      ],
+      "statement": "https://www.erdosproblems.com/348",
+      "latex": "https://www.erdosproblems.com/latex/348"
+    },
+    {
+      "id": "erdos-349",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "349.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "complete sequences"
+      ],
+      "statement": "https://www.erdosproblems.com/349",
+      "latex": "https://www.erdosproblems.com/latex/349"
+    },
+    {
+      "id": "erdos-352",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "352.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry"
+      ],
+      "statement": "https://www.erdosproblems.com/352",
+      "latex": "https://www.erdosproblems.com/latex/352"
+    },
+    {
+      "id": "erdos-354",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "354.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/354",
+      "latex": "https://www.erdosproblems.com/latex/354"
+    },
+    {
+      "id": "erdos-357",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "357.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A364132",
+        "A364153",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/357",
+      "latex": "https://www.erdosproblems.com/latex/357"
+    },
+    {
+      "id": "erdos-359",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "359.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A002048"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/359",
+      "latex": "https://www.erdosproblems.com/latex/359"
+    },
+    {
+      "id": "erdos-361",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "361.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/361",
+      "latex": "https://www.erdosproblems.com/latex/361"
+    },
+    {
+      "id": "erdos-371",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "371.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A070089"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/371",
+      "latex": "https://www.erdosproblems.com/latex/371"
+    },
+    {
+      "id": "erdos-373",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "373.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A003135"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/373",
+      "latex": "https://www.erdosproblems.com/latex/373"
+    },
+    {
+      "id": "erdos-376",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "376.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A030979"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients",
+        "base representations"
+      ],
+      "statement": "https://www.erdosproblems.com/376",
+      "latex": "https://www.erdosproblems.com/latex/376"
+    },
+    {
+      "id": "erdos-377",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "377.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/377",
+      "latex": "https://www.erdosproblems.com/latex/377"
+    },
+    {
+      "id": "erdos-383",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "383.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/383",
+      "latex": "https://www.erdosproblems.com/latex/383"
+    },
+    {
+      "id": "erdos-385",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "385.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A322292"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/385",
+      "latex": "https://www.erdosproblems.com/latex/385"
+    },
+    {
+      "id": "erdos-386",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "386.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A280992"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/386",
+      "latex": "https://www.erdosproblems.com/latex/386"
+    },
+    {
+      "id": "erdos-389",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "389.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A375071"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/389",
+      "latex": "https://www.erdosproblems.com/latex/389"
+    },
+    {
+      "id": "erdos-390",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "390.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A193429"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/390",
+      "latex": "https://www.erdosproblems.com/latex/390"
+    },
+    {
+      "id": "erdos-394",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "394.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A344005"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/394",
+      "latex": "https://www.erdosproblems.com/latex/394"
+    },
+    {
+      "id": "erdos-396",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "396.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A375077"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/396",
+      "latex": "https://www.erdosproblems.com/latex/396"
+    },
+    {
+      "id": "erdos-400",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "400.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/400",
+      "latex": "https://www.erdosproblems.com/latex/400"
+    },
+    {
+      "id": "erdos-406",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "406.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "base representations"
+      ],
+      "statement": "https://www.erdosproblems.com/406",
+      "latex": "https://www.erdosproblems.com/latex/406"
+    },
+    {
+      "id": "erdos-409",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "409.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A039651",
+        "A229487"
+      ],
+      "tags": [
+        "number theory",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/409",
+      "latex": "https://www.erdosproblems.com/latex/409"
+    },
+    {
+      "id": "erdos-410",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "410.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A007497",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/410",
+      "latex": "https://www.erdosproblems.com/latex/410"
+    },
+    {
+      "id": "erdos-412",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "412.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A007497",
+        "A051572"
+      ],
+      "tags": [
+        "number theory",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/412",
+      "latex": "https://www.erdosproblems.com/latex/412"
+    },
+    {
+      "id": "erdos-413",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "413.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005236"
+      ],
+      "tags": [
+        "number theory",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/413",
+      "latex": "https://www.erdosproblems.com/latex/413"
+    },
+    {
+      "id": "erdos-414",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "414.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A064491",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/414",
+      "latex": "https://www.erdosproblems.com/latex/414"
+    },
+    {
+      "id": "erdos-416",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "416.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A264810"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/416",
+      "latex": "https://www.erdosproblems.com/latex/416"
+    },
+    {
+      "id": "erdos-417",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "417.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A264810",
+        "A061070"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/417",
+      "latex": "https://www.erdosproblems.com/latex/417"
+    },
+    {
+      "id": "erdos-421",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "421.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A389544",
+        "A390848"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/421",
+      "latex": "https://www.erdosproblems.com/latex/421"
+    },
+    {
+      "id": "erdos-422",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "422.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005185"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/422",
+      "latex": "https://www.erdosproblems.com/latex/422"
+    },
+    {
+      "id": "erdos-424",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "424.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005244"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/424",
+      "latex": "https://www.erdosproblems.com/latex/424"
+    },
+    {
+      "id": "erdos-428",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "428.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/428",
+      "latex": "https://www.erdosproblems.com/latex/428"
+    },
+    {
+      "id": "erdos-445",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "445.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/445",
+      "latex": "https://www.erdosproblems.com/latex/445"
+    },
+    {
+      "id": "erdos-450",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "450.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/450",
+      "latex": "https://www.erdosproblems.com/latex/450"
+    },
+    {
+      "id": "erdos-454",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "454.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A389676",
+        "A389677"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/454",
+      "latex": "https://www.erdosproblems.com/latex/454"
+    },
+    {
+      "id": "erdos-455",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "455.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/455",
+      "latex": "https://www.erdosproblems.com/latex/455"
+    },
+    {
+      "id": "erdos-456",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "456.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A034694",
+        "A061026",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/456",
+      "latex": "https://www.erdosproblems.com/latex/456"
+    },
+    {
+      "id": "erdos-463",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "463.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/463",
+      "latex": "https://www.erdosproblems.com/latex/463"
+    },
+    {
+      "id": "erdos-470",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "470.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$10",
+      "oeis": [
+        "A006037",
+        "A002975"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/470",
+      "latex": "https://www.erdosproblems.com/latex/470"
+    },
+    {
+      "id": "erdos-477",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "477.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/477",
+      "latex": "https://www.erdosproblems.com/latex/477"
+    },
+    {
+      "id": "erdos-479",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "479.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A036236",
+        "A015919",
+        "A050259",
+        "A015921",
+        "A006521",
+        "A006517",
+        "A015940"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/479",
+      "latex": "https://www.erdosproblems.com/latex/479"
+    },
+    {
+      "id": "erdos-486",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "486.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primitive sets"
+      ],
+      "statement": "https://www.erdosproblems.com/486",
+      "latex": "https://www.erdosproblems.com/latex/486"
+    },
+    {
+      "id": "erdos-489",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "489.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/489",
+      "latex": "https://www.erdosproblems.com/latex/489"
+    },
+    {
+      "id": "erdos-495",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "495.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "diophantine approximation",
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/495",
+      "latex": "https://www.erdosproblems.com/latex/495"
+    },
+    {
+      "id": "erdos-501",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "501.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "combinatorics",
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/501",
+      "latex": "https://www.erdosproblems.com/latex/501"
+    },
+    {
+      "id": "erdos-503",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "503.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A175769"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/503",
+      "latex": "https://www.erdosproblems.com/latex/503"
+    },
+    {
+      "id": "erdos-507",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "507.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry"
+      ],
+      "statement": "https://www.erdosproblems.com/507",
+      "latex": "https://www.erdosproblems.com/latex/507"
+    },
+    {
+      "id": "erdos-508",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "508.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/508",
+      "latex": "https://www.erdosproblems.com/latex/508"
+    },
+    {
+      "id": "erdos-509",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "509.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/509",
+      "latex": "https://www.erdosproblems.com/latex/509"
+    },
+    {
+      "id": "erdos-510",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "510.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/510",
+      "latex": "https://www.erdosproblems.com/latex/510"
+    },
+    {
+      "id": "erdos-513",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "513.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/513",
+      "latex": "https://www.erdosproblems.com/latex/513"
+    },
+    {
+      "id": "erdos-517",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "517.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/517",
+      "latex": "https://www.erdosproblems.com/latex/517"
+    },
+    {
+      "id": "erdos-520",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "520.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "probability"
+      ],
+      "statement": "https://www.erdosproblems.com/520",
+      "latex": "https://www.erdosproblems.com/latex/520"
+    },
+    {
+      "id": "erdos-521",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "521.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "polynomials",
+        "probability"
+      ],
+      "statement": "https://www.erdosproblems.com/521",
+      "latex": "https://www.erdosproblems.com/latex/521"
+    },
+    {
+      "id": "erdos-522",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "522.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "polynomials",
+        "probability"
+      ],
+      "statement": "https://www.erdosproblems.com/522",
+      "latex": "https://www.erdosproblems.com/latex/522"
+    },
+    {
+      "id": "erdos-535",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "535.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/535",
+      "latex": "https://www.erdosproblems.com/latex/535"
+    },
+    {
+      "id": "erdos-536",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "536.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/536",
+      "latex": "https://www.erdosproblems.com/latex/536"
+    },
+    {
+      "id": "erdos-538",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "538.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/538",
+      "latex": "https://www.erdosproblems.com/latex/538"
+    },
+    {
+      "id": "erdos-539",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "539.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/539",
+      "latex": "https://www.erdosproblems.com/latex/539"
+    },
+    {
+      "id": "erdos-562",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "562.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory",
+        "hypergraphs"
+      ],
+      "statement": "https://www.erdosproblems.com/562",
+      "latex": "https://www.erdosproblems.com/latex/562"
+    },
+    {
+      "id": "erdos-564",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "564.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory",
+        "hypergraphs"
+      ],
+      "statement": "https://www.erdosproblems.com/564",
+      "latex": "https://www.erdosproblems.com/latex/564"
+    },
+    {
+      "id": "erdos-566",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "566.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/566",
+      "latex": "https://www.erdosproblems.com/latex/566"
+    },
+    {
+      "id": "erdos-567",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "567.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/567",
+      "latex": "https://www.erdosproblems.com/latex/567"
+    },
+    {
+      "id": "erdos-579",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "579.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "turan number"
+      ],
+      "statement": "https://www.erdosproblems.com/579",
+      "latex": "https://www.erdosproblems.com/latex/579"
+    },
+    {
+      "id": "erdos-592",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "592.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$1000",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/592",
+      "latex": "https://www.erdosproblems.com/latex/592"
+    },
+    {
+      "id": "erdos-593",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "593.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory",
+        "graph theory",
+        "hypergraphs",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/593",
+      "latex": "https://www.erdosproblems.com/latex/593"
+    },
+    {
+      "id": "erdos-595",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "595.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$250",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/595",
+      "latex": "https://www.erdosproblems.com/latex/595"
+    },
+    {
+      "id": "erdos-596",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "596.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory",
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/596",
+      "latex": "https://www.erdosproblems.com/latex/596"
+    },
+    {
+      "id": "erdos-598",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "598.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/598",
+      "latex": "https://www.erdosproblems.com/latex/598"
+    },
+    {
+      "id": "erdos-600",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "600.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "graph theory"
+      ],
+      "statement": "https://www.erdosproblems.com/600",
+      "latex": "https://www.erdosproblems.com/latex/600"
+    },
+    {
+      "id": "erdos-602",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "602.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "combinatorics",
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/602",
+      "latex": "https://www.erdosproblems.com/latex/602"
+    },
+    {
+      "id": "erdos-623",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "623.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory"
+      ],
+      "statement": "https://www.erdosproblems.com/623",
+      "latex": "https://www.erdosproblems.com/latex/623"
+    },
+    {
+      "id": "erdos-624",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "624.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/624",
+      "latex": "https://www.erdosproblems.com/latex/624"
+    },
+    {
+      "id": "erdos-653",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "653.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/653",
+      "latex": "https://www.erdosproblems.com/latex/653"
+    },
+    {
+      "id": "erdos-655",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "655.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/655",
+      "latex": "https://www.erdosproblems.com/latex/655"
+    },
+    {
+      "id": "erdos-677",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "677.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/677",
+      "latex": "https://www.erdosproblems.com/latex/677"
+    },
+    {
+      "id": "erdos-680",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "680.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/680",
+      "latex": "https://www.erdosproblems.com/latex/680"
+    },
+    {
+      "id": "erdos-681",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "681.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A389680"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/681",
+      "latex": "https://www.erdosproblems.com/latex/681"
+    },
+    {
+      "id": "erdos-683",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "683.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006530",
+        "A074399",
+        "A121359",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "primes",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/683",
+      "latex": "https://www.erdosproblems.com/latex/683"
+    },
+    {
+      "id": "erdos-686",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "686.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/686",
+      "latex": "https://www.erdosproblems.com/latex/686"
+    },
+    {
+      "id": "erdos-688",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "688.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/688",
+      "latex": "https://www.erdosproblems.com/latex/688"
+    },
+    {
+      "id": "erdos-689",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "689.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/689",
+      "latex": "https://www.erdosproblems.com/latex/689"
+    },
+    {
+      "id": "erdos-695",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "695.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A061092"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/695",
+      "latex": "https://www.erdosproblems.com/latex/695"
+    },
+    {
+      "id": "erdos-700",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "700.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A091963",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/700",
+      "latex": "https://www.erdosproblems.com/latex/700"
+    },
+    {
+      "id": "erdos-701",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "701.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "combinatorics",
+        "intersecting family"
+      ],
+      "statement": "https://www.erdosproblems.com/701",
+      "latex": "https://www.erdosproblems.com/latex/701"
+    },
+    {
+      "id": "erdos-726",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "726.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/726",
+      "latex": "https://www.erdosproblems.com/latex/726"
+    },
+    {
+      "id": "erdos-727",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "727.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A002503",
+        "A343507",
+        "A389396"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/727",
+      "latex": "https://www.erdosproblems.com/latex/727"
+    },
+    {
+      "id": "erdos-730",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "730.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A129515"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients",
+        "base representations"
+      ],
+      "statement": "https://www.erdosproblems.com/730",
+      "latex": "https://www.erdosproblems.com/latex/730"
+    },
+    {
+      "id": "erdos-740",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "740.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/740",
+      "latex": "https://www.erdosproblems.com/latex/740"
+    },
+    {
+      "id": "erdos-749",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "749.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/749",
+      "latex": "https://www.erdosproblems.com/latex/749"
+    },
+    {
+      "id": "erdos-757",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "757.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances",
+        "sidon sets"
+      ],
+      "statement": "https://www.erdosproblems.com/757",
+      "latex": "https://www.erdosproblems.com/latex/757"
+    },
+    {
+      "id": "erdos-769",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "769.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A014544",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "geometry"
+      ],
+      "statement": "https://www.erdosproblems.com/769",
+      "latex": "https://www.erdosproblems.com/latex/769"
+    },
+    {
+      "id": "erdos-770",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "770.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A263647",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/770",
+      "latex": "https://www.erdosproblems.com/latex/770"
+    },
+    {
+      "id": "erdos-774",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "774.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/774",
+      "latex": "https://www.erdosproblems.com/latex/774"
+    },
+    {
+      "id": "erdos-786",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "786.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A143301",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/786",
+      "latex": "https://www.erdosproblems.com/latex/786"
+    },
+    {
+      "id": "erdos-789",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "789.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/789",
+      "latex": "https://www.erdosproblems.com/latex/789"
+    },
+    {
+      "id": "erdos-796",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "796.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/796",
+      "latex": "https://www.erdosproblems.com/latex/796"
+    },
+    {
+      "id": "erdos-812",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "812.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A059442"
+      ],
+      "tags": [
+        "graph theory",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/812",
+      "latex": "https://www.erdosproblems.com/latex/812"
+    },
+    {
+      "id": "erdos-817",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "817.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/817",
+      "latex": "https://www.erdosproblems.com/latex/817"
+    },
+    {
+      "id": "erdos-821",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "821.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A014197"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/821",
+      "latex": "https://www.erdosproblems.com/latex/821"
+    },
+    {
+      "id": "erdos-826",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "826.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/826",
+      "latex": "https://www.erdosproblems.com/latex/826"
+    },
+    {
+      "id": "erdos-828",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "828.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/828",
+      "latex": "https://www.erdosproblems.com/latex/828"
+    },
+    {
+      "id": "erdos-829",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "829.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/829",
+      "latex": "https://www.erdosproblems.com/latex/829"
+    },
+    {
+      "id": "erdos-830",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "830.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A259180"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/830",
+      "latex": "https://www.erdosproblems.com/latex/830"
+    },
+    {
+      "id": "erdos-849",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "849.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A003016",
+        "A003015",
+        "A059233",
+        "A098565",
+        "A090162",
+        "A180058",
+        "A182237"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/849",
+      "latex": "https://www.erdosproblems.com/latex/849"
+    },
+    {
+      "id": "erdos-850",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "850.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A343101"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/850",
+      "latex": "https://www.erdosproblems.com/latex/850"
+    },
+    {
+      "id": "erdos-853",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "853.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A001223",
+        "A390769"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/853",
+      "latex": "https://www.erdosproblems.com/latex/853"
+    },
+    {
+      "id": "erdos-855",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "855.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A023193"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/855",
+      "latex": "https://www.erdosproblems.com/latex/855"
+    },
+    {
+      "id": "erdos-857",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "857.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/857",
+      "latex": "https://www.erdosproblems.com/latex/857"
+    },
+    {
+      "id": "erdos-859",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "859.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/859",
+      "latex": "https://www.erdosproblems.com/latex/859"
+    },
+    {
+      "id": "erdos-872",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "872.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "primitive sets"
+      ],
+      "statement": "https://www.erdosproblems.com/872",
+      "latex": "https://www.erdosproblems.com/latex/872"
+    },
+    {
+      "id": "erdos-873",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "873.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/873",
+      "latex": "https://www.erdosproblems.com/latex/873"
+    },
+    {
+      "id": "erdos-881",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "881.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/881",
+      "latex": "https://www.erdosproblems.com/latex/881"
+    },
+    {
+      "id": "erdos-885",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "885.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/885",
+      "latex": "https://www.erdosproblems.com/latex/885"
+    },
+    {
+      "id": "erdos-886",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "886.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/886",
+      "latex": "https://www.erdosproblems.com/latex/886"
+    },
+    {
+      "id": "erdos-887",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "887.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/887",
+      "latex": "https://www.erdosproblems.com/latex/887"
+    },
+    {
+      "id": "erdos-889",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "889.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/889",
+      "latex": "https://www.erdosproblems.com/latex/889"
+    },
+    {
+      "id": "erdos-890",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "890.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/890",
+      "latex": "https://www.erdosproblems.com/latex/890"
+    },
+    {
+      "id": "erdos-891",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "891.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/891",
+      "latex": "https://www.erdosproblems.com/latex/891"
+    },
+    {
+      "id": "erdos-893",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "893.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A046801",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/893",
+      "latex": "https://www.erdosproblems.com/latex/893"
+    },
+    {
+      "id": "erdos-906",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "906.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "iterated functions"
+      ],
+      "statement": "https://www.erdosproblems.com/906",
+      "latex": "https://www.erdosproblems.com/latex/906"
+    },
+    {
+      "id": "erdos-912",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "912.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A071626"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/912",
+      "latex": "https://www.erdosproblems.com/latex/912"
+    },
+    {
+      "id": "erdos-913",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "913.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A359747"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/913",
+      "latex": "https://www.erdosproblems.com/latex/913"
+    },
+    {
+      "id": "erdos-918",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "918.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/918",
+      "latex": "https://www.erdosproblems.com/latex/918"
+    },
+    {
+      "id": "erdos-930",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "930.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/930",
+      "latex": "https://www.erdosproblems.com/latex/930"
+    },
+    {
+      "id": "erdos-931",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "931.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/931",
+      "latex": "https://www.erdosproblems.com/latex/931"
+    },
+    {
+      "id": "erdos-932",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "932.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A387864"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/932",
+      "latex": "https://www.erdosproblems.com/latex/932"
+    },
+    {
+      "id": "erdos-933",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "933.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/933",
+      "latex": "https://www.erdosproblems.com/latex/933"
+    },
+    {
+      "id": "erdos-936",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "936.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A146968",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/936",
+      "latex": "https://www.erdosproblems.com/latex/936"
+    },
+    {
+      "id": "erdos-938",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "938.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A001694",
+        "A076446",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/938",
+      "latex": "https://www.erdosproblems.com/latex/938"
+    },
+    {
+      "id": "erdos-939",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "939.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/939",
+      "latex": "https://www.erdosproblems.com/latex/939"
+    },
+    {
+      "id": "erdos-940",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "940.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/940",
+      "latex": "https://www.erdosproblems.com/latex/940"
+    },
+    {
+      "id": "erdos-942",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "942.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/942",
+      "latex": "https://www.erdosproblems.com/latex/942"
+    },
+    {
+      "id": "erdos-943",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "943.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/943",
+      "latex": "https://www.erdosproblems.com/latex/943"
+    },
+    {
+      "id": "erdos-944",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "944.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/944",
+      "latex": "https://www.erdosproblems.com/latex/944"
+    },
+    {
+      "id": "erdos-945",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "945.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible",
+        "A048892"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/945",
+      "latex": "https://www.erdosproblems.com/latex/945"
+    },
+    {
+      "id": "erdos-949",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "949.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/949",
+      "latex": "https://www.erdosproblems.com/latex/949"
+    },
+    {
+      "id": "erdos-950",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "950.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/950",
+      "latex": "https://www.erdosproblems.com/latex/950"
+    },
+    {
+      "id": "erdos-951",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "951.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/951",
+      "latex": "https://www.erdosproblems.com/latex/951"
+    },
+    {
+      "id": "erdos-952",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "952.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/952",
+      "latex": "https://www.erdosproblems.com/latex/952"
+    },
+    {
+      "id": "erdos-955",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "955.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/955",
+      "latex": "https://www.erdosproblems.com/latex/955"
+    },
+    {
+      "id": "erdos-959",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "959.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/959",
+      "latex": "https://www.erdosproblems.com/latex/959"
+    },
+    {
+      "id": "erdos-961",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "961.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A213253"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/961",
+      "latex": "https://www.erdosproblems.com/latex/961"
+    },
+    {
+      "id": "erdos-962",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "962.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A327909"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/962",
+      "latex": "https://www.erdosproblems.com/latex/962"
+    },
+    {
+      "id": "erdos-968",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "968.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A387591"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/968",
+      "latex": "https://www.erdosproblems.com/latex/968"
+    },
+    {
+      "id": "erdos-971",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "971.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A226521"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/971",
+      "latex": "https://www.erdosproblems.com/latex/971"
+    },
+    {
+      "id": "erdos-972",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "972.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/972",
+      "latex": "https://www.erdosproblems.com/latex/972"
+    },
+    {
+      "id": "erdos-973",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "973.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/973",
+      "latex": "https://www.erdosproblems.com/latex/973"
+    },
+    {
+      "id": "erdos-975",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "975.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A147807",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/975",
+      "latex": "https://www.erdosproblems.com/latex/975"
+    },
+    {
+      "id": "erdos-978",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "978.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/978",
+      "latex": "https://www.erdosproblems.com/latex/978"
+    },
+    {
+      "id": "erdos-979",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "979.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A385316",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/979",
+      "latex": "https://www.erdosproblems.com/latex/979"
+    },
+    {
+      "id": "erdos-985",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "985.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A002233",
+        "A219429",
+        "A103309",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/985",
+      "latex": "https://www.erdosproblems.com/latex/985"
+    },
+    {
+      "id": "erdos-996",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "996.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/996",
+      "latex": "https://www.erdosproblems.com/latex/996"
+    },
+    {
+      "id": "erdos-1002",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1002.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "diophantine approximation"
+      ],
+      "statement": "https://www.erdosproblems.com/1002",
+      "latex": "https://www.erdosproblems.com/latex/1002"
+    },
+    {
+      "id": "erdos-1003",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1003.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A001274"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1003",
+      "latex": "https://www.erdosproblems.com/latex/1003"
+    },
+    {
+      "id": "erdos-1004",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1004.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1004",
+      "latex": "https://www.erdosproblems.com/latex/1004"
+    },
+    {
+      "id": "erdos-1038",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1038.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis"
+      ],
+      "statement": "https://www.erdosproblems.com/1038",
+      "latex": "https://www.erdosproblems.com/latex/1038"
+    },
+    {
+      "id": "erdos-1049",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1049.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "irrationality"
+      ],
+      "statement": "https://www.erdosproblems.com/1049",
+      "latex": "https://www.erdosproblems.com/latex/1049"
+    },
+    {
+      "id": "erdos-1052",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1052.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$10",
+      "oeis": [
+        "A002827"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1052",
+      "latex": "https://www.erdosproblems.com/latex/1052"
+    },
+    {
+      "id": "erdos-1054",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1054.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A167485"
+      ],
+      "tags": [
+        "number theory",
+        "divisors"
+      ],
+      "statement": "https://www.erdosproblems.com/1054",
+      "latex": "https://www.erdosproblems.com/latex/1054"
+    },
+    {
+      "id": "erdos-1055",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1055.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A005113"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1055",
+      "latex": "https://www.erdosproblems.com/latex/1055"
+    },
+    {
+      "id": "erdos-1056",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1056.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A060427"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1056",
+      "latex": "https://www.erdosproblems.com/latex/1056"
+    },
+    {
+      "id": "erdos-1057",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1057.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A006931"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1057",
+      "latex": "https://www.erdosproblems.com/latex/1057"
+    },
+    {
+      "id": "erdos-1059",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1059.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A064152"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1059",
+      "latex": "https://www.erdosproblems.com/latex/1059"
+    },
+    {
+      "id": "erdos-1060",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1060.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A327153"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1060",
+      "latex": "https://www.erdosproblems.com/latex/1060"
+    },
+    {
+      "id": "erdos-1061",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1061.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A110177",
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1061",
+      "latex": "https://www.erdosproblems.com/latex/1061"
+    },
+    {
+      "id": "erdos-1062",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1062.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A038372"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1062",
+      "latex": "https://www.erdosproblems.com/latex/1062"
+    },
+    {
+      "id": "erdos-1063",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1063.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A389360"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1063",
+      "latex": "https://www.erdosproblems.com/latex/1063"
+    },
+    {
+      "id": "erdos-1065",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1065.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A074781",
+        "A339465"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1065",
+      "latex": "https://www.erdosproblems.com/latex/1065"
+    },
+    {
+      "id": "erdos-1068",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1068.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "graph theory",
+        "set theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/1068",
+      "latex": "https://www.erdosproblems.com/latex/1068"
+    },
+    {
+      "id": "erdos-1072",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1072.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A073944",
+        "A072937",
+        "A154554"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1072",
+      "latex": "https://www.erdosproblems.com/latex/1072"
+    },
+    {
+      "id": "erdos-1073",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1073.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A256519"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1073",
+      "latex": "https://www.erdosproblems.com/latex/1073"
+    },
+    {
+      "id": "erdos-1074",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1074.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A063980",
+        "A064164"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1074",
+      "latex": "https://www.erdosproblems.com/latex/1074"
+    },
+    {
+      "id": "erdos-1084",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1084.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A045945",
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/1084",
+      "latex": "https://www.erdosproblems.com/latex/1084"
+    },
+    {
+      "id": "erdos-1085",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1085.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A186705",
+        "possible"
+      ],
+      "tags": [
+        "geometry",
+        "distances"
+      ],
+      "statement": "https://www.erdosproblems.com/1085",
+      "latex": "https://www.erdosproblems.com/latex/1085"
+    },
+    {
+      "id": "erdos-1093",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1093.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/1093",
+      "latex": "https://www.erdosproblems.com/latex/1093"
+    },
+    {
+      "id": "erdos-1094",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1094.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/1094",
+      "latex": "https://www.erdosproblems.com/latex/1094"
+    },
+    {
+      "id": "erdos-1095",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1095.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A003458"
+      ],
+      "tags": [
+        "number theory",
+        "binomial coefficients"
+      ],
+      "statement": "https://www.erdosproblems.com/1095",
+      "latex": "https://www.erdosproblems.com/latex/1095"
+    },
+    {
+      "id": "erdos-1097",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1097.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory",
+        "additive combinatorics"
+      ],
+      "statement": "https://www.erdosproblems.com/1097",
+      "latex": "https://www.erdosproblems.com/latex/1097"
+    },
+    {
+      "id": "erdos-1101",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1101.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1101",
+      "latex": "https://www.erdosproblems.com/latex/1101"
+    },
+    {
+      "id": "erdos-1104",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1104.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A292528"
+      ],
+      "tags": [
+        "graph theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/1104",
+      "latex": "https://www.erdosproblems.com/latex/1104"
+    },
+    {
+      "id": "erdos-1106",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1106.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A194259",
+        "A194260"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1106",
+      "latex": "https://www.erdosproblems.com/latex/1106"
+    },
+    {
+      "id": "erdos-1107",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1107.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A056828",
+        "A392342",
+        "A392343",
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "powerful"
+      ],
+      "statement": "https://www.erdosproblems.com/1107",
+      "latex": "https://www.erdosproblems.com/latex/1107"
+    },
+    {
+      "id": "erdos-1108",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1108.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A051761",
+        "A115645",
+        "A025494"
+      ],
+      "tags": [
+        "number theory",
+        "factorials"
+      ],
+      "statement": "https://www.erdosproblems.com/1108",
+      "latex": "https://www.erdosproblems.com/latex/1108"
+    },
+    {
+      "id": "erdos-1109",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1109.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A392164",
+        "A392165"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1109",
+      "latex": "https://www.erdosproblems.com/latex/1109"
+    },
+    {
+      "id": "erdos-1110",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1110.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1110",
+      "latex": "https://www.erdosproblems.com/latex/1110"
+    },
+    {
+      "id": "erdos-1113",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1113.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A076336"
+      ],
+      "tags": [
+        "number theory",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/1113",
+      "latex": "https://www.erdosproblems.com/latex/1113"
+    },
+    {
+      "id": "erdos-1133",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1133.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "polynomials"
+      ],
+      "statement": "https://www.erdosproblems.com/1133",
+      "latex": "https://www.erdosproblems.com/latex/1133"
+    },
+    {
+      "id": "erdos-1135",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1135.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "$500",
+      "oeis": [
+        "A006370",
+        "A008908"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1135",
+      "latex": "https://www.erdosproblems.com/latex/1135"
+    },
+    {
+      "id": "erdos-1137",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1137.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A083550",
+        "A005250"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1137",
+      "latex": "https://www.erdosproblems.com/latex/1137"
+    },
+    {
+      "id": "erdos-1139",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1139.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A037143",
+        "A101041"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1139",
+      "latex": "https://www.erdosproblems.com/latex/1139"
+    },
+    {
+      "id": "erdos-1142",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1142.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "A039669"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1142",
+      "latex": "https://www.erdosproblems.com/latex/1142"
+    },
+    {
+      "id": "erdos-1145",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1145.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/1145",
+      "latex": "https://www.erdosproblems.com/latex/1145"
+    },
+    {
+      "id": "erdos-1146",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1146.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1146",
+      "latex": "https://www.erdosproblems.com/latex/1146"
+    },
+    {
+      "id": "erdos-1150",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1150.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "analysis",
+        "polynomials"
+      ],
+      "statement": "https://www.erdosproblems.com/1150",
+      "latex": "https://www.erdosproblems.com/latex/1150"
+    },
+    {
+      "id": "erdos-1167",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1167.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory",
+        "probability"
+      ],
+      "statement": "https://www.erdosproblems.com/1167",
+      "latex": "https://www.erdosproblems.com/latex/1167"
+    },
+    {
+      "id": "erdos-1175",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1175.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "N/A"
+      ],
+      "tags": [
+        "set theory",
+        "chromatic number"
+      ],
+      "statement": "https://www.erdosproblems.com/1175",
+      "latex": "https://www.erdosproblems.com/latex/1175"
+    },
+    {
+      "id": "erdos-1188",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1188.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "covering systems"
+      ],
+      "statement": "https://www.erdosproblems.com/1188",
+      "latex": "https://www.erdosproblems.com/latex/1188"
+    },
+    {
+      "id": "erdos-1192",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1192.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "additive basis"
+      ],
+      "statement": "https://www.erdosproblems.com/1192",
+      "latex": "https://www.erdosproblems.com/latex/1192"
+    },
+    {
+      "id": "erdos-1199",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1199.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "additive combinatorics",
+        "ramsey theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1199",
+      "latex": "https://www.erdosproblems.com/latex/1199"
+    },
+    {
+      "id": "erdos-1201",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1201.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1201",
+      "latex": "https://www.erdosproblems.com/latex/1201"
+    },
+    {
+      "id": "erdos-1203",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1203.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1203",
+      "latex": "https://www.erdosproblems.com/latex/1203"
+    },
+    {
+      "id": "erdos-1209",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1209.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1209",
+      "latex": "https://www.erdosproblems.com/latex/1209"
+    },
+    {
+      "id": "erdos-1210",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1210.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory"
+      ],
+      "statement": "https://www.erdosproblems.com/1210",
+      "latex": "https://www.erdosproblems.com/latex/1210"
+    },
+    {
+      "id": "erdos-1212",
+      "source": "erdosproblems.com",
+      "status": "open",
+      "formalization": {
+        "lean": "1212.lean",
+        "source": "google-deepmind/formal-conjectures"
+      },
+      "prize": "no",
+      "oeis": [
+        "possible"
+      ],
+      "tags": [
+        "number theory",
+        "primes"
+      ],
+      "statement": "https://www.erdosproblems.com/1212",
+      "latex": "https://www.erdosproblems.com/latex/1212"
+    }
+  ]
+}
