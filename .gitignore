@@ -18,3 +18,7 @@ node_modules/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Autoformalizer run artifacts
+kanforge/bench/validate_*.log
+kanforge/corpus/shortlist/
