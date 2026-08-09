@@ -21,6 +21,7 @@
 //                             [--out=bench/ablation]
 //                             [--premises=on|off] [--premise-locked=on|off]
 //                             [--premise-topk=5] [--corpus=full|no-mul-add]
+//                             [--menu=on|off] [--predictors=<path.json>]
 // The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
 // per problem per recipe), so prefer --problems=<subset> to bound wall time. The step set
 // (--set=step) is the multi-step goal-directed tier (build_order.md §5.4; bench/stepSmoke.js):
@@ -35,6 +36,7 @@
 
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { GoalEGraph } from '../core/egraph.js';
 import { bestOfN } from '../search/bestofn.js';
@@ -49,11 +51,17 @@ import { PremiseRetriever, PremiseAugmentingLLM } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { TacticMenuAugmentingLLM } from '../search/tacticMenu.js';
 import { formatGoalPrompt } from '../agent/prompts.js';
+import { tacticHead, compilePredictors } from '../optimization/causal.js';
+import { auditAblationReport } from './reportAudit.js';
 
 export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 export const RANKING_RECIPES = ['bestofn', 'swiss', 'swiss+repulsion'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function sha256(text) {
+    return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
 // Counting adapters: wrap the real clients so every strategy's true cost is observable without
 // changing how the strategies call the interface.
@@ -91,7 +99,7 @@ function openRootEGraph(rootGoals) {
 // Repulsion-flavoured swiss: candidates are drawn through a RepulsionSampler seeded with every
 // tactic already tried (and failed) anywhere in the lemma, then ranked and applied exactly as
 // bestOfNWithSwiss does.
-async function pickSwissWithRepulsion(goal, backend, llm, sampler, tried, N) {
+async function pickSwissWithRepulsion(goal, backend, llm, sampler, tried, N, predictors = null) {
     const candidates = [];
     const seen = new Set();
     for (let i = 0; i < N; i++) {
@@ -104,17 +112,24 @@ async function pickSwissWithRepulsion(goal, backend, llm, sampler, tried, N) {
     if (candidates.length === 0) return { ok: false };
     const judge = buildPairwiseJudge(goal, { llm });
     const ranking = await swissRank(candidates, judge);
+    let skipped = 0;
+    const history = [];
     for (const { candidate } of ranking) {
+        if (predictors?.rejects(tacticHead(candidate), history)) {
+            skipped++;
+            continue;
+        }
+        history.push(tacticHead(candidate));
         const result = await backend.applyTactic(goal, candidate);
-        if (result.status === 'ok') return { ok: true, tactic: candidate, result };
+        if (result.status === 'ok') return { ok: true, tactic: candidate, result, skipped };
     }
-    return { ok: false, tactic: candidates[0] };
+    return { ok: false, tactic: candidates[0], skipped };
 }
 
 // Drive one lemma with a per-goal ranking strategy, mirroring TacticLoop's frontier-order
 // discipline (open goal 0, currentGoal freshest instance) but isolating the strategy and
 // counting its true cost.
-async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmCalls }) {
+async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null }) {
     const countedLLM = countingLLM(llm);
     const countedBackend = countingBackend(backend);
     const sampler = recipe === 'swiss+repulsion' ? new RepulsionSampler({ llm: countedLLM }) : null;
@@ -129,6 +144,7 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
 
     const t0 = Date.now();
     let goalCount = 0;
+    let skipped = 0;
     while (!egraph.isRootSolved() && goalCount < 100) {
         if (countedLLM.llmCalls >= maxLlmCalls) break;
         const open = egraph.getOpenGoals();
@@ -139,12 +155,13 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
 
         let pick;
         if (recipe === 'bestofn') {
-            pick = await bestOfN(goal, countedBackend, countedLLM, N);
+            pick = await bestOfN(goal, countedBackend, countedLLM, N, predictors);
         } else if (recipe === 'swiss') {
-            pick = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N });
+            pick = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors });
         } else {
-            pick = await pickSwissWithRepulsion(goal, countedBackend, countedLLM, sampler, tried, N);
+            pick = await pickSwissWithRepulsion(goal, countedBackend, countedLLM, sampler, tried, N, predictors);
         }
+        skipped += pick.skipped ?? 0;
 
         if (pick.ok) {
             egraph.applyTactic(goalClass.id, pick.tactic, pick.result.newGoals);
@@ -161,6 +178,7 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
         error: egraph.isRootSolved() ? null : 'budget exhausted or frontier stuck',
         llmCalls: countedLLM.llmCalls,
         tacticCalls: countedBackend.tacticCalls,
+        skipped,
         ms: Date.now() - t0
     };
 }
@@ -168,7 +186,7 @@ async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmC
 // Drive one lemma with a search-level strategy (bfs / mcgs), which owns goal selection AND
 // per-goal proposals over the e-graph. The rollout/expansion budget approximates the shared
 // llm-call budget so recipes stay comparable.
-async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCalls }) {
+async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null }) {
     const countedLLM = countingLLM(llm);
     const countedBackend = countingBackend(backend);
     const repulsion = recipe.endsWith('repulsion');
@@ -182,12 +200,15 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
 
     const t0 = Date.now();
     const approxBudget = Math.max(1, Math.floor(maxLlmCalls / Math.max(1, N)));
+    let skipped = 0;
     if (recipe.startsWith('mcgs')) {
-        const searcher = new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion });
+        const searcher = new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion, predictors });
         await searcher.search(egraph, { rollouts: approxBudget });
+        skipped = searcher.skipped;
     } else {
-        const searcher = new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion });
+        const searcher = new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion, predictors });
         await searcher.search(egraph, { maxExpansions: approxBudget });
+        skipped = searcher.skipped;
     }
 
     backend.endLemma(sessionKey);
@@ -197,11 +218,12 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
         error: egraph.isRootSolved() ? null : 'budget exhausted or frontier stuck',
         llmCalls: countedLLM.llmCalls,
         tacticCalls: countedBackend.tacticCalls,
+        skipped,
         ms: Date.now() - t0
     };
 }
 
-export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000 } = {}) {
+export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null } = {}) {
     if (!backend || !llm) throw new Error('runAblation requires a backend and an llm');
     validateSmokeSet(problems);
     for (const r of recipes) {
@@ -232,7 +254,7 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
                     if (menu) rowLLM = new TacticMenuAugmentingLLM(rowLLM, { statement: p.statement });
                     if (premiseConfig) rowLLM = new PremiseAugmentingLLM(rowLLM, premiseConfig.retriever, { premiseLocked: premiseConfig.locked, premiseTopK: premiseConfig.topK });
                     outcome = await withTimeout(
-                        driver({ backend, llm: rowLLM, statement: p.statement, recipe, N, maxLlmCalls }),
+                        driver({ backend, llm: rowLLM, statement: p.statement, recipe, N, maxLlmCalls, predictors }),
                         rowTimeoutMs,
                         `${recipe}/${p.id}`
                     );
@@ -251,10 +273,10 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
         }
     } finally {
         // Write whatever we have even on an early exit, so a crash never discards the run.
-        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs }));
+        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance }));
     }
 
-    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs });
+    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance });
     return report;
 }
 
@@ -295,12 +317,13 @@ function appendRow(outDir, row) {
     }
 }
 
-function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000 }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
+function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
         recipe: r,
         solved: 0,
         total: problems.length,
         llmCalls: 0,
         tacticCalls: 0,
+        skipped: 0,
         wallMs: 0,
         solvedLlmCalls: 0,
         problems: []
@@ -310,6 +333,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
         s.problems.push(row);
         s.llmCalls += row.llmCalls;
         s.tacticCalls += row.tacticCalls;
+        s.skipped += row.skipped ?? 0;
         s.wallMs += row.ms;
         if (row.solved) {
             s.solved++;
@@ -325,9 +349,9 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
         const solvedBy = recipes.filter(r => byRecipe[r].problems.find(x => x.id === p.id)?.solved);
         return { id: p.id, tier: p.tier, solvedBy };
     });
-    return {
+    const report = {
         generatedAt: new Date().toISOString(),
-        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs },
+        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsProvenance },
         perRecipe: recipes.map(r => {
             const { problems: _p, ...s } = byRecipe[r];
             return s;
@@ -336,6 +360,12 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
         detail: rows,
         pairwise: pairwiseDeltas(recipes, byRecipe)
     };
+    report.audit = auditAblationReport(report);
+    if (!report.audit.allOk) {
+        const list = report.audit.violations.map(v => `${v.check} [${v.recipe ?? v.id ?? ''}]`).join('; ');
+        console.error(`[ablation] AUDIT FAILED: ${list}`);
+    }
+    return report;
 }
 
 function pairwiseDeltas(recipes, byRecipe) {
@@ -372,13 +402,14 @@ export function renderMarkdown(report) {
         lines.push('- Premises: off');
     }
     lines.push(`- Tactic menu: ${config.menu ? 'on (import-verified)' : 'off'}`);
+    if (config.predictors) lines.push(`- Failure predictors: ${config.predictors} active`);
     lines.push('');
     lines.push('## Pass rate vs. budget');
     lines.push('');
-    lines.push('| recipe | solved | pass rate | llm calls | kernel checks | mean llm/solved |');
-    lines.push('|---|---|---|---|---|---|');
+    lines.push('| recipe | solved | pass rate | llm calls | kernel checks | predictor-skips | mean llm/solved |');
+    lines.push('|---|---|---|---|---|---|---|');
     for (const s of perRecipe) {
-        lines.push(`| ${s.recipe} | ${s.solved}/${s.total} | ${(s.passRate * 100).toFixed(1)}% | ${s.llmCalls} | ${s.tacticCalls} | ${s.meanLlmCallsPerSolved === null ? '—' : s.meanLlmCallsPerSolved.toFixed(1)} |`);
+        lines.push(`| ${s.recipe} | ${s.solved}/${s.total} | ${(s.passRate * 100).toFixed(1)}% | ${s.llmCalls} | ${s.tacticCalls} | ${s.skipped} | ${s.meanLlmCallsPerSolved === null ? '—' : s.meanLlmCallsPerSolved.toFixed(1)} |`);
     }
     lines.push('');
     lines.push('## Pairwise deltas (vs. baselines)');
@@ -408,6 +439,7 @@ async function main() {
     const { loadLLMConfig, createLLM } = await import('../agent/llm.js');
     const { loadEnv } = await import('../env.js');
     const ENV = loadEnv();
+    let predictorsProvenance = null;
 
     const recipesArg = process.argv.find(a => a.startsWith('--recipes='));
     const setArg = process.argv.find(a => a.startsWith('--set='));
@@ -421,6 +453,7 @@ async function main() {
     const corpusArg = process.argv.find(a => a.startsWith('--corpus='));
     const menuArg = process.argv.find(a => a.startsWith('--menu='));
     const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
+    const predictorsArg = process.argv.find(a => a.startsWith('--predictors='));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : set === 'step' ? STEP_PROBLEMS : SMOKE_PROBLEMS;
@@ -454,6 +487,25 @@ async function main() {
     const menuEnabled = menuArg ? menuArg.split('=')[1] === 'on' : false;
     const rowTimeoutMs = rowTimeoutArg ? Number(rowTimeoutArg.split('=')[1]) : 300_000;
 
+    // §5.3: pre-filter stage. --predictors=<path.json> loads a serialized predictor list
+    // (the output of CausalAnalyzer.getFailurePredictors() or a hand-written pattern set);
+    // compilePredictors turns it into the reject matcher the search recipes consult before
+    // kernel verification.
+    let predictors = null;
+    if (predictorsArg) {
+        const predictorsPath = predictorsArg.split('=')[1];
+        const { readFile, stat } = await import('node:fs/promises');
+        const rawText = await readFile(predictorsPath, 'utf8');
+        const raw = JSON.parse(rawText);
+        const list = Array.isArray(raw) ? raw : (raw.predictors ?? []);
+        predictors = compilePredictors(list);
+        console.log(`[ablation] loaded ${predictors.count} failure predictors from ${predictorsPath}`);
+        // Record provenance so the report ties the matcher back to the exact trained file.
+        const sha = await sha256(rawText);
+        const meta = await stat(predictorsPath);
+        predictorsProvenance = { path: predictorsPath, sha256: sha, bytes: meta.size, trainedAt: raw.generatedAt ?? null, count: predictors.count };
+    }
+
     const pool = new BackendRepl({
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
@@ -473,9 +525,9 @@ async function main() {
 
     try {
         const report = await runAblation({
-            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs,
+            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs, predictors, predictorsProvenance,
             onRow: (row) => {
-                const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}`;
+                const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}${row.skipped ? ` skipped=${row.skipped}` : ''}`;
                 console.log(`[ablation] ${line}`);
                 appendRow(outDir, row);
             }

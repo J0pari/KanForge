@@ -11,7 +11,9 @@ export class Scheduler {
         this.graph = graph;
         this.check = options.check; // async (nodeId) => result
         this.concurrency = options.concurrency ?? 4;
-        this.timeoutMs = options.timeoutMs ?? 60_000;
+        // null means "no timeout" (each operation is bounded by its backend), matching the
+        // _spawn timer guard. Only an omitted option falls back to the 60s default.
+        this.timeoutMs = options.timeoutMs === undefined ? 60_000 : options.timeoutMs;
         this.priority = options.priority ?? null; // override (nodeId, ctx) => number
         this.onProgress = options.onProgress ?? null;
         this.maxFailures = options.maxFailures ?? null; // stop budget: halt once N nodes failed

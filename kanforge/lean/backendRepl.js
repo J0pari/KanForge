@@ -294,8 +294,11 @@ export class BackendRepl {
         } catch {
             // timeout path already retired the worker and spawned a warm replacement
         } finally {
+            // Do NOT clear worker.busy here: _dispatch already freed it after the non-lease
+            // warmup response, and onIdle may have handed it to a waiter (reserved, busy=true).
+            // Re-clearing would clobber that reservation and let a second extractGoals acquire
+            // the same worker, tripping the ReplWorker.request "repl worker busy" guard.
             if (worker.isAlive() && !worker._retired) {
-                worker.busy = false;
                 this._wakeWaiters();
             }
         }

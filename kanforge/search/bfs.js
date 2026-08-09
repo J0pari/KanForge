@@ -10,14 +10,17 @@
 
 import { buildTacticPrompt } from '../agent/prompts.js';
 import { sanitizeTacticText } from '../agent/llm.js';
+import { tacticHead } from '../optimization/causal.js';
 
 export class BestFirstSearch {
-    constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false } = {}) {
+    constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false, predictors = null } = {}) {
         if (!backend || !llm) throw new Error('BestFirstSearch requires a backend and an llm');
         this.backend = backend;
         this.llm = llm;
         this.maxTacticsPerGoal = maxTacticsPerGoal;
         this.repulsion = repulsion;
+        this.predictors = predictors; // compiled matcher (§5.3)
+        this.skipped = 0;
     }
 
     _score(goalClass) {
@@ -33,11 +36,17 @@ export class BestFirstSearch {
     async expand(egraph, classId) {
         const goal = egraph.currentGoal(classId);
         const attempted = this.repulsion ? new Set() : null;
+        const history = [];
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const tactic = await this._propose(goal, attempt);
             if (!tactic) continue;
             if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
             attempted?.add(tactic);
+            if (this.predictors?.rejects(tacticHead(tactic), history)) {
+                this.skipped++;
+                continue; // §5.3: no kernel budget on a known-failing window
+            }
+            history.push(tacticHead(tactic));
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
             egraph.applyTactic(classId, tactic, result.newGoals);

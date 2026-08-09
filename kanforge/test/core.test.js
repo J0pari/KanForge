@@ -80,3 +80,38 @@ test('LazyTemplate defers and concatenates lazy parts', () => {
     assert.strictEqual(tmpl.toString(), 'hello world');
     assert.strictEqual(forced, 1);
 });
+
+test('Scheduler: timeoutMs null disables the timeout (each operation is bounded by its backend)', { timeout: 10000 }, async () => {
+    const graph = new PullGraph();
+    graph.register('slow', () => 'x');
+    let checkRuns = 0;
+    const scheduler = new Scheduler(graph, {
+        check: async () => {
+            checkRuns++;
+            await new Promise(r => setTimeout(r, 1500)); // longer than any default timer
+            return { ok: true };
+        },
+        concurrency: 1,
+        timeoutMs: null
+    });
+    scheduler.enqueue(['slow']);
+    const outcome = await scheduler.run();
+    assert.strictEqual(outcome.ok, true);
+    assert.strictEqual(outcome.results.size, 1);
+    assert.strictEqual(checkRuns, 1);
+});
+
+test('Scheduler: a fired timeout records the node as failed', { timeout: 10000 }, async () => {
+    const graph = new PullGraph();
+    graph.register('hang', () => 'x');
+    const scheduler = new Scheduler(graph, {
+        check: async () => { await new Promise(r => setTimeout(r, 5000)); return { ok: true }; },
+        concurrency: 1,
+        timeoutMs: 100
+    });
+    scheduler.enqueue(['hang']);
+    const outcome = await scheduler.run();
+    assert.strictEqual(outcome.ok, false);
+    assert.ok(outcome.failures.has('hang'));
+    assert.match(String(outcome.failures.get('hang')), /timeout after 100ms/);
+});

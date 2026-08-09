@@ -11,6 +11,7 @@
 
 import { sanitizeTacticText } from '../agent/llm.js';
 import { formatGoalPrompt } from '../agent/prompts.js';
+import { tacticHead } from '../optimization/causal.js';
 
 // Fit Bradley-Terry ratings over the outcomes of a round-robin tournament.
 //
@@ -147,9 +148,16 @@ export async function bestOfNWithSwiss(goal, backend, llm, opts = {}) {
     if (candidates.length === 0) return { ok: false, ranking: [] };
     const judge = opts.judge ?? buildPairwiseJudge(goal, { llm, ...opts });
     const ranking = await swissRank(candidates, judge, opts);
+    let skipped = 0;
+    const history = [];
     for (const { candidate } of ranking) {
+        if (opts.predictors?.rejects(tacticHead(candidate), history)) {
+            skipped++;
+            continue; // §5.3: ranked candidates that complete a known-failing window are skipped pre-verification
+        }
+        history.push(tacticHead(candidate));
         const result = await backend.applyTactic(goal, candidate);
-        if (result.status === 'ok') return { ok: true, tactic: candidate, result, ranking };
+        if (result.status === 'ok') return { ok: true, tactic: candidate, result, ranking, skipped };
     }
-    return { ok: false, ranking };
+    return { ok: false, ranking, skipped };
 }

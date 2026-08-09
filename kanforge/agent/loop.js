@@ -116,7 +116,9 @@ export class TacticLoop {
         const fail = (error, extra = {}) => {
             const ms = Date.now() - start;
             this._emit({ type: 'lemma_failed', lemmaId, statement, ms, error, ...extra }, lemmaId);
-            throw new Error(`lemma ${lemmaId} failed: ${error}`);
+            const err = new Error(`lemma ${lemmaId} failed: ${error}`);
+            err.lemmaFailedEmitted = true; // catch below must not double-emit
+            throw err;
         };
 
         try {
@@ -343,6 +345,15 @@ export class TacticLoop {
             }
 
             return result;
+        } catch (err) {
+            // Exception-based failures (backend errors, timeouts, repl worker exits) must reach
+            // the causal store too, or the predictor miner and audits lose the failure terminal.
+            // fail() already emitted lemma_failed; guard so it isn't double-reported.
+            if (!(err && err.lemmaFailedEmitted)) {
+                const ms = Date.now() - start;
+                this._emit({ type: 'lemma_failed', lemmaId, statement, ms, error: err?.message ?? String(err) }, lemmaId);
+            }
+            throw err;
         } finally {
             // Release the leased proof-session worker back to the backend pool.
             this.backend.endLemma?.(lemmaId);

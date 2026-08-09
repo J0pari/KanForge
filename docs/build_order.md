@@ -245,6 +245,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   precede FAIL.
 - **Acceptance:** predictor list is non-empty and search budget spent on non-predictor branches
   increases.
+- **Status:** `optimization/causal.js` ships (transition matrix, failure predictors, bottlenecks,
+  anomalies, critical path; `compilePredictors` turns predictors into a reject matcher). The
+  search entry points (`bestofn`, `swiss`, `bfs`, `mcgs`) and the ablation drivers consult the
+  matcher BEFORE kernel verification, and the ablation report logs `predictor-skips` per recipe.
+  Unit tests cover the analyzer and the budget-shift claim (`test/causal.test.js`).
+- **Open item:** the measured pass@1/cost table with `--predictors=<path.json>` on `--set=step`
+  (feeds the §5.4 tier ablation and the P6 gate); predictors are trained from a prior run's
+  event store (loop events carry id/t/parent).
 
 ### 5.4 Multi-step goal-directed ablation tier
 - The core (§5.1) and mathlib sets are each closable by ONE headline tactic, so they cannot
@@ -269,8 +277,29 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   solved"); `(a+b)*(c+d)` reassociation is NOT definitional under left-assoc `+`, so the final
   `omega` is required, not cosmetic; `simp` closes `(p → q → r) → (p ∧ q → r)`, which is why the
   tier rejects trivial closers *empirically*, not by assumption.
-- **Open item:** the tier ablation (bestofn vs MCGS × `--menu=on|off` × `--premises=on|off`) on
-  `--set=step`; this is the pass@1/cost table the P6 gate (§6) is judged on.
+- **Measured (§5.4 tier ablation, real kernel, N=4, 60 LLM calls/lemma, single sample per cell):**
+  pass@1/cost table under `bench/ablation/ablation_1786166306620/` (scoped) and
+  `ablation_1786166640876/` (bestofn menu=on), `ablation_1786167296479/` (mcgs menu=on),
+  `ablation_1786168088188/` (bestofn menu=off), `ablation_1786168694684/` (mcgs menu=off):
+
+  | recipe | menu | pass@1 | llm calls | mean llm/solved |
+  |---|---|---|---|---|
+  | bestofn | on | 5/10 | 32 | 1.6 |
+  | bestofn | off | 6/10 | 29 | 2.2 |
+  | mcgs | on | 5/10 | 40 | 2.0 |
+  | mcgs | off | 5/10 | 48 | 1.6 |
+
+  Readings: bestofn ≥ MCGS at equal budget on this tier (menu-off bestofn is the cheapest
+  cell); MCGS wins the two `imp_trans`/`modus_tollens` decomposition problems bestofn misses,
+  and bestofn wins `or_elim`/`and_intro_chain`/`mul_comm_rw` MCGS misses — union across all
+  four cells is 7/10, and `or_comm`, `distrib_twice`, `square_expand` are unsolved by every
+  cell. The greedy-vs-searcher divide §5.4 was built to expose is real: the two recipes solve
+  *disjoint* problem sets, so a cost model that routes per-problem (menu-off bestofn for
+  rw-tiers, MCGS for decomposition) would beat either recipe alone. This is the pass@1/cost
+  data the P6 gate (§6) is judged on.
+- **Open item:** the premises axis (`--premises=on|off`) on `--set=step` (a step-tier premise
+  corpus is needed first; the current corpora are mathlib-smoke-shaped). Re-run any cell with
+  a fresh model seed to average out LLM nondeterminism.
 
 ---
 

@@ -73,6 +73,26 @@ test('TacticLoop closes proof session in backend in finally block', async () => 
     assert.deepStrictEqual(backend.ended, [lemmaId]);
 });
 
+test('TacticLoop emits lemma_failed when the backend throws (exception, not a guardrail fail)', async () => {
+    // Regression: a thrown backend error (repl worker busy, session timeout, worker exit)
+    // used to propagate out of _proveLemma without a lemma_failed terminal, so the causal
+    // store and the predictor miner lost the failure. The catch must emit it once.
+    const throwing = Object.create(new MockBackend());
+    throwing.extractGoals = async () => { throw new Error('repl worker busy'); };
+
+    const llm = new MockLLM(['omega']);
+    const loop = new TacticLoop({ backend: throwing, llm, maxTacticsPerGoal: 1 });
+    const lemmaId = loop.addLemma('example : 1 = 1 := by sorry');
+    const outcome = await loop.proveAll();
+
+    assert.strictEqual(outcome.ok, false);
+    const failures = [...outcome.failures.keys()];
+    assert.ok(failures.includes(lemmaId), 'scheduler must record the lemma as failed');
+
+    const failed = loop.store.events.filter(e => e.type === 'lemma_failed' && e.lemmaId === lemmaId);
+    assert.strictEqual(failed.length, 1, 'exactly one lemma_failed terminal for the exception');
+});
+
 test('TacticLoop appends a statement hash chain entry per verified lemma and it verifies', async () => {
     const backend = new MockBackend();
     const llm = new MockLLM(['intro h', 'omega']);

@@ -133,3 +133,78 @@ test('without warmup, workers stay available and answer immediately', { timeout:
         await pool.shutdown(3000);
     }
 });
+
+// A worker that mirrors the real ReplWorker.request busy-guard AND its response dispatch:
+// on resolving a non-lease request it clears busy and fires onIdle (which the pool wires to
+// _wakeWaiters) — exactly like backendRepl.js _dispatch(). This is what made the _warm
+// clobber reachable: the worker frees itself, gets handed to a waiter, and then _warm's
+// finally would clear busy again and hand it out a second time.
+function raceWorker(onIdle, delay = 10) {
+    return {
+        busy: false,
+        _dead: false,
+        _retired: false,
+        _pending: null,
+        pid: 9002,
+        child: { exitCode: null, kill() {} },
+        isAlive() { return !this._dead; },
+        request(payload, { lease = false } = {}) {
+            if (this._pending) return Promise.reject(new Error('repl worker busy'));
+            return new Promise((resolve, reject) => {
+                this._pending = { resolve, reject, lease, payload };
+                this.busy = true;
+                setTimeout(() => {
+                    const p = this._pending;
+                    this._pending = null;
+                    if (p) {
+                        this.busy = p.lease ? this.busy : false;
+                        p.resolve({ env: 0, messages: [], sorries: [] });
+                    }
+                    if (!lease) onIdle?.(this);
+                }, delay);
+            });
+        },
+        kill(signal) {
+            this._dead = true;
+            this.busy = false;
+            const p = this._pending;
+            this._pending = null;
+            if (p) p.reject(Object.assign(new Error('repl worker killed'), { kind: 'worker-exit' }));
+        }
+    };
+}
+
+// Regression: _warm's finally used to reset worker.busy = false after the warmup response,
+// clobbering the reservation _wakeWaiters set when it handed that worker to a leased session.
+// A second extractGoals then acquired the SAME busy worker and tripped the request busy-guard
+// (`repl worker busy`), failing every concurrent lemma after the first.
+test('two concurrent leased sessions during warmup must not collide on one worker', { timeout: 15000 }, async () => {
+    class RaceBackend extends BackendRepl {
+        _spawnWorker() {
+            const worker = raceWorker(() => this._wakeWaiters(), 10);
+            this._workers.push(worker);
+            if (this.warmupStatement) {
+                worker.busy = true;
+                this._warm(worker);
+            }
+            return worker;
+        }
+    }
+    const pool = new RaceBackend({ concurrency: 2, timeoutMs: 5000, warmupStatement: 'example : True := by trivial' });
+    try {
+        // Both dispatch before either worker finishes warming: both queue as waiters.
+        const [r1, r2] = await Promise.allSettled([
+            pool.extractGoals('example : P := by sorry'),
+            pool.extractGoals('example : Q := by sorry')
+        ]);
+        assert.strictEqual(r1.status, 'fulfilled', 'first lease must succeed, got: ' + (r1.reason?.message ?? ''));
+        assert.strictEqual(r2.status, 'fulfilled', 'second lease must not get a busy worker, got: ' + (r2.reason?.message ?? ''));
+        assert.strictEqual(pool.restarts, 0, 'no worker should be retired');
+        // Each leased session must own a DISTINCT worker — sharing would mean the busy
+        // reservation was clobbered by _warm's finally.
+        const workers = new Set([...pool._sessions.values()].map(s => s.worker));
+        assert.strictEqual(workers.size, pool._sessions.size, 'concurrent sessions must not share a worker');
+    } finally {
+        await pool.shutdown(3000);
+    }
+});
