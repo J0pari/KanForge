@@ -414,7 +414,31 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   consensus equivalence check is recorded as a formalization failure with its evidence, never
   silently corrected.
 
-### 7.2 Multi-agent ensemble
+### 7.2 Field substrate bootstrap (per `architecture.md` §0.2)
+- **Purpose:** make a *whole field* addressable when mathlib does not cover it — the geometric
+  Langlands substrate (derived algebraic geometry, ∞-categories, D-modules, ind-coherent sheaves,
+  `Bun_G`/`LocSys_G`) is the motivating scale, but the mechanism is field-agnostic and must land
+  before any such target is attempted.
+- **Deliverables in order:**
+  1. **Lake-package field preload** — declare field libraries as pinned `require`s in
+     `lean-project/lakefile.lean`; verify `LEAN_PATH` reconstruction picks them up (backendRepl
+     already scans `.lake/packages/*`); record a per-target **import profile**.
+  2. **`substrateHash` in pins** — extend `makePin`/`checkPin` (`lean/pin.js`) with a hash of the
+     resolved library set (lakefile + package revs); a substrate change reports DRIFT, not silent
+     re-verify; unit tests for the drift-vs-weakened split.
+  3. **`def`/`structure`/`abbrev` nodes in the blueprint DAG** — generalize `blueprint/skeleton.js`
+     + `refine.js` from theorem-stubs to body-carrying vocabulary nodes (kernel-checked bodies,
+     probe examples, pinned + committed); the refine loop picks the lowest unbuilt node regardless
+     of kind.
+  4. **Proof-backed probes** — instance ledger entries may be *lemmas the loop must prove*
+     (higher-categorical claims), not just `norm_num`/`native_decide` checks.
+  5. **Definition-level consensus** — kernel-checked equivalence of structures between candidate
+     formalizations.
+- **Acceptance (provisional):** a field substrate of ≥ 100 kernel-checked, pinned, committed
+  vocabulary nodes builds bottom-up with no `sorry` and no unimported bare symbols; a substrate
+  library revision flips the pin to DRIFT (never silent re-verify).
+
+### 7.3 Multi-agent ensemble
 - Implement `growth/multibody.js` (one-owner-per-region lemma edits, processing lanes) + the
   single-agent-workspace lock in `core/guardrails.js`; run parallel prover
   agents over the corpus with single-owner lemma edits (AxiomProver-style: autoformalizer /
@@ -422,13 +446,13 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance:** 2+ agents run concurrently on disjoint targets without file conflicts; critic
   reviews candidate proofs (statement-match + readability).
 
-### 7.3 Full digestion + audit
+### 7.4 Full digestion + audit
 - Auto-generate per-target writeups with assumption accounts; assemble a research summary doc.
   `core/hasher.js` audit + git history = reproducibility pack.
 - **Acceptance:** for every claimed result: Lean source, blueprint JSON, writeup, audit hash, and
   git commits all consistent and queryable via `/integrity/verify`.
 
-### 7.4 Ongoing RL loop
+### 7.5 Ongoing RL loop
 - Fold every mission run back into 6.4; refresh reward/guardrails from `optimization/patterns.js`
   findings. Long-horizon runs use resumable transactions throughout (Phase 2 machinery).
 
