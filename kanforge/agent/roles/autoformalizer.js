@@ -1,0 +1,296 @@
+// Autoformalizer role (architecture.md §0.1, build_order.md §7.1).
+// The §0 front door: prose target → kernel-typechecked Lean statement, with behavioral probes,
+// consensus, and a pin. This is the formalization PIPELINE, not a translation call.
+//
+// Efficiency contract (no floundering): the expensive resource is the kernel check (cold worker
+// + mathlib imports). Every candidate is STATICALLY validated before it ever reaches the kernel
+// (zero-cost catches: malformed JSON, missing `:= by sorry`, unbalanced brackets, inline `open`).
+// The LLM output is a STRICT JSON contract, so parsing is deterministic. Repair is CLASSIFIED
+// (parse / structure / typecheck / probe) and targeted, not a raw error dump. Probes are
+// generated in ONE batched LLM call. The backend is warmed with the target's imports once, so
+// statement + probe checks reuse the same warm worker (import cost paid at most once).
+
+import { hashStatement } from '../../lean/pin.js';
+
+const SHAPE_EQUIV = /(↔|≃|≅|⇔)/;
+const SHAPE_EXISTS = /∃/;
+const SHAPE_EQ = /=/;
+
+// --- static validation (zero kernel cost) ---
+
+// True when the statement is structurally a valid single-theorem sorry-stub. Catches the
+// "expected token" class BEFORE the repl is touched.
+export function staticValidateStatement(text) {
+    const s = String(text ?? '').trim();
+    if (!s) return { ok: false, reason: 'empty statement' };
+    if (!/^import\s+\S+/m.test(s) && !/^theorem\b|^example\b/.test(s.replace(/^import[^\n]*\n/gm, '').trim())) {
+        return { ok: false, reason: 'no theorem/example declaration' };
+    }
+    const stripped = s.replace(/^import\s+[^\n]*\n?/gm, '');
+    const body = stripped.trim();
+    if (!/^(theorem|example)\b/.test(body)) return { ok: false, reason: 'statement must be `theorem` or `example`' };
+    if (/(^|\n)\s*open\s+(scoped\s+)?\w/.test(body)) {
+        return { ok: false, reason: 'inline `open` is not allowed; put module access in `import` lines only' };
+    }
+    if (!/:=\s*by\s+sorry\s*$/.test(body)) return { ok: false, reason: 'statement must end with `:= by sorry`' };
+    if (/sorry/.test(body.replace(/:=\s*by\s+sorry\s*$/, ''))) return { ok: false, reason: '`sorry` may appear only in the final body' };
+    // balanced brackets (parens, braces, brackets, angle brackets) — cheap structural sanity.
+    const stack = [];
+    const pairs = { ')': '(', '}': '{', ']': '[', '⟩': '⟨', '⟩': '⟨' };
+    for (const ch of body) {
+        if (ch === '(' || ch === '{' || ch === '[' || ch === '⟨') stack.push(ch);
+        else if (ch === ')' || ch === '}' || ch === ']' || ch === '⟩') {
+            if (stack.pop() !== pairs[ch]) return { ok: false, reason: `unbalanced bracket near "${ch}"` };
+        }
+    }
+    if (stack.length) return { ok: false, reason: 'unbalanced brackets (unclosed opener)' };
+    return { ok: true };
+}
+
+// Parse the LLM's STRICT JSON output: { "imports": [...], "theorem": "..." }.
+// Tolerates code fences and leading prose before the first '{'.
+export function parseFormalizationJson(text) {
+    const t = String(text ?? '');
+    const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1] : t;
+    let start = candidate.indexOf('{');
+    let end = candidate.lastIndexOf('}');
+    if (start === -1 || end <= start) return { ok: false, error: 'no JSON object in LLM output' };
+    let parsed;
+    try {
+        parsed = JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+        return { ok: false, error: 'LLM output is not parseable JSON' };
+    }
+    const theorem = typeof parsed.theorem === 'string' ? parsed.theorem.trim() : null;
+    const imports = Array.isArray(parsed.imports) ? parsed.imports.filter(x => typeof x === 'string').map(x => x.trim()).filter(Boolean) : [];
+    if (!theorem) return { ok: false, error: 'JSON has no `theorem` string' };
+    return { ok: true, imports, theorem };
+}
+
+// Assemble the full statement text (imports + theorem) for the kernel check.
+export function assembleStatement(imports, theorem) {
+    const imp = imports.map(i => `import ${i}`).join('\n');
+    return (imp ? imp + '\n\n' : '') + theorem;
+}
+
+// Strip import lines (for checks that continue a warm session — the env already has them).
+export function stripImports(statement) {
+    return String(statement ?? '').split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n').trim();
+}
+
+// Chain-safety: the repl's `env: n` continuation rejects `∃`/`∀` ascription with "expected
+// token" (verified empirically — cold `env: null` parses them fine). Statements with top-level
+// quantifier ascription must check fresh (env: null) on the WARM worker (still fast — the
+// process has the modules; only the env chain is unsafe).
+export function isChainSafe(statement) {
+    return !/(∃|∀)\s+[A-Za-z_][A-Za-z0-9_']*\s*(:|,)/.test(String(statement ?? ''));
+}
+
+// --- prompts ---
+
+function buildFormalizationPrompt(prose, instances, repair = null) {
+    const instText = (instances?.length ?? 0)
+        ? `\n\nAsserted instances (the instance ledger — each must hold under your formalization):\n${instances.map(i => `- ${i}`).join('\n')}`
+        : '';
+    const repairText = repair
+        ? `\n\nYour previous attempt was rejected:\n- stage: ${repair.stage}\n- reason: ${repair.reason}\nFix ONLY what the reason identifies and return the corrected JSON.`
+        : '';
+    return [
+        {
+            role: 'system',
+            content: 'You are a Lean 4 formalization expert. Given a mathematical problem statement in prose, produce a formal Lean 4 theorem statement.\n' +
+                'Return ONLY a JSON object, no prose, no markdown fences:\n' +
+                '{"imports": ["Mathlib.<module>", ...], "theorem": "theorem <name> : <proposition> := by sorry"}\n' +
+                'Rules:\n' +
+                '- `imports` lists ONLY the mathlib modules the statement needs.\n' +
+                '- `theorem` is exactly ONE statement ending in `:= by sorry`; body is exactly `by sorry`, never proved.\n' +
+                '- Do NOT strengthen or weaken the proposition.\n' +
+                '- Do NOT use `open`/`open scoped`; modules come via imports only.\n' +
+                '- Use only identifiers available in mathlib.' +
+                instText + repairText
+        },
+        {
+            role: 'user',
+            content: `Formalize this problem statement as a Lean 4 theorem statement:\n\n${prose}`
+        }
+    ];
+}
+
+function buildProbePrompt(statement, instances) {
+    return [
+        {
+            role: 'system',
+            content: 'You are a Lean 4 formalization verifier. Given a formal statement and asserted instances, produce Lean `example` statements that verify each instance holds under the proposition.\n' +
+                'Return ONLY a JSON object, no prose, no markdown fences:\n' +
+                '{"examples": ["example ... : <instance proposition> := by <tactics>", ...]}\n' +
+                'Rules:\n' +
+                '- One example per asserted instance, same length.\n' +
+                '- Do NOT assume the theorem; each example must be an independent kernel-checked claim.\n' +
+                '- Use `by native_decide` / `norm_num` / `omega` / `simp` when the instance is decidable.\n' +
+                '- Use the SAME imports as the statement.'
+        },
+        {
+            role: 'user',
+            content: `Statement:\n${statement}\n\nAsserted instances:\n${instances.join('\n')}`
+        }
+    ];
+}
+
+export function parseProbeJson(text, expectedCount) {
+    const t = String(text ?? '');
+    const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1] : t;
+    let start = candidate.indexOf('{');
+    let end = candidate.lastIndexOf('}');
+    if (start === -1 || end <= start) return { ok: false, error: 'no JSON object in probe output' };
+    let parsed;
+    try {
+        parsed = JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+        return { ok: false, error: 'probe output is not parseable JSON' };
+    }
+    const examples = Array.isArray(parsed.examples) ? parsed.examples.filter(x => typeof x === 'string') : [];
+    if (examples.length !== expectedCount) {
+        return { ok: false, error: `expected ${expectedCount} probe examples, got ${examples.length}` };
+    }
+    return { ok: true, examples };
+}
+
+export class Autoformalizer {
+    // checkTimeoutMs: the kernel check on a COLD worker imports mathlib; warm via backend
+    // warmupStatement (intake harness builds the pool with the target's imports) so the paid
+    // cost is at most once. The timeout must cover that first import.
+    constructor({ llm, backend, maxAttempts = 2, checkTimeoutMs = 180_000 } = {}) {
+        if (!llm || !backend) throw new Error('Autoformalizer requires a real llm client and a real backend');
+        this.llm = llm;
+        this.backend = backend;
+        this.maxAttempts = maxAttempts;
+        this.checkTimeoutMs = checkTimeoutMs;
+    }
+
+    // formalize(prose, { instances, source }) → { ok, statement, shortlistEntry, error? }
+    // pipeline: propose (strict JSON) → static-validate → kernel-check → probes (batched) →
+    // entry. Repair is classified and targeted; maxAttempts bounds the loop.
+    async formalize(prose, { instances = [], source = null } = {}) {
+        let last = null;
+        for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+            const proposed = await this._propose(prose, instances, last);
+            if (!proposed.ok) {
+                last = { stage: 'parse', reason: proposed.error };
+                continue;
+            }
+            const statement = assembleStatement(proposed.imports, proposed.theorem);
+            const staticCheck = staticValidateStatement(statement);
+            if (!staticCheck.ok) {
+                last = { stage: 'structure', reason: staticCheck.reason };
+                continue;
+            }
+            // Warm the pool with the candidate's imports BEFORE the check: the cold mathlib
+            // import is paid once here, and statement + probe checks continue the SAME
+            // statement-mode session (useWarmEnv) — no re-import per check.
+            if (this.backend.warm) {
+                await this.backend.warm(statement, { timeoutMs: this.checkTimeoutMs });
+            }
+            const verdict = await this._verifyStatement(statement);
+            if (!verdict.ok) {
+                last = { stage: 'typecheck', reason: verdict.error };
+                continue;
+            }
+            const probes = await this._verifyProbes(statement, instances);
+            if (!probes.ok) {
+                // Per §0.1: a probe failure is a formalization failure WITH evidence, never
+                // silently corrected — but a fixable probe-set is retried once (targeted).
+                last = { stage: 'probe', reason: probes.error };
+                if (attempt < this.maxAttempts) continue;
+                return { ok: false, error: probes.error, probes: probes.results ?? [], shortlistEntry: null };
+            }
+            return {
+                ok: true,
+                statement,
+                shortlistEntry: this._entry(statement, prose, { source, instances, probes: probes.results, attempts: attempt })
+            };
+        }
+        return { ok: false, error: last ? `${last.stage}: ${last.reason}` : 'formalization failed', shortlistEntry: null };
+    }
+
+    async _propose(prose, instances, repair = null) {
+        try {
+            const resp = await this.llm.complete(buildFormalizationPrompt(prose, instances, repair));
+            return parseFormalizationJson(resp?.text);
+        } catch (err) {
+            return { ok: false, error: `LLM call failed: ${err?.message ?? String(err)}` };
+        }
+    }
+
+    async _verifyStatement(statement) {
+        // Continue the statement-mode session established by warm() when chain-safe (the imports
+        // are already in the repl env, so the check is fast). Statements with top-level ∃/∀
+        // ascription are NOT chain-safe (repl "expected token" quirk) — check fresh on the warm
+        // worker instead (still fast: the process has the modules). Imports are stripped because
+        // the env already has them (Lean: imports only at file start).
+        const bodyOnly = stripImports(statement);
+        const check = await this.backend.check(bodyOnly, { timeoutMs: this.checkTimeoutMs, useWarmEnv: isChainSafe(bodyOnly) });
+        if (check.status !== 'verified') {
+            // Surface the FIRST error line only — targeted repair signal, not a dump.
+            const msg = check.error?.message ?? check.error ?? 'unknown error';
+            const firstLine = String(msg).split(/\r?\n/).find(l => l.trim()) ?? msg;
+            return { ok: false, error: firstLine.slice(0, 300) };
+        }
+        return { ok: true };
+    }
+
+    // One batched LLM call produces all probe examples; each is kernel-checked on the warm
+    // worker. A failed probe is recorded WITH evidence (never silently corrected).
+    async _verifyProbes(statement, instances) {
+        if (!instances?.length) return { ok: true, results: [] };
+        try {
+            const resp = await this.llm.complete(buildProbePrompt(statement, instances));
+            const parsed = parseProbeJson(resp?.text, instances.length);
+            if (!parsed.ok) return { ok: false, error: parsed.error };
+            const results = [];
+            for (let i = 0; i < instances.length; i++) {
+                const example = stripImports(parsed.examples[i]);
+                let verified = false, error = null;
+                try {
+                    const check = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: isChainSafe(example) });
+                    verified = check.status === 'verified';
+                    error = check.status === 'verified' ? null : (check.error?.message ?? 'unverified');
+                } catch (err) {
+                    error = err?.message ?? String(err);
+                }
+                results.push({ instance: instances[i], example, verified, error });
+            }
+            const failed = results.filter(r => !r.verified);
+            return failed.length ? { ok: false, error: `probe failed: ${failed[0].instance} (${failed[0].error ?? 'unverified'})`, results } : { ok: true, results };
+        } catch (err) {
+            return { ok: false, error: `probe LLM call failed: ${err?.message ?? String(err)}` };
+        }
+    }
+
+    _entry(statement, prose, { source = null, instances = [], probes = [], attempts }) {
+        return {
+            source,
+            prose,
+            statement,
+            statementHash: hashStatement(statement),
+            status: 'formalized',
+            attempts,
+            probes,
+            justification: {
+                formalizability: probes.length ? 'kernel-typechecked, probes verified' : 'kernel-typechecked',
+                substrateCost: null, // §7.2: def-node count + import profile; filled by substrate estimator
+                shape: this._shapeOf(statement),
+                novelty: null // no-known-proof evidence; filled by intake (absent-from-mathlib check)
+            }
+        };
+    }
+
+    _shapeOf(statement) {
+        const s = statement ?? '';
+        if (SHAPE_EQUIV.test(s)) return 'equivalence';
+        if (SHAPE_EXISTS.test(s)) return 'witness-discovery';
+        if (SHAPE_EQ.test(s)) return 'closed-form';
+        return 'universal-claim';
+    }
+}

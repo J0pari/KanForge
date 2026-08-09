@@ -79,22 +79,17 @@ section only argues the shape.
 | `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
 | `optimization/causal.js` | causal TELEMETRY / trace analysis: Markov transitions, failure correlations, timing, critical path | the trace layer + failure hypotheses — NOT causal inference (§6); feeds search biasing and the "why is it failing" answers |
 | `optimization/metrics.js` | KPI calculator (wired into the loop's per-run outcome) | the quantitative evaluation catalog (§6.1): search efficiency/quality, planning, learning, economic KPIs |
-| `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors — not yet built |
-| `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards — not yet built |
+| `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
+| `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards |
 | `growth/commit.js` | commit-per-lemma to a scratch repo | content-addressed library growth; statement hash in the message |
 | `growth/lemmaStore.js` | content-addressed lemma store → retrieval index | reproducible lemma reuse: exact reuse / specialization / generalization / proof-pattern transfer (§2.8) |
 | `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
 | `digest/writeup.js` | parse → render (Markdown/HTML, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
 | `digest/development.js` | whole-development digest (writeup + audit + hash chain) | the publication unit (§7) |
 
-> **Dead-code audit (build_order.md §5.5/§5.9).** The former lazy family (`template`, `functor`,
-> `pipeline`, `context`, `stream`, `fix`, `lazify`, `promise`, `cache`, `serialize`) and the
-> `query/` API were removed as dead code — nothing outside their own tests used them.
-> `core/lazy` and `core/hasher` are the surviving foundations. The `Patch` envelope was also
-> removed, but that removal was a coherence error, corrected in §5.9: the patch is re-introduced
-> as the typed mutation record projected from the live event stream (`core/patch.js`,
-> `patchFromEvent`), captured per lemma into the retrieval index + digest. The docs below describe
-> the live architecture.
+**Foundations:** `core/lazy` and `core/hasher` are the foundational primitives. The patch algebra
+lives in `core/patch.js` (`Patch`, `patchFromEvent`) — the typed mutation record projected from
+the live event stream, captured per lemma into the retrieval index + digest.
 
 ### 3.1 Layering
 - **Foundations** — no proof-specific assumptions; unit-tested: `core/lazy`, `core/hasher`.
@@ -210,8 +205,7 @@ Detailed contracts: `architecture.md`. This is the shape.
   the lemma store is content-addressed. Wired into `blueprint/run.js`'s DoD tail.
 - **`digest/writeup.js` + `auditPack.js` + `development.js`** — per-lemma and whole-development
   writeups plus the full reproducible artifact set (writeup, audit JSON, hash chain).
-- **`query/`** — removed as dead code (nothing constructed it; `/integrity/verify` lied). See
-  `architecture.md` §8.
+- **Query API** — not part of the system; see `architecture.md` §8.
 
 ---
 

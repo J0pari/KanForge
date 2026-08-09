@@ -259,6 +259,7 @@ export class BackendRepl {
         this._waiters = [];           // pending _acquire() resolvers
         this._sessions = new Map();   // lemmaKey -> { worker }
         this._draining = false;
+        this.warmEnvId = null;        // statement-mode session env (warm → check continuation)
 
         this.restarts = 0;
         this.hangs = 0;
@@ -366,10 +367,13 @@ export class BackendRepl {
         }
     }
 
-    async _checkOnce(statement, timeoutMs) {
+    async _checkOnce(statement, timeoutMs, envId = null) {
         const worker = await this._acquire();
         try {
-            return await this._requestOnWorker(worker, { cmd: statement, env: null }, { timeoutMs });
+            // envId: continue the statement-mode session from a prior env (the repl is stateful:
+            // `env: null` rebuilds from scratch; `env: n` continues from environment n). This is
+            // what makes warm→check→probes pay the import cost once.
+            return await this._requestOnWorker(worker, { cmd: statement, env: envId }, { timeoutMs });
         } finally {
             if (worker.isAlive() && !worker._retired) {
                 worker.busy = false;
@@ -381,13 +385,24 @@ export class BackendRepl {
     async _doCheck(statement, opts = {}) {
         const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
         const maxRetries = opts.maxRetries ?? 1; // crash/hang retries on a fresh worker
+        const useWarmEnv = !!opts.useWarmEnv;
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
-                const resp = await this._checkOnce(statement, timeoutMs);
+                const resp = await this._checkOnce(statement, timeoutMs, useWarmEnv ? this.warmEnvId : null);
+                if (useWarmEnv && resp && Number.isInteger(resp.env)) {
+                    this.warmEnvId = resp.env; // continue the session from the returned env
+                } else if (!useWarmEnv) {
+                    // A fresh (env: null) check rebuilt the repl environment from scratch, so any
+                    // previously established chain id is stale — subsequent chained checks would
+                    // hit "Unknown environment". Drop it.
+                    this.warmEnvId = null;
+                }
                 return this._classify(resp);
             } catch (err) {
                 lastErr = err;
+                // A worker crash invalidates the session env (the replacement worker is fresh).
+                if (useWarmEnv) this.warmEnvId = null;
             }
         }
         throw lastErr;
@@ -400,6 +415,18 @@ export class BackendRepl {
         const p = this._doCheck(statement, opts).finally(() => this._inflight.delete(key));
         this._inflight.set(key, p);
         return p;
+    }
+
+    // Establish (or refresh) the statement-mode session: warm the repl with the statement's
+    // imports, capturing the resulting env id so subsequent checks with `useWarmEnv: true`
+    // continue from it instead of re-importing. The warmup keeps ONLY the import lines plus a
+    // trivial example (the theorem body is irrelevant to warming). Runs WITH useWarmEnv so the
+    // response's env id is captured into warmEnvId (it continues an existing session if any).
+    async warm(statement, opts = {}) {
+        const imports = String(statement ?? '').split(/\r?\n/).filter(l => /^\s*import\s+\S/.test(l)).join('\n');
+        const warmup = (imports ? imports + '\n\n' : '') + 'example : True := by trivial';
+        const res = await this.check(warmup, { ...opts, useWarmEnv: true });
+        return res;
     }
 
     _classify(resp) {

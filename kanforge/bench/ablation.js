@@ -520,7 +520,7 @@ async function main() {
     const menuArg = process.argv.find(a => a.startsWith('--menu='));
     const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
     const predictorsArg = process.argv.find(a => a.startsWith('--predictors='));
-    const ladderArg = process.argv.find(a => a.startsWith('--ablate'));
+    const ablateArg = process.argv.find(a => a.startsWith('--ablate'));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : set === 'step' ? STEP_PROBLEMS : SMOKE_PROBLEMS;

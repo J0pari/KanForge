@@ -62,15 +62,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `check("example : 1 + 1 = 2 := by rfl")` returns verified (CLI).
 
 ### 0.2 Build the core
-- Implement `Lazy`, `PullGraph`, `Scheduler`, `Hasher` in `core/` with unit tests (file mapping:
-  `architecture.md` §1).
-- **Historical note (§5.5/§5.9):** the phase originally built the full lazy family (`LazyTemplate`,
-  `LazyMapper`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`, `fix`, `PullPromise`,
-  `PullCache`, `StateSerializer`) and `core/patch.js` (typed patch envelope). The lazy family was
-  removed in the §5.5 dead-code audit — nothing in the live path used it. `core/patch.js` was also
-  removed, but that removal was a coherence error (the loop's core operation IS a typed mutation);
-  it is re-introduced as the typed mutation record over the event stream (§2.7, §5.9). The
-  surviving foundations are `core/lazy` and `core/hasher`; the scheduler remains.
+- Implement `Lazy`, `PullGraph`, `Scheduler`, `Hasher`, `Patch` in `core/` with unit tests (file
+  mapping: `architecture.md` §1).
 - **Deliverable:** `core/` with tests; `PullGraph.serialize/deserialize` round-trips a nontrivial
   DAG; `invalidate()` transitively clears dependents; scheduler verifies the locality property
   (only descendants re-verify).
@@ -115,14 +108,11 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Search efficiency KPI:** kernel checks eliminated by the pre-filter (Wave2 §15),
   logged per run.
 
-### 1.3 Query API (deferred — removed as dead code, architecture.md §8)
-- The query server was once specified here (signed, rate-limited `/proof/*` endpoints). It was
-  removed in the §5.5 dead-code audit: no server existed, nothing constructed it, and
-  `/integrity/verify` returned `{ ok: true }` unconditionally. The correctness surface that exists
+### 1.3 Query API (deferred, architecture.md §8)
+- A signed, rate-limited `/proof/*` query API is not part of the system. The correctness surface
   is the development digest (`digest/development.js`) + per-lemma commits (`growth/commit.js`).
 - **Re-entry condition (P7):** a real consumer (operator dashboard) that the API serves; if
-  re-added, `/integrity/verify` must run a real `verifyHashChain` over the run's chain — never a
-  hardcoded `ok`.
+  re-added, `/integrity/verify` must run a real `verifyHashChain` over the run's chain.
 
 ---
 
@@ -372,54 +362,31 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   higher `--row-timeout-ms`, and wire `findPremiseLockViolations` into `bench/ablation.js` so
   the locked control is enforced (not just prompted).
 
-### 5.5 Dead-code audit (built-but-unused → condensed or wired)
-A review flagged decorative architecture: modules documented as load-bearing that nothing in the
-live path used, and docs describing an elegant shape the code did not take. This phase is the
-audit + remediation discipline. **Rule:** every module/member is either (a) live — reachable from a
-run entry point — or (b) explicitly deferred in `architecture.md` (P6/P7), or (c) removed. No dead
-code and no doc claim about dead code may remain.
-- **Condensed (removed):**
-  - `core/pipeline.js` (`Pipeline.compose`) — the review's example: docs described the loop as a
-    composed monadic pipeline; the actual loop is a class. Nothing called `Pipeline.compose`. The
-    loop is the contract; the stage combinator was removed (`architecture.md` §4, §2.7).
-  - The rest of the lazy family — `core/{functor,promise,cache,context,fix,lazify,serialize,stream,template}.js` —
-    imported only by each other and `core.test.js`; the live path used only `core/lazy` (via
-    `PullGraph`). Removed; `core/lazy` + `core/hasher` are the surviving foundations (§9).
-  - `core/patch.js` (`Patch`/`PATCH_OPS`) — exported in `index.js`, never constructed. **Removal
-    was a coherence error, corrected in §2.7/§5.9**: the loop's core operation IS a typed graph
-    mutation, and the audit's own "condense OR wire" rule should have been applied as *wire*, not
-    *remove*. The patch is re-introduced as a projection over the live event stream
-    (`core/patch.js` `patchFromEvent`), captured per lemma, and stored in the retrieval index +
-    digest as the transformation history.
-  - `query/` (`server.js`, `formatters.js`) — `QueryServer` was never constructed and
-    `/integrity/verify` returned `{ ok: true }` unconditionally (a lie). Removed; `architecture.md`
-    §8 now marks the query API deferred and names the digest + commit as the real correctness
-    surface.
-  - `PullGraph.{identities, compositions, compose, morphism, pull, subgraph, diff,
-    setProgressCallback, setProgressInterval}` — decorative category theory; the loop uses only
-    `register`/`dependsOn`/`nodes`/`edges`/`serialize`/`invalidate`/`computation`. Condensed to
-    that live surface (`core/pullgraph.js`).
-- **Wired (was built but should be live):**
-  - `optimization/metrics.js` `computeMetrics` — now attached to every `TacticLoop` per-run
-    outcome (KPI summary), so the bench and digest layers report it without re-deriving.
-  - `lean/backend.js` `createBackend` — now the constructor for every run entry point
-    (`bench/run.js`, `bench/ablation.js`, `bench/trainPredictors.js`, `bench/verifyStepSet.js`,
-    `blueprint/run.js`), making the documented factory the actual path. `lean/backendCli.js` stays
-    reachable as the `cli` flavor.
-  - `growth/commit.js` — stub (message formatter only) extended with `writeLemmaArtifacts`,
-    `commitLemma`, `commitDevelopment` and wired into `blueprint/run.js`'s DoD tail (§7.4).
-- **Honesty fixes:**
-  - `lean/pin.js` comment claimed a canonical `#print`-normalized hash; the code collapses
-    whitespace only. The comment now says exactly that, and that `#print` normalization is *not*
-    performed (§3, `pin.js`).
-  - `architecture.md`/`blueprint.md` module tables and §4/§5 narrative rewritten to describe the
-    live architecture; all `Patch`/`Pipeline`/`query`/lazy-family references removed or marked.
+### 5.5 Live-surface discipline (dead-code audit)
+**Rule:** every module/member is either (a) live — reachable from a run entry point — or (b)
+explicitly deferred in `architecture.md` (P6/P7), or (c) absent. No dead code and no doc claim
+about dead code.
+- **Lessons from the audit:**
+  - Decorative abstraction is a cost: `core/pipeline.js` (`Pipeline.compose`) described the loop
+    as a composed monadic pipeline, but nothing called it — the loop is a class, and the stage
+    combinator is not part of the system (`architecture.md` §4, §2.7).
+  - The lazy family (`core/{functor,promise,cache,context,fix,lazify,serialize,stream,template}.js`)
+    existed only for each other and `core.test.js`; the live path used only `core/lazy` (via
+    `PullGraph`). `core/lazy` + `core/hasher` are the foundations (§9).
+  - The patch algebra lesson: the loop's core operation IS a typed graph mutation, and the audit's
+    "condense OR wire" rule should have been applied as *wire*. The patch lives in `core/patch.js`
+    (`patchFromEvent`) as a projection over the live event stream, captured per lemma into the
+    retrieval index + digest (§2.7, §5.9).
+  - `query/` is not part of the system; `architecture.md` §8 names the digest + commit as the
+    correctness surface.
+  - `PullGraph` exposes only `register`/`dependsOn`/`nodes`/`edges`/`serialize`/`invalidate`/
+    `computation` (`core/pullgraph.js`).
+  - `lean/pin.js` hashes whitespace-collapsed canonical text; it does not perform `#print`
+    normalization (§3).
 - **Acceptance:** every non-test JS file imports only live or explicitly-deferred modules; the full
-  non-live suite passes; a fresh `git grep` for the removed names returns only docs that say
-  "removed as dead code".
+  non-live suite passes.
 
 ### 5.6 Quantitative evaluation + honest search/causal claims
-Two review findings are recorded here as acceptance work, not rhetoric.
 - **MCGS is UCB-guided graph search, not textbook MCTS** (`architecture.md` §5). The code has
   selection / expansion / backprop but no cheap rollout phase — the "simulation" is an expensive
   LLM + kernel call — so the UCB value is a heuristic whose statistical meaning must be validated
@@ -509,12 +476,11 @@ a measured effect; retrieval never bypasses kernel verification.
   run; the live suites run green against the real repl binary in CI; no comparison reports success
   without cost.
 
-### 5.9 Patch algebra — typed mutation record (corrects §5.5's coherence error)
-- **Why:** the §5.5 audit removed `core/patch.js` as dead code. That was the wrong disposition
-  under the audit's own "condense OR wire" rule: the loop's core operation IS a typed graph
-  mutation, and the tactic string is a lossy encoding that drops the meta channel. The Research
-  vision (`KanForge_whitepaper.md` §4) is explicit that the patch is "the interface between
-  probabilistic generation and deterministic compilation" — the main docs must agree.
+### 5.9 Patch algebra — typed mutation record
+- **Why:** the loop's core operation IS a typed graph mutation, and the tactic string is a lossy
+  encoding that drops the meta channel. The Research vision (`KanForge_whitepaper.md` §4) is
+  explicit that the patch is "the interface between probabilistic generation and deterministic
+  compilation".
 - **Deliverables:**
   1. `core/patch.js` restored as `Patch` + `patchFromEvent(e)` — a pure projection of a loop event
      into `{ node, op, replacement, scope, meta }`; the event stream already carries the tuple's
@@ -597,17 +563,14 @@ a measured effect; retrieval never bypasses kernel verification.
   formalizability note.
 - **Acceptance:** a `corpus/` entry exists with ≥ 3 targets from a cited source BEFORE any P7
   mission runs; the entry is human-authored or human-approved, never agent-generated.
-- **Corpus status (populated).** `corpus/index/corpus.json` (built by `bench/buildCorpusIndex.js`
-  from primary sources) lists **322 open + Lean-formalized Erdős mission candidates** joined from:
-  (1) `teorth/erdosproblems` — the status/OEIS/tags database of erdosproblems.com (1,216
-  problems, Apache-2.0); (2) `google-deepmind/formal-conjectures` — human-authored Lean
-  formalizations of 605 Erdős problems with verbatim docstrings and `sorry` bodies (statement-
-  pinned, kernel-typechecked, unproved — exactly the open-problem shape). Verbatim per-problem
-  statements are at `corpus/sources/erdos_problem_003.md` and `erdosproblems.com/latex/<N>`.
-  Wikipedia is NOT a corpus source (tertiary index).
-- **Failure mode this gate prevents (recorded):** an agent "open problem" run was attempted on a
-  mathlib lemma with a known proof (`mul_le_mul_nat`) — no corpus, no shortlist, no human
-  selection. That run is a harness problem and is excluded from missions by definition.
+- **Corpus.** `corpus/index/corpus.json` (built by `bench/buildCorpusIndex.js` from primary
+  sources) lists **322 open + Lean-formalized Erdős mission candidates** joined from: (1)
+  `teorth/erdosproblems` — the status/OEIS/tags database of erdosproblems.com (1,216 problems,
+  Apache-2.0); (2) `google-deepmind/formal-conjectures` — human-authored Lean formalizations of
+  605 Erdős problems with verbatim docstrings and `sorry` bodies (statement-pinned,
+  kernel-typechecked, unproved). Verbatim per-problem statements are at
+  `corpus/sources/erdos_problem_003.md` and `erdosproblems.com/latex/<N>`. Wikipedia is NOT a
+  corpus source (tertiary index).
 
 ### 7.1 Curated corpus + autoformalization
 - **Candidates, not targets.** Given the human-curated corpus, the autoformalizer processes
@@ -678,8 +641,7 @@ a measured effect; retrieval never bypasses kernel verification.
   `core/hasher.js` audit + git history = reproducibility pack.
 - **Acceptance:** for every claimed result: Lean source, blueprint JSON, writeup, audit hash, and
   git commits all consistent; the development digest's hash chain verifies end-to-end
-  (`verifyHashChain`). (The old `/integrity/verify` endpoint was removed in §5.5; integrity is
-  checked by the digest audit + `verifyHashChain`, not an HTTP stub.)
+  (`verifyHashChain`).
 
 ### 7.5 Ongoing RL loop
 - Fold every mission run back into 6.4; refresh reward/guardrails from `optimization/patterns.js`

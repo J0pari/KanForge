@@ -90,20 +90,14 @@ process; statements should import the specific Mathlib modules they need.
 
 ## Usage
 
-### Running the open-problem workflow (the one intended use)
+### Running the blueprint pipeline
 
-KanForge exists to take an open target theorem and produce a kernel-verified proof plus a
-reproducible audit trail (architecture.md §0). **The intake gate is non-negotiable:** a mission
-target must come from a human-curated corpus (§7.0) and be human-selected from a formalized
-shortlist (§7.1) — the agent never self-selects an "open problem." A statement with a known proof
-in this repo is a harness problem, not a mission.
-
-The blueprint runner below is the pipeline that runs *after* intake — skeleton → refine →
-digest → per-lemma commits. The example is a **harness/smoke statement** (known proof, present in
-the smoke set), shown only to exercise the machinery:
+The blueprint runner takes a target theorem and produces a kernel-verified proof plus a
+reproducible audit trail (architecture.md §0). Mission targets come from the human-curated corpus
+(§7.0) and are human-selected from the formalized shortlist (§7.1). The example below is a
+harness statement with a known proof, shown to exercise the machinery:
 
 ```bash
-# Exercise the pipeline on a harness statement (known proof — NOT an open problem):
 node blueprint/run.js "import Mathlib.Data.Nat.Basic
 
 example (a b c d : Nat) (hab : a ≤ b) (hcd : c ≤ d) : a * c ≤ b * d := by sorry" \
@@ -115,17 +109,17 @@ node blueprint/run.js "<same theorem>" --out-dir=runs/my_target_rerun
 
 The run writes `development.md` / `development.html` / `development.json` (writeup + audit pack +
 hash chain) and commits each verified lemma to the scratch repo with its statement hash in the
-commit message. A true mission additionally records the corpus entry + shortlist + human
-selection in the digest's provenance.
+commit message. Missions additionally record the corpus entry + shortlist + human selection in
+the digest's provenance.
 
-### Running the component ablation graph (the measurement apparatus)
+### Running the component ablation graph
 
 ```bash
 # Full factorial over component toggles: main effects + pairwise interactions at equal budget
 node bench/ablation.js --set=core --ablate=menu,premises,predictors --max-llm-calls=60
 ```
 
-### Running the Smoke Test (safety harness)
+### Running the smoke harness
 
 ```bash
 # Run all 23 core smoke problems
@@ -293,15 +287,10 @@ Mathlib-enabled repl in `lean-project`):
   project this was scaffolded from (a document generator + a higher-category-theory course).
   Documented, not hidden: see `docs/patterns_from_hct.md`.
 
-**Removed as dead code (build_order.md §5.5), with one correction (§5.9):** the former lazy-family
-(`core/pipeline`, `functor`, `promise`, `cache`, `context`, `fix`, `lazify`, `serialize`, `stream`,
-`template`) and the `query/` API were removed — nothing in the live path used them, and the query
-server's `/integrity/verify` returned a hardcoded `ok` rather than verifying. `core/lazy` and
-`core/hasher` are the surviving foundations. The `Patch` envelope was removed in the same sweep,
-but that removal was a coherence error — the loop's core operation IS a typed mutation — and is
-corrected in §5.9: the patch is re-introduced as the typed mutation record projected from the live
-event stream (`core/patch.js` `patchFromEvent`), captured per lemma into the retrieval index +
-development digest as the transformation history.
+**Foundations:** `core/lazy` and `core/hasher` are the surviving foundational primitives; the
+`query/` API is deferred (architecture.md §8). The patch algebra lives in `core/patch.js`
+(`Patch`, `patchFromEvent`) — the typed mutation record projected from the live event stream,
+captured per lemma into the retrieval index + development digest as the transformation history.
 
 ## Design Principles
 
@@ -370,6 +359,16 @@ development digest as the transformation history.
 - [x] **Lemma store → retrieval index** — `growth/lemmaStore.js` indexes by goal shape, imports,
       deps, proof length, tactic trajectory; `blueprint/refine.js` exact-reuses stored proofs
       (build_order.md §5.7).
+- [x] **§7.0 intake corpus** — `corpus/index/corpus.json` (built by `bench/buildCorpusIndex.js`):
+      322 open + Lean-formalized Erdős mission candidates joined from primary sources
+      (`teorth/erdosproblems` status DB + `google-deepmind/formal-conjectures` Lean
+      formalizations, both Apache-2.0).
+- [x] **Autoformalizer (P7.1)** — `agent/roles/autoformalizer.js`: prose → kernel-typechecked
+      Lean statement via the §0.1 pipeline (strict-JSON propose → static validation → warm
+      session → kernel check → batched probes → pin). The repl pool gained statement-mode
+      **environment chaining** (`backend.warm` + `useWarmEnv`), so a candidate's mathlib imports
+      are paid once (~18s) and every subsequent check is ~0.2s (with an `∃`/`∀`-ascription
+      chain-safety fallback that checks fresh on the warm worker).
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops

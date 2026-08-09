@@ -119,9 +119,7 @@ All tricks below apply at the **tactic level** (Level 2, `architecture.md` §2.2
 
 ### 4.1 Implementation lineage (provenance, not design)
 
-The foundational primitives in `kanforge/core/` (`lazy`, `hasher` — the two that survived the
-§5.5 dead-code audit; the former `stream`/`promise`/`cache`/`pipeline`/`context`/`fix`/`functor`/
-`template`/`serialize`/`patch` family was removed because nothing in the live path used it) and the
+The foundational primitives in `kanforge/core/` (`lazy`, `hasher`, `patch`) and the
 telemetry/instrumentation modules (`optimization/*`, `digest/*`, `growth/*`) are re-implementations
 of lazy build-system machinery under KanForge's domain (proofs, not documents); correctness is
 enforced by the unit-test suite, not by trust in the source. Detailed name lineage is recorded in

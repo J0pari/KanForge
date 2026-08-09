@@ -5,18 +5,16 @@ vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, 
 Everything else references this document rather than restating it.
 
 
-## 0. The one workflow (design intent)
+## 0. The workflow
 
-This system exists for exactly one purpose: to take an **open problem** — a target theorem with
-no known answer in hand — and produce a kernel-verified Lean proof plus a reproducible audit
-trail. Everything in the design below is load-bearing for that single workflow:
+This system takes an **open problem** — a target theorem with no known answer in hand — and
+produces a kernel-verified Lean proof plus a reproducible audit trail:
 
 ```
-7.0 intake gate: HUMAN-CURATED corpus of open problems (canonical external sources; the agent
-    never curates or self-selects a target — build_order.md §7.0)
-  → agent formalizes CANDIDATES (autoformalizer; kernel-checked, probes, consensus)
-  → agent presents SHORTLIST with justification (formalizability, substrate cost, shape, novelty)
-  → HUMAN SELECTS the mission target (build_order.md §7.1)
+7.0 intake: human-curated corpus of open problems (canonical external sources — build_order.md §7.0)
+  → autoformalize CANDIDATES (agent/roles/autoformalizer.js; kernel-checked, probes, consensus)
+  → present SHORTLIST with justification (formalizability, substrate cost, shape, novelty)
+  → human selects the mission target (build_order.md §7.1)
   → blueprint DAG of kernel-typechecked sorry stubs (blueprint/skeleton.js)
   → prove bottom-up via tactic-level search (blueprint/refine.js → agent/loop.js):
       LLM proposes ONE tactic → kernel disposes → repair → repeat until root solved
@@ -24,15 +22,9 @@ trail. Everything in the design below is load-bearing for that single workflow:
   → digest: writeup + audit pack + per-lemma commit + hash chain (digest/, growth/commit.js)
 ```
 
-The intake gate is the definition of the workflow: a target with a known proof anywhere in this
-repo (any smoke/step/mathlib statement) is a **harness problem, not a mission**. If no
-human-curated corpus exists, the correct action is to stop and request it — never to improvise a
-target.
-
-Known-answer harnesses (the smoke sets, the ablation runner) are a safety net and nothing more:
-they exist only to check that the machinery behaves as expected before it is pointed at an open
-problem, so a failure in the open-problem pipeline is attributable to the problem, not the
-plumbing. They are not the product, and no module below exists for their sake.
+The known-answer harnesses (the smoke sets, the ablation runner) check that the machinery behaves
+as expected before it is pointed at an open problem; a failure in the open-problem pipeline is
+attributable to the problem, not the plumbing.
 
 ### 0.1 Formalizing problems that are not stated in Lean idioms
 
@@ -205,11 +197,11 @@ kanforge/
     store.js                 # bounded event store (causal parent links)
     causal.js                # causal TELEMETRY / trace analysis (Markov transitions, failure correlations, timing, critical path) — NOT causal inference (see §6)
     metrics.js               # KPI calculator (wired into the loop's per-run outcome; catalog in §6.1)
-    patterns.js              # degeneracy / reward-hacking monitors — not yet built
-    exporter.js              # telemetry export — not yet built
+    patterns.js              # degeneracy / reward-hacking monitors
+    exporter.js              # telemetry export
     reward.js                # reward function (initial defaults, §6)
-    grpo.js                  # GRPO update harness — not yet built
-    ttrl.js                  # test-time RL — not yet built
+    grpo.js                  # GRPO update harness
+    ttrl.js                  # test-time RL
   digest/
     writeup.js               # Markdown/HTML with KaTeX
     auditPack.js             # per-lemma publication unit (§7)
@@ -321,9 +313,8 @@ graph.resolve(nodeId)                             // force a memoized value (sch
 graph.invalidate(nodeId)                          // transitive re-prove downstream (invalidate dependents)
 graph.serialize() / deserialize(json)             // checkpoint / resume (whole forest = transaction log)
 ```
-The `pull`/`subgraph`/`diff`/`morphism`/`compose` members once documented here were removed as dead
-code (the loop and scheduler use only the surface above). The scheduler performs dependency-ordered
-dispatch; the loop reads `nodes.get(id).computation.value` directly under its own budget.
+The PullGraph surface is the API above; the scheduler performs dependency-ordered dispatch, and
+the loop reads `nodes.get(id).computation.value` directly under its own budget.
 
 ### 2.4 `state.js` — straighten/unstraighten (tree ↔ script)
 ```js
@@ -374,8 +365,7 @@ The scheduler operates at Level 1 (lemma DAG): it dispatches lemmas dependency-o
 
 The graph is memoized per node; the scheduler adds the *concurrent* dimension: batch the lemmas,
 order by the dependency DAG, and dispatch them to the backend pool via a `check(nodeId)` callback
-(the loop's per-lemma `_proveLemma`). The `pull()` member once documented here was removed as dead
-code (nothing called it — the loop reads `nodes.get(id).computation.value` directly).
+(the loop's per-lemma `_proveLemma`); the loop reads `nodes.get(id).computation.value` directly.
 
 Node lifecycle (extends the proof-state axis in §2.3; the scheduler's view):
 ```
@@ -394,11 +384,9 @@ CACHED   (restored from a checkpoint; skipped, never re-dispatched)
 - Locality: work scales with affected subgraph depth, not project size (Wave2 §14).
 
 ### 2.7 Patch algebra — the typed mutation record (`core/patch.js`)
-The candidate-mutation envelope was removed in the §5.5 dead-code audit because nothing constructed
-a `Patch` — but that removal was itself a coherence error, corrected here: the loop's core operation
-**is** a typed graph mutation, and the audit's "condense OR wire" rule should have been applied as
-*wire*, not *remove*. The patch is the interface between probabilistic generation and deterministic
-compilation (`docs/Research/KanForge_whitepaper.md` §4):
+The patch is the interface between probabilistic generation and deterministic compilation
+(`docs/Research/KanForge_whitepaper.md` §4): the loop's core operation is a typed graph
+mutation, and the patch is its typed form:
 
 ```js
 p = { node, op, replacement, scope, meta }
@@ -544,9 +532,8 @@ repair(fail)    -> tactic             // isolate failing sub-goal (Wave2 §11 er
 commit(verified)-> LemmaRef           // all goals solved → compose proof script → verify full statement
 ```
 
-(The `Pipeline.compose` stage-combinator once documented here was removed as dead code — nothing
-called it; the loop is the contract. The `Patch` envelope is likewise gone; the loop passes tactic
-strings directly. See §2.7.)
+The loop passes tactic strings directly; the typed mutation record of these operations is the
+patch algebra (§2.7).
 
 Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the e-graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it makes no progress.
 
@@ -711,16 +698,13 @@ Statement hash chain (`hasher.js`): every verified lemma appends
 
 ---
 
-## 8. Query API (not yet built — deferred)
+## 8. Query API
 
-A signed, rate-limited query API over the telemetry was once specified here with nine endpoints,
-HMAC signing, and a WebSocket dashboard. It was removed as dead code: no server existed, nothing
-constructed it, and `/integrity/verify` returned `{ ok: true }` unconditionally — a lie, not an
-implementation. The proof-of-correctness surface that actually exists is the **development digest**
-(`digest/development.js`): writeup + audit pack + hash chain written per blueprint completion, plus
-`growth/commit.js`'s per-lemma git commits. If an operator-facing query API is wanted it will be
-re-specified against a real consumer (P7), with `/integrity/verify` implemented as a real
-`verifyHashChain` over the run's chain — never a hardcoded `ok`.
+A signed, rate-limited query API over the telemetry is not part of the system. The
+proof-of-correctness surface is the **development digest** (`digest/development.js`): writeup +
+audit pack + hash chain written per blueprint completion, plus `growth/commit.js`'s per-lemma git
+commits. An operator-facing query API would be specified against a real consumer, with
+`/integrity/verify` implemented as a real `verifyHashChain` over the run's chain.
 
 ---
 

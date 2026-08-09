@@ -1,9 +1,8 @@
 # KanForge Open-Problem Corpus Index (build_order.md §7.0)
 
-This index records the human-curated open-problem sources that qualify as mission intake.
-Rule per §7.0: the corpus is human-authored/human-approved; the agent never curates targets.
-Each source is a PRIMARY source (original author, site owner, or machine-readable database of
-same), stored verbatim under `sources/`. Wikipedia and other tertiary indices are NOT sources.
+The corpus is human-authored/human-approved; the agent never curates targets. Each source is a
+PRIMARY source (original author, site owner, or machine-readable database of same), stored
+verbatim under `sources/`. Wikipedia and other tertiary indices are NOT sources.
 
 ## Sources
 
@@ -21,8 +20,5 @@ For any mission, the agent:
    novelty, no-known-proof evidence) to the human;
 4. the HUMAN selects the mission target.
 
-## Recorded error (do not repeat)
-
-An agent-picked "open problem" run was attempted on `mul_le_mul_nat` (a mathlib lemma with a
-known proof). That is a harness problem, not a mission. This index + the §7.0 gate exist to make
-the distinction mechanical.
+A mission target is an open problem: no known proof in hand. A statement with a known proof in
+this repo (any smoke/step/mathlib statement) is a harness problem, not a mission.
