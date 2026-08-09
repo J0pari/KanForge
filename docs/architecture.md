@@ -5,6 +5,74 @@ vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, 
 Everything else references this document rather than restating it.
 
 
+## 0. The one workflow (design intent)
+
+This system exists for exactly one purpose: to take an **open problem** — a target theorem with
+no known answer in hand — and produce a kernel-verified Lean proof plus a reproducible audit
+trail. Everything in the design below is load-bearing for that single workflow:
+
+```
+intake (natural language or Lean statement)
+  → autoformalize into a Lean statement (agent/roles/autoformalizer.js)
+  → blueprint DAG of kernel-typechecked sorry stubs (blueprint/skeleton.js)
+  → prove bottom-up via tactic-level search (blueprint/refine.js → agent/loop.js):
+      LLM proposes ONE tactic → kernel disposes → repair → repeat until root solved
+  → verify the assembled full statement against the kernel (commit gate, §4)
+  → digest: writeup + audit pack + per-lemma commit + hash chain (digest/, growth/commit.js)
+```
+
+Known-answer harnesses (the smoke sets, the ablation runner) are a safety net and nothing more:
+they exist only to check that the machinery behaves as expected before it is pointed at an open
+problem, so a failure in the open-problem pipeline is attributable to the problem, not the
+plumbing. They are not the product, and no module below exists for their sake.
+
+### 0.1 Formalizing problems that are not stated in Lean idioms
+
+Most open targets are not presented as Lean statements. They arrive as prose from any field of
+mathematics — geometry, topology, combinatorics, number theory — and their first translation into
+Lean is where meaning can silently change. The design treats formalization as a *verification
+problem*, not a translation problem. A formal statement is **uncontroversial** iff the following
+all hold; each is a mechanical or kernel-grounded check, not an appeal to the LLM's authority:
+
+1. **Kernel typecheck.** The candidate `theorem ... := by sorry` (and every definition it
+   introduces) passes `backend.check` under the pinned toolchain. A statement that does not
+   typecheck is rejected at the door — this is the same gate `blueprint/skeleton.js` applies to
+   every decomposition stub.
+
+2. **Explicit definitions, checked first.** A problem from a disparate field almost always needs
+   vocabulary mathlib does not provide (an invariant, a construction, a predicate). Every such
+   term is emitted as a *kernel-checked `def` node in the blueprint DAG before the theorem that
+   uses it*. The theorem depends on the definitions, so "does the theorem say what the prose said"
+   reduces to "do the definitions say what the prose said" — and definitions are the smallest,
+   most checkable units. An undefined or misdefined term cannot be smuggled in as a bare symbol.
+
+3. **Behavioral probes (instance ledger).** The informal problem is accompanied by concrete
+   instances the source asserts are true and are false. The formalization states 3–5 of each;
+   every instance becomes an `example` the kernel must verify or refute (via `norm_num`,
+   `native_decide`, or a one-line proof). A formalization that flips an asserted instance is
+   wrong, automatically. Probes pin *meaning* where syntax alone cannot.
+
+4. **Dual-formalization consensus.** Two independent formalization attempts of the same prose
+   target are produced (the generalist orchestrator and the critic). If the kernel cannot prove
+   `A ↔ B` between them, that is a **semantic-drift trip** — the same class of guardrail trip as
+   `STATEMENT_WEAKENED` — and the statements are re-derived until the field settles. The system
+   never adjudicates by argument; it adjudicates by kernel-checked equivalence.
+
+5. **Assumption ledger + human gate.** Every formalization choice — the sort of `2`, the meaning
+   of "divides", which base case was taken — is recorded as an explicit entry in the ledger, which
+   `digest/writeup.js` surfaces as the assumption account. The final statement is pinned
+   (`lean/pin.js`) and reviewed by a human before search begins. The human does not trust the
+   sentence; they audit the ledger + probes + consensus record, which is the reproducible evidence
+   the sentence is the prose.
+
+The methodology is the agent loop, lifted one level: `observe` (prose + asserted instances +
+retrieved definitions) → `propose` (independent candidate formalizations) → `act` (kernel
+typecheck) → `verify` (probes + pairwise `A ↔ B`) → `repair` (correct and re-derive on any
+failure) → `commit` (pin + ledger + human gate). Selection among surviving candidates reuses the
+pairwise-judge machinery of `search/swiss.js`. This is the only formalization path in the design;
+there is no "trust the model, translate it" path to shorten it.
+
+
 ---
 
 ## 1. Repo layout

@@ -180,3 +180,46 @@ test('premise retrieval is a no-op when no corpus is configured', async () => {
     assert.strictEqual(outcome.ok, true);
     assert.strictEqual(loop.events().filter(e => e.type === 'premises_retrieved').length, 0);
 });
+
+// --- §5.4 step-tier corpus (build_order.md §5.4 open item) ---
+
+import { PREMS_STEP_1, PREMS_STEP_1_NO_RW, PREMISE_CORPORA } from '../bench/premisesCorpus.js';
+import { STEP_PROBLEMS } from '../bench/stepSmoke.js';
+
+// Named premises each step problem's golden chain requires (tactic-only chains have none).
+const STEP_NEEDED = {
+    or_elim: [], or_comm: ['Or.inl', 'Or.inr'], and_intro_chain: [], imp_trans: [], modus_tollens: [],
+    distrib_twice: ['Nat.mul_add', 'Nat.add_mul'], square_expand: ['Nat.mul_add', 'Nat.add_mul'],
+    mul_comm_rw: ['Nat.mul_comm'], func_compose: [], eq_trans_chain: []
+};
+
+test('step premise corpus is well-formed: name+type on every entry, all names unique', () => {
+    const names = new Set();
+    for (const p of PREMS_STEP_1) {
+        assert.ok(typeof p.name === 'string' && p.name.length > 0, 'name present');
+        assert.ok(typeof p.type === 'string' && p.type.length > 0, 'type present');
+        assert.ok(!names.has(p.name), `duplicate premise name ${p.name}`);
+        names.add(p.name);
+    }
+    assert.strictEqual(PREMS_STEP_1.length, names.size);
+});
+
+test('step-no-rw control drops exactly the T5 rewrite identities', () => {
+    assert.deepStrictEqual(
+        PREMS_STEP_1.filter(p => !PREMS_STEP_1_NO_RW.some(q => q.name === p.name)).map(p => p.name).sort(),
+        ['Nat.add_mul', 'Nat.mul_add', 'Nat.mul_comm']
+    );
+    assert.strictEqual(PREMS_STEP_1_NO_RW.length, PREMS_STEP_1.length - 3);
+    assert.strictEqual(PREMISE_CORPORA['step-no-rw'], PREMS_STEP_1_NO_RW);
+    assert.strictEqual(PREMISE_CORPORA.step, PREMS_STEP_1);
+});
+
+test('step corpus retrieves every chain-required premise for its problem at top-8 (quality floor)', () => {
+    const retriever = new PremiseRetriever(PREMS_STEP_1);
+    for (const p of STEP_PROBLEMS) {
+        const goalType = p.statement.replace(/^example\s+(.*?):\s*/, '').replace(/\s*:= by sorry\s*$/, '').trim();
+        const top = new Set(retriever.retrieve({ type: goalType }, 8).map(h => h.name));
+        const missing = STEP_NEEDED[p.id].filter(n => !top.has(n));
+        assert.deepStrictEqual(missing, [], `${p.id} must retrieve ${STEP_NEEDED[p.id].join(', ')} in top-8`);
+    }
+});

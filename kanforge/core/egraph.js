@@ -175,22 +175,34 @@ export class GoalEGraph {
             .filter(gc => gc && gc.state === 'OPEN' && gc.tactics.length === 0 && !this.isSolved(gc.id));
     }
 
-    isSolved(classId) {
+    isSolved(classId, path = null) {
         const goalClass = this.classes.get(classId);
         if (!goalClass) return false;
         if (goalClass.state === 'SOLVED') return true;
 
-        for (const tactic of goalClass.tactics) {
-            if (tactic.solved) {
-                goalClass.state = 'SOLVED';
-                return true;
+        // Cycle guard: a tactic's subgoal may hash back to an ancestor class (e.g. applying
+        // `rw [Nat.mul_comm]` twice on the same goal), which would otherwise recurse forever.
+        // A class on the current resolution path is treated as not-yet-solved; the DAG-diamond
+        // (shared subgoal under two parents) case is unaffected since each branch checks the
+        // path independently.
+        const pathSet = path ?? new Set();
+        if (pathSet.has(classId)) return false;
+        pathSet.add(classId);
+        try {
+            for (const tactic of goalClass.tactics) {
+                if (tactic.solved) {
+                    goalClass.state = 'SOLVED';
+                    return true;
+                }
+                if (tactic.subgoalClasses.length > 0 && tactic.subgoalClasses.every(subId => this.isSolved(subId, pathSet))) {
+                    goalClass.state = 'SOLVED';
+                    return true;
+                }
             }
-            if (tactic.subgoalClasses.length > 0 && tactic.subgoalClasses.every(subId => this.isSolved(subId))) {
-                goalClass.state = 'SOLVED';
-                return true;
-            }
+            return false;
+        } finally {
+            pathSet.delete(classId);
         }
-        return false;
     }
 
     isRootSolved() {

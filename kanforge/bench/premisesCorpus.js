@@ -33,7 +33,43 @@ export const PREMS_MATHLIB_1 = [
 // actually constrains the generator and is not cosmetic.
 export const PREMS_MATHLIB_1_NO_MUL_ADD = PREMS_MATHLIB_1.filter(p => p.name !== 'Nat.mul_add');
 
+// --- Step-tier corpus (build_order.md §5.4) ---
+// Premises for the multi-step tier (bench/stepSmoke.js): T4 logic decomposition (Or/And/Eq
+// constructors and eliminators, `p/q/r` variable style matching the tier's propositional goals)
+// plus the T5 rewrite identities the golden chains reference (Nat.mul_add / Nat.add_mul /
+// Nat.mul_comm and the associativity/commutativity support). Every name is kernel-verified
+// (`#check` through the real repl) — no fabricated theorem names.
+export const PREMS_STEP_1 = [
+    { name: 'Or.inl', type: 'p -> p ∨ q' },
+    { name: 'Or.inr', type: 'q -> p ∨ q' },
+    { name: 'Or.elim', type: '(p -> r) -> (q -> r) -> p ∨ q -> r' },
+    { name: 'And.intro', type: 'p -> q -> p ∧ q' },
+    { name: 'And.left', type: 'p ∧ q -> p' },
+    { name: 'And.right', type: 'p ∧ q -> q' },
+    { name: 'Eq.refl', type: 'a = a' },
+    { name: 'Eq.symm', type: 'a = b -> b = a' },
+    { name: 'Eq.trans', type: 'a = b -> b = c -> a = c' },
+    { name: 'Nat.mul_add', type: '(a b c : Nat) -> a * (b + c) = a * b + a * c' },
+    { name: 'Nat.add_mul', type: '(a b c : Nat) -> (a + b) * c = a * c + b * c' },
+    { name: 'Nat.mul_comm', type: '(a b : Nat) -> a * b = b * a' },
+    { name: 'Nat.add_assoc', type: '(a b c : Nat) -> (a + b) + c = a + (b + c)' },
+    { name: 'Nat.add_comm', type: '(a b : Nat) -> a + b = b + a' },
+    { name: 'Nat.mul_assoc', type: '(a b c : Nat) -> (a * b) * c = a * (b * c)' },
+    { name: 'Nat.zero_add', type: '(a : Nat) -> 0 + a = a' },
+    { name: 'Nat.add_zero', type: '(a : Nat) -> a + 0 = a' },
+    { name: 'Nat.mul_one', type: '(a : Nat) -> a * 1 = a' },
+    { name: 'Nat.mul_zero', type: '(a : Nat) -> a * 0 = 0' }
+];
+
+// Lock-enforcement control for the step tier: the three rewrite identities the T5 golden chains
+// depend on. Premise-locked mode on `step-no-rw` cannot reference Nat.mul_add / Nat.add_mul /
+// Nat.mul_comm, so distrib_twice, square_expand and mul_comm_rw must fail under the lock even
+// though the model knows them from training.
+export const PREMS_STEP_1_NO_RW = PREMS_STEP_1.filter(p => !['Nat.mul_add', 'Nat.add_mul', 'Nat.mul_comm'].includes(p.name));
+
 export const PREMISE_CORPORA = {
     full: PREMS_MATHLIB_1,
-    'no-mul-add': PREMS_MATHLIB_1_NO_MUL_ADD
+    'no-mul-add': PREMS_MATHLIB_1_NO_MUL_ADD,
+    step: PREMS_STEP_1,
+    'step-no-rw': PREMS_STEP_1_NO_RW
 };

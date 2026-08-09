@@ -106,6 +106,23 @@ test('extractProof terminates on a self-referential tactic result (no-progress t
     assert.strictEqual(egraph.extractProof(), null);
 });
 
+test('isSolved terminates on a goal-class cycle (subgoal hashes back to an ancestor)', () => {
+    const egraph = new GoalEGraph();
+    const rootId = egraph.setRoot({ type: 'b * a = c', context: [] });
+    // rw [Nat.mul_comm] moves the frontier to a new class...
+    const child = { type: 'a * b = c', context: [], proofState: 1 };
+    const rec1 = egraph.applyTactic(rootId, 'rw [Nat.mul_comm]', [child]);
+    const childId = rec1.subgoalClasses[0];
+    assert.notStrictEqual(childId, rootId);
+    // ...and applying it again reports the root goal back, which hashes to the ROOT class
+    // (not in the frontier, so it is attached as a child): a cycle root -> child -> root.
+    const rec2 = egraph.applyTactic(childId, 'rw [Nat.mul_comm]', [{ type: 'b * a = c', context: [], proofState: 2 }]);
+    assert.deepStrictEqual(rec2.subgoalClasses, [rootId]);
+    // Must not blow the stack; there is no solved path.
+    assert.strictEqual(egraph.isRootSolved(), false);
+    assert.strictEqual(egraph.extractProof(), null);
+});
+
 test('serialize/deserialize preserves the frontier', () => {
     const egraph = new GoalEGraph();
     const rootId = egraph.setRoot({ type: 'A ∧ B', context: [] });

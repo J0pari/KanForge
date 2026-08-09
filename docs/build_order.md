@@ -274,7 +274,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   (`mul_comm_rw` closed in 1 call OFF vs. missed within 4 calls ON); per the §5.4 note, re-run
   any cell with a fresh seed to average it out.
 - **Open item:** the §5.4 premises axis on `--set=step` (a step-tier premise corpus is needed
-  first; the current corpora are mathlib-smoke-shaped).
+  first; the current corpora are mathlib-smoke-shaped). (Corpus now ships — see §5.4; remaining
+  work is a consistent-model re-run + lock enforcement.)
 
 ### 5.4 Multi-step goal-directed ablation tier
 - The core (§5.1) and mathlib sets are each closable by ONE headline tactic, so they cannot
@@ -319,9 +320,42 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   *disjoint* problem sets, so a cost model that routes per-problem (menu-off bestofn for
   rw-tiers, MCGS for decomposition) would beat either recipe alone. This is the pass@1/cost
   data the P6 gate (§6) is judged on.
-- **Open item:** the premises axis (`--premises=on|off`) on `--set=step` (a step-tier premise
-  corpus is needed first; the current corpora are mathlib-smoke-shaped). Re-run any cell with
-  a fresh model seed to average out LLM nondeterminism.
+- **Premises axis (step tier).** `bench/premisesCorpus.js` now ships a step-tier corpus:
+  `PREMS_STEP_1` (19 kernel-verified premises: `Or.inl/inr/elim`, `And.intro/left/right`,
+  `Eq.refl/symm/trans`, `Nat.mul_add/add_mul/mul_comm/add_assoc/add_comm/mul_assoc/zero_add/
+  add_zero/mul_one/mul_zero`) plus the lock-control `PREMS_STEP_1_NO_RW` (drops the 3 rewrite
+  identities `Nat.mul_add`, `Nat.add_mul`, `Nat.mul_comm`). Logic premises use a `p/q/r` type
+  style and Nat identities `(a b c : Nat) -> ...` so the BM25 retriever pulls every
+  golden-chain premise into its top-8 (quality floor pinned by `test/premises.test.js`, 14
+  tests, incl. 3 new). `--set=step` now defaults `--corpus=step`; `--corpus=step-no-rw` is the
+  rewrite-lock control.
+- **Crash fixed.** The §5.4 locked control surfaced a real bug: `GoalEGraph.isSolved` recursed
+  through `tactic.subgoalClasses.every(...)` with no cycle guard, and a tactic whose subgoal
+  hashes back to an ancestor class (e.g. `rw [Nat.mul_comm]` twice on `b*a = c` re-attaches the
+  ROOT class as a child) overflowed the stack (`Maximum call stack size exceeded`, llm=0).
+  `isSolved` now carries a path-visited set that treats an on-path class as not-yet-solved
+  (regression test `test/egraph.test.js` "isSolved terminates on a goal-class cycle"; verified
+  end-to-end on the real path: premise-locked MCGS on `mul_comm_rw` completes and solves in 1
+  rollout).
+- **Premise lock is prompt-level only in the ablation drivers.** `findPremiseLockViolations`
+  is enforced only inside `TacticLoop`; `bench/ablation.js` wraps the llm in
+  `PremiseAugmentingLLM` but never post-hoc rejects a proposal that names a non-retrieved
+  theorem. Evidence: with `--corpus=step-no-rw` (no `Nat.mul_comm`) a `bestofn` row still
+  solved `mul_comm_rw` — the generator emitted the rewrite from its own knowledge. For a
+  verifiable "locked" claim the ablation driver must call `findPremiseLockViolations` on each
+  proposal; until then the control measures prompt-level influence only.
+- **Measured (real kernel, single sample per cell, N=4, budget 12, `mul_comm_rw`, bestofn).**
+  Cells `ablation_premises_off_r2` (0/1, 4 llm / 4 kernel), `ablation_premises_on_r2` (0/1,
+  7 llm / 7 kernel) — pass@1 delta masked by LLM nondeterminism at N=4 (this same problem
+  solved in 1 call on an earlier run, missed within 4–7 here); premise augmentation roughly
+  doubles per-call wall time (~75 s vs ~35 s). A `locked` cell re-run hung in repl worker
+  startup (both rows timed out at 600 s with 0 llm/0 kernel — a worker flake, not the crash).
+  **Confinded by a model switch mid-experiment**: cells here ran under `opencode/big-pickle`;
+  the session LLM is now `deepseek-v4-flash`, so further cells must be re-measured on a single
+  consistent model before the with/without/locked table is written.
+- **Open item:** re-run the three cells (off / on / locked) on one consistent model with a
+  higher `--row-timeout-ms`, and wire `findPremiseLockViolations` into `bench/ablation.js` so
+  the locked control is enforced (not just prompted).
 
 ---
 
@@ -366,9 +400,19 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 ### 7.1 Curated corpus + autoformalization
 - Start with 20 Erdős problems / OEIS conjectures whose statements are *formalizable* and
   auditable. `agent/roles/autoformalizer.js` (ALA-style: generalist orchestrator + Lean-tuned
-  model).
+  model). **Methodology is per `architecture.md` §0.1** — the formalization pipeline, not a
+  translation call: kernel typecheck → explicit kernel-checked `def` nodes → behavioral probes
+  (asserted true/false instances verified/refuted by the kernel) → dual-formalization consensus
+  (kernel-provable `A ↔ B`; a failure is a semantic-drift trip, not a disagreement) → assumption
+  ledger surfaced by `digest/writeup.js` → human gate + pin before search.
+- **Deliverables in order:** (1) the definitional substrate (`def` nodes) for the first targets;
+  (2) the probe harness that turns asserted instances into kernel-checked `example`s; (3) the
+  consensus step reusing `search/swiss.js` pairwise judgment for candidate selection; (4) the
+  assumption-ledger + pin + human-gate commit path.
 - **Acceptance (provisional):** ≥ 50% of curated statements formalize; each formalization is
-  human-reviewed and statement-pinned before search begins.
+  human-reviewed and statement-pinned before search begins. A candidate that fails a probe or a
+  consensus equivalence check is recorded as a formalization failure with its evidence, never
+  silently corrected.
 
 ### 7.2 Multi-agent ensemble
 - Implement `growth/multibody.js` (one-owner-per-region lemma edits, processing lanes) + the

@@ -20,8 +20,10 @@
 //                             [--problems=trans_lt,add_comm] [--N=8] [--max-llm-calls=400]
 //                             [--out=bench/ablation]
 //                             [--premises=on|off] [--premise-locked=on|off]
-//                             [--premise-topk=5] [--corpus=full|no-mul-add]
+//                             [--premise-topk=5] [--corpus=full|no-mul-add|step|step-no-rw]
 //                             [--menu=on|off] [--predictors=<path.json>]
+// `--set=step` defaults its premise corpus to `step` (the §5.4 tier corpus); `--corpus=step-no-rw`
+// is its lock-enforcement control.
 // The mathlib set (--set=mathlib) imports specific Mathlib modules per statement (~10-50s each
 // per problem per recipe), so prefer --problems=<subset> to bound wall time. The step set
 // (--set=step) is the multi-step goal-directed tier (build_order.md §5.4; bench/stepSmoke.js):
@@ -476,7 +478,7 @@ async function main() {
     const premisesEnabled = premisesArg ? premisesArg.split('=')[1] === 'on' : false;
     const premiseLocked = premiseLockedArg ? premiseLockedArg.split('=')[1] === 'on' : false;
     const premiseTopK = premiseTopKArg ? Number(premiseTopKArg.split('=')[1]) : 5;
-    const corpusName = corpusArg ? corpusArg.split('=')[1] : 'full';
+    const corpusName = corpusArg ? corpusArg.split('=')[1] : (set === 'step' ? 'step' : 'full');
     if (premisesEnabled && !(corpusName in PREMISE_CORPORA)) {
         console.error(`unknown premise corpus; known corpora: ${Object.keys(PREMISE_CORPORA).join(', ')}`);
         process.exit(2);
