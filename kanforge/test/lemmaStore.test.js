@@ -1,10 +1,10 @@
-// LemmaStore persistence (build_order.md §2.3 / §6.4) — content-addressed on-disk store.
+// LemmaStore → retrieval index (build_order.md §5.7, architecture.md §2.8).
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LemmaStore } from '../growth/lemmaStore.js';
+import { LemmaStore, buildLemmaIndex, extractGoalShape, extractTacticTrajectory, extractImports, extractFreeVariables } from '../growth/lemmaStore.js';
 
 function tmpDir() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-lemmastore-'));
@@ -85,4 +85,64 @@ test('put requires a hash string', () => {
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('buildLemmaIndex populates the §2.8 columns from statement + proof', () => {
+    const stmt = 'import Mathlib.Data.Nat.Basic\n\ntheorem t (a b : Nat) (h : a * b = c) : b * a = c := by sorry';
+    const proof = 'rw [Nat.mul_comm]\nexact h';
+    const idx = buildLemmaIndex({ statementHash: 'h1', statement: stmt, proofScript: proof, deps: ['d1'] });
+    assert.strictEqual(idx.statementHash, 'h1');
+    assert.ok(idx.normalizedGoalShape.includes('b * a = c'));
+    assert.deepStrictEqual(idx.imports, ['Mathlib.Data.Nat.Basic']);
+    assert.deepStrictEqual(idx.dependencies, ['d1']);
+    assert.ok(idx.proofLength >= 2);
+    assert.deepStrictEqual(idx.tacticTrajectory, ['rw', 'exact']);
+    assert.deepStrictEqual(idx.difficulty, { goalCount: null, ms: null });
+    assert.strictEqual(idx.successConditions.verified, true);
+});
+
+test('buildLemmaIndex carries the §5.9 patch stream (transformation history)', () => {
+    const idx = buildLemmaIndex({
+        statementHash: 'h1',
+        statement: 'theorem t : True := by sorry',
+        proofScript: 'trivial',
+        patchStream: [
+            { op: 'tactic', node: 'g1', replacement: 'trivial', scope: 'goal', meta: { attempt: 1 } },
+            { op: 'lemma', node: 'l1', scope: 'lemma' }
+        ]
+    });
+    assert.strictEqual(idx.patchStream.length, 2);
+    assert.strictEqual(idx.patchStream[0].op, 'tactic');
+    assert.strictEqual(idx.patchStream[1].op, 'lemma');
+});
+
+test('extractGoalShape returns the proposition (binder telescope is context, not shape)', () => {
+    assert.strictEqual(extractGoalShape('theorem t (a b : Nat) : a + b = b + a := by sorry'), 'a + b = b + a');
+    assert.strictEqual(extractGoalShape('theorem t : True := by sorry'), 'True');
+});
+
+test('findSimilar ranks exact-shape matches above partial token overlap', () => {
+    const dir = tmpDir();
+    try {
+        const store = new LemmaStore({ dir });
+        store.put('exact', buildLemmaIndex({ statementHash: 'exact', statement: 'theorem t (a b : Nat) : a + b = b + a := by sorry', proofScript: 'ring' }));
+        store.put('partial', buildLemmaIndex({ statementHash: 'partial', statement: 'theorem u (a b c : Nat) : a + (b + c) = (a + b) + c := by sorry', proofScript: 'ring' }));
+        store.put('unrelated', buildLemmaIndex({ statementHash: 'unrelated', statement: 'theorem v (x : Real) : 0 < x ^ 2 + 1 := by sorry', proofScript: 'positivity' }));
+        const hits = store.findSimilar('a + b = b + a', { limit: 3 });
+        assert.strictEqual(hits[0].statementHash, 'exact');
+        assert.ok(hits.length <= 3);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('extractFreeVariables returns distinct identifiers of the goal proposition', () => {
+    const stmt = 'theorem t (a b c : Nat) (h : a * b = c) : b * a = c := by sorry';
+    const fvs = extractFreeVariables(stmt);
+    assert.ok(fvs.includes('a'));
+    assert.ok(fvs.includes('b'));
+    assert.ok(fvs.includes('c'));
+    // hypothesis names live in the binder telescope (context), not the goal proposition
+    assert.ok(!fvs.includes('h'));
+    assert.strictEqual(new Set(fvs).size, fvs.length);
 });

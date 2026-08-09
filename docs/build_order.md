@@ -62,11 +62,15 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `check("example : 1 + 1 = 2 := by rfl")` returns verified (CLI).
 
 ### 0.2 Build the core
-- Implement `Lazy`, `LazyTemplate`, `LazyMapper`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`,
-  `fix`, `PullPromise`, `PullCache`, `PullGraph`, `StateSerializer`, `Hasher` in `core/` with
-  unit tests (file mapping: `architecture.md` §1).
-- Add `core/patch.js` (typed patch envelope, `architecture.md` §2.7) and `core/scheduler.js`
-  (dependency-ordered dispatch, `architecture.md` §2.6) with unit tests.
+- Implement `Lazy`, `PullGraph`, `Scheduler`, `Hasher` in `core/` with unit tests (file mapping:
+  `architecture.md` §1).
+- **Historical note (§5.5/§5.9):** the phase originally built the full lazy family (`LazyTemplate`,
+  `LazyMapper`, `Pipeline`, `ConfigContext`, `LazyStream`, `lazify`, `fix`, `PullPromise`,
+  `PullCache`, `StateSerializer`) and `core/patch.js` (typed patch envelope). The lazy family was
+  removed in the §5.5 dead-code audit — nothing in the live path used it. `core/patch.js` was also
+  removed, but that removal was a coherence error (the loop's core operation IS a typed mutation);
+  it is re-introduced as the typed mutation record over the event stream (§2.7, §5.9). The
+  surviving foundations are `core/lazy` and `core/hasher`; the scheduler remains.
 - **Deliverable:** `core/` with tests; `PullGraph.serialize/deserialize` round-trips a nontrivial
   DAG; `invalidate()` transitively clears dependents; scheduler verifies the locality property
   (only descendants re-verify).
@@ -111,10 +115,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Search efficiency KPI:** kernel checks eliminated by the pre-filter (Wave2 §15),
   logged per run.
 
-### 1.3 Query API (vertical slice)
-- Implement `query/server.js` (signed, rate-limited) + `/proof/*` endpoints returning events,
-  transition matrix (even if sparse), health (endpoints per `architecture.md` §8).
-- **Acceptance:** `node kanforge/query/server.js health` and `/proof/events` work over TCP + GUI.
+### 1.3 Query API (deferred — removed as dead code, architecture.md §8)
+- The query server was once specified here (signed, rate-limited `/proof/*` endpoints). It was
+  removed in the §5.5 dead-code audit: no server existed, nothing constructed it, and
+  `/integrity/verify` returned `{ ok: true }` unconditionally. The correctness surface that exists
+  is the development digest (`digest/development.js`) + per-lemma commits (`growth/commit.js`).
+- **Re-entry condition (P7):** a real consumer (operator dashboard) that the API serves; if
+  re-added, `/integrity/verify` must run a real `verifyHashChain` over the run's chain — never a
+  hardcoded `ok`.
 
 ---
 
@@ -377,8 +385,12 @@ code and no doc claim about dead code may remain.
   - The rest of the lazy family — `core/{functor,promise,cache,context,fix,lazify,serialize,stream,template}.js` —
     imported only by each other and `core.test.js`; the live path used only `core/lazy` (via
     `PullGraph`). Removed; `core/lazy` + `core/hasher` are the surviving foundations (§9).
-  - `core/patch.js` (`Patch`/`PATCH_OPS`) — exported in `index.js`, never constructed. Removed;
-    the loop passes tactic strings directly (§2.7).
+  - `core/patch.js` (`Patch`/`PATCH_OPS`) — exported in `index.js`, never constructed. **Removal
+    was a coherence error, corrected in §2.7/§5.9**: the loop's core operation IS a typed graph
+    mutation, and the audit's own "condense OR wire" rule should have been applied as *wire*, not
+    *remove*. The patch is re-introduced as a projection over the live event stream
+    (`core/patch.js` `patchFromEvent`), captured per lemma, and stored in the retrieval index +
+    digest as the transformation history.
   - `query/` (`server.js`, `formatters.js`) — `QueryServer` was never constructed and
     `/integrity/verify` returned `{ ok: true }` unconditionally (a lie). Removed; `architecture.md`
     §8 now marks the query API deferred and names the digest + commit as the real correctness
@@ -446,6 +458,76 @@ Two review findings are recorded here as acceptance work, not rhetoric.
   Pareto gain or is recorded as "no measured advantage, keep best-first"; `computeMetrics` emits
   the full catalog with no fabricated values; no doc/comment claims causal inference where only
   telemetry exists.
+
+### 5.7 Lemma store as retrieval index (per `architecture.md` §2.8)
+The content-addressed `growth/lemmaStore.js` (statement hash → artifact) evolves into a retrieval
+index: theorem proving becomes partly retrieval. Staged so each mode lands with a live consumer and
+a measured effect; retrieval never bypasses kernel verification.
+- **Stage 1 — index columns at capture.** `blueprint/refine.js` writes each verified lemma with the
+  full column set: `statementHash`, `normalizedGoalShape`, `freeVariables`, `imports`,
+  `dependencies`, `proofLength`, `tacticTrajectory`, `difficulty` (goal count / ms),
+  `successConditions` (verified, proofScript). Columns derivable from the event are populated at
+  capture; the rest are `null` with a reason, per the §5.6 no-fabrication rule.
+- **Stage 2 — exact reuse (live).** `blueprint/refine.js` consults the store by statement hash
+  before spawning the tactic loop; a hit reuses the stored proof (re-verified by the kernel at
+  commit) and emits a `lemma_reused` event. A re-run of an already-proven development costs zero
+  LLM/kernel calls. Measured: `reuseRate` = reused / attempted stubs, reported per run.
+- **Stage 3 — ranked retrieval.** `store.findSimilar(goalShape)` returns candidates ranked by goal
+  shape + tactic-trajectory overlap, feeding the loop's premise-style "similar proven lemmas" hint
+  (specialization / generalization require the goal-shape + binder index to match; proof-pattern
+  transfer replays the trajectory against a new context).
+- **Acceptance (provisional):** a re-run of a proven development shows `reuseRate = 1.0` with zero
+  LLM/kernel spend; `findSimilar` retrieves a known-similar lemma in the top-3 on a held-out
+  problem; every reuse is kernel-verified (no `sorry`, no unverified shortcut).
+
+### 5.8 Benchmark discipline + provenance (per `architecture.md` §5.7)
+- **Purpose:** the ablation harness becomes the central experiment. Rules: fixed corpus only,
+  cost-normalized per cell, CI on pass rates, an ablation GRAPH (not a ladder — component effects
+  are measured, not assumed additive/commutative), full provenance in every report.
+- **Deliverables in order:**
+  1. **CI on pass rates** — `bench/ablation.js` reports a Wilson (or exact-binomial) interval on
+     `solved/total` per recipe when `problems.length ≥ 2`; the report audit checks the interval
+     is present and non-degenerate.
+  2. **Ablation graph (`--ablate=<comps>`)** — the full factorial over the named component toggles
+     (`repair`, `tactic menu`, `premises`, `egraph`, `search strategy`, `causal predictor`) runs
+     on the fixed corpus at equal budget, one ablation pass per node. Report per node: the same
+     per-cell table; per component: **main effect** (mean pass rate on − off over all
+     configurations holding the rest fixed) and **pairwise interactions** (does A's effect change
+     when B is on?). The interaction terms ARE the additivity/commutativity test — no fixed rung
+     order presumes them. A component with no measured main effect is reported as such.
+  3. **Provenance block** — extend the report config + development digest with: model + version,
+     prompt version, toolchain + mathlib pin, search policy (recipes/N/budget/component mask),
+     resource usage (llmMs, tokens, kernel calls), final kernel verification status. The report
+     audit checks every provenance field is present and non-null.
+  4. **Live integration tests** — the `*.live.test.js` suites (real repl binary) are the
+     consequential integration boundary. They must run in CI on the pinned toolchain (P0.3
+     acceptance already demands this) and be extended as components land: the ablation graph's
+     live smoke, blueprint re-run reuse (Stage-2 lemma store), and the digest's provenance
+     round-trip.
+- **Acceptance:** a published comparison is a fixed-corpus run with CI, per-node results, main
+  effects + interaction terms per component, and a complete provenance block that replays the
+  run; the live suites run green against the real repl binary in CI; no comparison reports success
+  without cost.
+
+### 5.9 Patch algebra — typed mutation record (corrects §5.5's coherence error)
+- **Why:** the §5.5 audit removed `core/patch.js` as dead code. That was the wrong disposition
+  under the audit's own "condense OR wire" rule: the loop's core operation IS a typed graph
+  mutation, and the tactic string is a lossy encoding that drops the meta channel. The Research
+  vision (`KanForge_whitepaper.md` §4) is explicit that the patch is "the interface between
+  probabilistic generation and deterministic compilation" — the main docs must agree.
+- **Deliverables:**
+  1. `core/patch.js` restored as `Patch` + `patchFromEvent(e)` — a pure projection of a loop event
+     into `{ node, op, replacement, scope, meta }`; the event stream already carries the tuple's
+     fields (`node`=goalClassId, `replacement`=tactic, `meta`=attempt/llmMs/tokens/via).
+  2. Capture: the per-lemma patch stream is built from `lemma_verified` + its tactic/repair events
+     and stored in the retrieval-index entry (§5.7) as `patchStream` — the transformation history.
+  3. Digest: the development digest (`digest/development.js`) records each lemma's `patchStream`
+     so a verified result carries its derivation context (whitepaper §14).
+  4. Reuse mode: `reuse` op wired to the Stage-2 exact-reuse path (§5.7) so a store hit is
+     recorded as a typed patch, not a silent shortcut.
+- **Acceptance:** every `lemma_verified` produces a non-empty typed patch stream in its index
+  entry + digest; a Stage-2 reuse emits a `reuse` patch; the full non-live suite passes; no dead
+  `Patch` construction anywhere (the type is built from live events, consumed by live writers).
 
 ---
 
@@ -548,7 +630,9 @@ Two review findings are recorded here as acceptance work, not rhetoric.
 - Auto-generate per-target writeups with assumption accounts; assemble a research summary doc.
   `core/hasher.js` audit + git history = reproducibility pack.
 - **Acceptance:** for every claimed result: Lean source, blueprint JSON, writeup, audit hash, and
-  git commits all consistent and queryable via `/integrity/verify`.
+  git commits all consistent; the development digest's hash chain verifies end-to-end
+  (`verifyHashChain`). (The old `/integrity/verify` endpoint was removed in §5.5; integrity is
+  checked by the digest audit + `verifyHashChain`, not an HTTP stub.)
 
 ### 7.5 Ongoing RL loop
 - Fold every mission run back into 6.4; refresh reward/guardrails from `optimization/patterns.js`

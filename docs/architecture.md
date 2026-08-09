@@ -159,6 +159,7 @@ kanforge/
     hasher.js                # Hasher (statement/event hash chains)
     state.js                 # straighten / unstraighten (tree ↔ script)
     scheduler.js             # dependency-ordered dispatch over the PullGraph (Wave2 §7–8)
+    patch.js                 # typed mutation record: Patch + patchFromEvent (§2.7)
     guardrails.js            # invariant spec + guardrail logic
   lean/
     backend.js               # adapter interface + factory (createBackend)
@@ -207,7 +208,7 @@ kanforge/
     development.js           # whole-development digest (writeup + audit + hash chain)
   growth/
     commit.js                # commit-per-lemma to a scratch repo (statement hash in message)
-    lemmaStore.js            # content-addressed lemma store, persisted to <dir>/lemmas/*.json (write-through atomic, corruption-tolerant)
+    lemmaStore.js            # content-addressed lemma store → retrieval index (§2.8): statementHash, goal shape, imports, deps, proof length, tactic trajectory, difficulty
     dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
   bench/
@@ -384,14 +385,69 @@ CACHED   (restored from a checkpoint; skipped, never re-dispatched)
 - API: `enqueue(ids)`, `run()` -> `{ ok, results, failures }`, `onProgress`, timeout/kill-on-hang.
 - Locality: work scales with affected subgraph depth, not project size (Wave2 §14).
 
-### 2.7 Proof operations (was "typed patch envelope")
-The candidate-mutation envelope (`Patch`/`PATCH_OPS`) once documented here was removed as dead code:
-nothing constructed a `Patch`. The live loop works directly on the two-level structure — it proposes
-a tactic string for one goal equivalence class, the backend applies it and returns new subgoal
-classes (kernel-checked via `applyTactic`), and the e-graph records the edge. A proof is a tree of
-tactic applications extracted from the e-graph (root equivalence class to solved leaves). If a typed
-mutation envelope is ever needed it will be re-introduced with a live consumer; until then the loop
-is the contract.
+### 2.7 Patch algebra — the typed mutation record (`core/patch.js`)
+The candidate-mutation envelope was removed in the §5.5 dead-code audit because nothing constructed
+a `Patch` — but that removal was itself a coherence error, corrected here: the loop's core operation
+**is** a typed graph mutation, and the audit's "condense OR wire" rule should have been applied as
+*wire*, not *remove*. The patch is the interface between probabilistic generation and deterministic
+compilation (`docs/Research/KanForge_whitepaper.md` §4):
+
+```js
+p = { node, op, replacement, scope, meta }
+op ∈ { 'tactic', 'lemma', 'rewrite', 'replace', 'reuse' }
+```
+
+- `tactic`   — ONE tactic applied to a goal equivalence class, producing zero or more subgoal classes (kernel check via `applyTactic`)
+- `lemma`    — introduce a helper lemma (adds a stub child at Level 1; statement pinned)
+- `rewrite`  — alternative proof path (transposition-merge target; dedup, no tree mutation)
+- `replace`  — replace a failing subproof subtree (tree-level repair, re-straighten)
+- `reuse`    — apply a stored lemma from the retrieval index (§2.8; exact/specialization/generalization/pattern-transfer)
+
+The patch is **derived from the live event stream, not a parallel dead type**: every loop event
+(`tactic_proposed`/`applied`/`failed`, `subgoal_created`, `goal_solved`, `lemma_verified`,
+`repair_*`) already carries the patch tuple's fields (`node`=goalClassId, `replacement`=tactic,
+`meta`=attempt/llmMs/tokens/via). `core/patch.js` provides `patchFromEvent(e)` — a pure projection
+of an event into the typed form — and the patch stream is captured per lemma and stored in the
+retrieval index + development digest as the transformation history (whitepaper §14). A proof is a
+tree of tactic applications extracted from the e-graph; the patch stream is the typed trace of how
+that tree was built.
+
+### 2.8 Lemma store as retrieval index (`growth/lemmaStore.js`)
+
+The lemma store is content-addressed today (`statement hash → artifact`), but its design intent is a
+**retrieval index**: theorem proving becomes partly a retrieval problem. Given a new goal, retrieve
+a similar *proven* lemma and decide between the four reuse modes:
+
+```
+new goal
+   │
+   ▼
+retrieve similar proven lemma
+   │
+   ├── exact reuse        — same statement hash: reuse the stored proof as-is (no LLM/kernel spend)
+   ├── specialization     — the stored lemma is more general: instantiate it
+   ├── generalization     — the stored lemma is a special case: abstract it
+   └── proof-pattern transfer — different statement, similar shape: replay the tactic trajectory
+```
+
+Each stored lemma carries the index columns (captured at `lemma_verified`):
+`statementHash`, `normalizedGoalShape`, `freeVariables`, `imports`, `dependencies`,
+`proofLength`, `tacticTrajectory`, `difficulty` (goal count / wall ms), `successConditions`
+(verified, proofScript). The store's API is:
+
+```js
+store.put(lemmaIndex)              // index columns + artifact, atomic per lemma
+store.get(statementHash)           // exact-reuse lookup (O(1))
+store.findSimilar(goalShape)       // ranked candidates by goal-shape / trajectory overlap
+```
+
+**Reuse modes in the pipeline.** Exact reuse is the first live mode: `blueprint/refine.js` consults
+the store before spawning the tactic loop and takes the stored proof when the statement hash
+matches — a re-run of an already-proven development costs no LLM or kernel calls. The other three
+modes are staged (build_order.md §5.7): specialization/generalization need the goal-shape and
+binder index to match against; proof-pattern transfer needs the tactic trajectory to be replayed
+against a new goal's context, which the loop's premise/tactic-menu machinery already supports.
+A reuse is always verified by the kernel at commit — retrieval never bypasses verification.
 
 ---
 
@@ -534,6 +590,39 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   choice" or "MCGS beats best-of-N" into a *measured* claim at normalized LLM + kernel cost, not a
   solved-any-problem anecdote.
 
+### 5.7 Benchmark discipline (fixed corpus, ablation graph, provenance)
+
+The ablation harness is the project's central experiment. Its rules make every claim reproducible
+and every comparison cost-normalized:
+
+- **Fixed corpus.** `bench/smoke.js` (core), `bench/mathlibSmoke.js`, `bench/stepSmoke.js` are the
+  fixed corpora; a run identifies the corpus + problem subset + seed in its report config. No
+  ad-hoc problem sets in a published comparison.
+- **Reported per cell (where the event stream supports it, else `null` per §6.1):** success rate,
+  wall-clock time, LLM calls, Lean (kernel) calls, token usage, proof length — plus confidence
+  intervals on the pass rate (binomial/Wilson on `solved/total`) where the cell has ≥ 2 problems.
+- **Component ablation GRAPH, not a ladder** (`bench/ablation.js --ablate=<comps>`). There is no
+  known hierarchy of merit among components, and component effects are neither assumed additive
+  nor assumed commutative — the experiment must *measure* that. So the design is a factorial graph
+  over component toggles:
+  - Each **node** is a full configuration: a subset of `{repair, tactic menu, premises, egraph,
+    search strategy (bestofn/bfs/mcgs/swiss), causal predictor}` on the fixed corpus at equal
+    budget.
+  - Each **edge** connects two configurations differing in exactly ONE toggle — the graph is the
+    Boolean hypercube of configurations, not a fixed linear order.
+  - The report gives, per node, the same per-cell table; and per component, its **main effect**
+    (mean pass rate with the component on minus off, over all configurations holding the rest
+    fixed), plus **pairwise interactions** (does the effect of A change when B is on?). A
+    component with no measured main effect is reported as such. The additivity/commutativity
+    question is answered by the interaction terms — never assumed away by a rung ordering.
+- **Provenance is a first-class research feature.** Every run's report config carries:
+  `theorem/statement hash, toolchain + mathlib pin, model + version, prompt version, search
+  policy (recipes, N, budget, component mask), proof trace + dependency graph (development
+  digest), resource usage (llmMs, tokens, kernel calls), and the final kernel verification
+  status`. The development digest (`digest/development.js`) already carries the hash chain; the
+  ablation report config carries the run parameters. A result is reproducible iff the report
+  config + digest + commit hash can be replayed — that is the acceptance bar.
+
 ---
 
 ## 6. Sharpening / RL
@@ -650,8 +739,8 @@ self-contained.
 
 ## 10. Deliberate non-adoptions (whitepaper / Wave2)
 
-The aspirational vision docs — `docs/Research/whitepaper.md` and
-`docs/Research/architecture wave2.md` — describe an ambitious synthesis
+The aspirational vision docs — `docs/Research/KanForge_whitepaper.md` and
+`docs/Research/KanForge_architecture.md` — describe an ambitious synthesis
 vision. Adopted (now or staged) is reflected above. Everything below was considered and deferred
 for the stated reason; do not re-add without revisiting the reason.
 

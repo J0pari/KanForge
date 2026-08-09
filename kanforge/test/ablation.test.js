@@ -10,7 +10,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { RepulsionSampler, computeRepulsionPenalty } from '../search/repulsion.js';
 import { MCGS } from '../search/mcgs.js';
 import { BestFirstSearch } from '../search/bfs.js';
-import { RECIPES, runAblation, renderMarkdown } from '../bench/ablation.js';
+import { RECIPES, runAblation, renderMarkdown, wilsonInterval, buildAblationGraph, summarizeAblationGraph } from '../bench/ablation.js';
 import { validateSmokeSet } from '../bench/smoke.js';
 import { MATHLIB_PROBLEMS } from '../bench/mathlibSmoke.js';
 import { GoalEGraph } from '../core/egraph.js';
@@ -343,4 +343,57 @@ test('MATHLIB_PROBLEMS set is well-formed (stub shape, imports, known families)'
     // named Mathlib tactic or a Mathlib predicate (Real, Nat.Prime).
     const ids = new Set(MATHLIB_PROBLEMS.map(p => p.id));
     assert.ok(ids.size === MATHLIB_PROBLEMS.length, 'ids must be unique');
+});
+
+
+test('wilsonInterval returns null for fewer than 2 problems and a sane interval otherwise', () => {
+    assert.strictEqual(wilsonInterval(1, 1), null);
+    const [lo, hi] = wilsonInterval(3, 5);
+    assert.ok(lo >= 0 && lo <= hi && hi <= 1);
+    const [lo5, hi5] = wilsonInterval(5, 5);
+    assert.strictEqual(hi5, 1);
+    assert.ok(lo5 < 1);
+});
+
+test('ablation graph enumerates the full factorial and computes main effects + interactions', () => {
+    // Build the graph over menu+premises (no external config needed for the 'on' nodes when the
+    // graph builder is given a premiseConfig). Verify: 2^2 = 4 nodes, base mask '00' first.
+    const premiseConfig = { retriever: null, locked: false, topK: 5, corpusName: 'test' };
+    const nodes = buildAblationGraph(['menu', 'premises'], { premiseConfig });
+    assert.strictEqual(nodes.length, 4);
+    assert.deepStrictEqual(nodes[0].components, { menu: false, premises: false });
+    assert.strictEqual(nodes[0].mask, '00');
+    assert.strictEqual(nodes[3].mask, '11');
+
+    // Simulate per-node results with a measurable interaction: menu helps only when premises are
+    // on (pass rates: 00=0.2, 10=0.2, 01=0.4, 11=0.8).
+    const rates = { '00': 0.2, '10': 0.2, '01': 0.4, '11': 0.8 };
+    const results = nodes.map(n => ({
+        mask: n.mask,
+        components: n.components,
+        recipes: n.recipes,
+        report: {
+            config: { N: 4, maxLlmCalls: 60, provenance: { toolchain: 't', leanProject: 'p', model: 'm', provider: 'o', corpus: 'core' } },
+            perRecipe: [{
+                recipe: n.recipes[0], solved: Math.round(rates[n.mask] * 5), total: 5,
+                passRate: rates[n.mask], passRateCI: wilsonInterval(Math.round(rates[n.mask] * 5), 5),
+                llmCalls: 10, tacticCalls: 8, skipped: 0, wallMs: 100, solvedLlmCalls: 1,
+                meanLlmCallsPerSolved: 1, problems: []
+            }]
+        }
+    }));
+    const summary = summarizeAblationGraph(results, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }]);
+    assert.strictEqual(summary.config.kind, 'ablation-graph');
+    assert.strictEqual(summary.nodes.length, 4);
+    // menu main effect = (0.2+0.8)/2 - (0.2+0.4)/2 = 0.2
+    assert.ok(Math.abs(summary.mainEffects.menu - 0.2) < 1e-9);
+    // premises main effect = (0.4+0.8)/2 - (0.2+0.2)/2 = 0.4
+    assert.ok(Math.abs(summary.mainEffects.premises - 0.4) < 1e-9);
+    // interaction menu x premises = 0.8 - 0.2 - 0.4 + 0.2 = 0.4 (menu helps only with premises on)
+    assert.ok(Math.abs(summary.interactions['menu x premises'] - 0.4) < 1e-9);
+    assert.strictEqual(summary.audit.allOk, true, JSON.stringify(summary.audit.violations));
+});
+
+test('ablation graph rejects unknown components loudly', () => {
+    assert.throws(() => buildAblationGraph(['menu', 'nonsense'], {}), /unknown ablation component/);
 });

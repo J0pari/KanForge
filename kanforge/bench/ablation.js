@@ -16,6 +16,21 @@
 // Cost model: every LLM call (proposal + swiss judge) and every kernel applyTactic is counted
 // per problem per recipe, so the tables report pass rate AND budget, not pass rate alone.
 //
+// Benchmark discipline (§5.7/§5.8): fixed corpus, cost-normalized per cell, Wilson confidence
+// interval on each pass rate (≥2 problems), and a full provenance block in the report config.
+//
+
+// Wilson score interval on a binomial pass rate (architecture.md §5.7). Returns [low, high] or
+// null when the sample is too small to be meaningful (< 2 problems).
+export function wilsonInterval(solved, total, z = 1.96) {
+    if (total < 2) return null;
+    const p = solved / total;
+    const denom = 1 + (z * z) / total;
+    const centre = (p + (z * z) / (2 * total)) / denom;
+    const half = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total)) / denom;
+    return [Math.max(0, centre - half), Math.min(1, centre + half)];
+}
+
 // CLI: node bench/ablation.js [--set=core|mathlib|step] [--recipes=bestofn,swiss]
 //                             [--problems=trans_lt,add_comm] [--N=8] [--max-llm-calls=400]
 //                             [--out=bench/ablation]
@@ -225,7 +240,7 @@ async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCa
     };
 }
 
-export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null } = {}) {
+export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null } = {}) {
     if (!backend || !llm) throw new Error('runAblation requires a backend and an llm');
     validateSmokeSet(problems);
     for (const r of recipes) {
@@ -275,10 +290,10 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
         }
     } finally {
         // Write whatever we have even on an early exit, so a crash never discards the run.
-        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance }));
+        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance, provenance }));
     }
 
-    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance });
+    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance, provenance });
     return report;
 }
 
@@ -319,7 +334,7 @@ function appendRow(outDir, row) {
     }
 }
 
-function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
+function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
         recipe: r,
         solved: 0,
         total: problems.length,
@@ -344,6 +359,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
     }
     for (const s of Object.values(byRecipe)) {
         s.passRate = s.total ? s.solved / s.total : 0;
+        s.passRateCI = wilsonInterval(s.solved, s.total); // [low, high] or null (< 2 problems)
         s.meanLlmCallsPerSolved = s.solved ? s.solvedLlmCalls / s.solved : null;
         s.problems.sort((a, b) => a.id.localeCompare(b.id));
     }
@@ -353,7 +369,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
     });
     const report = {
         generatedAt: new Date().toISOString(),
-        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsProvenance },
+        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsProvenance, provenance },
         perRecipe: recipes.map(r => {
             const { problems: _p, ...s } = byRecipe[r];
             return s;
@@ -390,6 +406,7 @@ function pairwiseDeltas(recipes, byRecipe) {
 }
 
 export function renderMarkdown(report) {
+    if (report.config?.kind === 'ablation-graph') return renderAblationGraphMarkdown(report);
     const { config, perRecipe, perProblem, pairwise } = report;
     const lines = [];
     lines.push('# Search-strategy ablation report');
@@ -408,10 +425,13 @@ export function renderMarkdown(report) {
     lines.push('');
     lines.push('## Pass rate vs. budget');
     lines.push('');
-    lines.push('| recipe | solved | pass rate | llm calls | kernel checks | predictor-skips | mean llm/solved |');
+    lines.push('| recipe | solved | pass rate (95% CI) | llm calls | kernel checks | predictor-skips | mean llm/solved |');
     lines.push('|---|---|---|---|---|---|---|');
     for (const s of perRecipe) {
-        lines.push(`| ${s.recipe} | ${s.solved}/${s.total} | ${(s.passRate * 100).toFixed(1)}% | ${s.llmCalls} | ${s.tacticCalls} | ${s.skipped} | ${s.meanLlmCallsPerSolved === null ? '—' : s.meanLlmCallsPerSolved.toFixed(1)} |`);
+        const ci = s.passRateCI
+            ? ` (${(s.passRateCI[0] * 100).toFixed(1)}–${(s.passRateCI[1] * 100).toFixed(1)})`
+            : '';
+        lines.push(`| ${s.recipe} | ${s.solved}/${s.total} | ${(s.passRate * 100).toFixed(1)}%${ci} | ${s.llmCalls} | ${s.tacticCalls} | ${s.skipped} | ${s.meanLlmCallsPerSolved === null ? '—' : s.meanLlmCallsPerSolved.toFixed(1)} |`);
     }
     lines.push('');
     lines.push('## Pairwise deltas (vs. baselines)');
@@ -436,6 +456,50 @@ export function renderMarkdown(report) {
     return lines.join('\n');
 }
 
+// §5.7/§5.8: the component ablation GRAPH report — per-configuration pass rate (with CI), the
+// component main effects, and the pairwise interactions (the additivity/commutativity test).
+function renderAblationGraphMarkdown(report) {
+    const lines = [];
+    lines.push('# Component ablation graph');
+    lines.push('');
+    lines.push(`- Generated: ${report.generatedAt}`);
+    lines.push(`- Corpus: ${report.config?.corpus ?? '?'}, problems: ${(report.config?.problems ?? []).join(', ')}`);
+    lines.push(`- N=${report.config?.N ?? '?'}, budget=${report.config?.maxLlmCalls ?? '?'} LLM calls / lemma`);
+    lines.push('');
+    lines.push('## Configurations (full factorial)');
+    lines.push('');
+    lines.push('| mask | components | recipe | solved | pass rate (95% CI) | llm calls | kernel checks |');
+    lines.push('|---|---|---|---|---|---|---|');
+    for (const n of report.nodes) {
+        const ci = n.passRateCI
+            ? ` (${(n.passRateCI[0] * 100).toFixed(1)}–${(n.passRateCI[1] * 100).toFixed(1)})`
+            : '';
+        const comps = Object.entries(n.components).map(([k, v]) => `${k}=${v ? 1 : 0}`).join(' ');
+        lines.push(`| ${n.mask} | ${comps} | ${n.recipe} | ${n.solved}/${n.total} | ${(n.passRate * 100).toFixed(1)}%${ci} | ${n.llmCalls} | ${n.kernelChecks} |`);
+    }
+    lines.push('');
+    lines.push('## Main effects (mean pass-rate change with component ON)');
+    lines.push('');
+    lines.push('| component | main effect (pp) |');
+    lines.push('|---|---|');
+    for (const [c, e] of Object.entries(report.mainEffects)) {
+        lines.push(`| ${c} | ${e === null ? '—' : (e * 100).toFixed(1)} |`);
+    }
+    lines.push('');
+    lines.push('## Pairwise interactions (additivity / commutativity test)');
+    lines.push('');
+    lines.push('| pair | interaction |');
+    lines.push('|---|---|');
+    for (const [p, v] of Object.entries(report.interactions)) {
+        lines.push(`| ${p} | ${v === null ? '—' : (v * 100).toFixed(1)} |`);
+    }
+    lines.push('');
+    lines.push('> A nonzero interaction means the effect of one component depends on the other — the');
+    lines.push('> components are NOT additive, and no rung ordering could have revealed that. A');
+    lines.push('> component with no measured main effect is reported as such.');
+    return lines.join('\n');
+}
+
 async function main() {
     const { createBackend } = await import('../lean/backend.js');
     const { loadLLMConfig, createLLM } = await import('../agent/llm.js');
@@ -456,6 +520,7 @@ async function main() {
     const menuArg = process.argv.find(a => a.startsWith('--menu='));
     const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
     const predictorsArg = process.argv.find(a => a.startsWith('--predictors='));
+    const ladderArg = process.argv.find(a => a.startsWith('--ablate'));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : set === 'step' ? STEP_PROBLEMS : SMOKE_PROBLEMS;
@@ -526,9 +591,50 @@ async function main() {
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
+    // Provenance block (§5.7): every run is reproducible from these fields + the report + digest.
+    const provenance = {
+        toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN ?? null,
+        leanProject: ENV.KANFORGE_LEAN_PROJECT ?? null,
+        model: llmConfig.model ?? null,
+        provider: llmConfig.provider ?? null,
+        promptVersion: null, // prompts are inline in agent/prompts.js; a version constant is §5.8 backlog
+        corpus: set,
+        problemIds: problems.map(p => p.id)
+    };
+
     try {
+        if (ablateArg) {
+            // §5.7/§5.8 ablation GRAPH: full factorial over the named component toggles on the
+            // fixed corpus at equal budget. Each node is a full configuration; edges connect
+            // configurations differing in ONE toggle. Component effects are MEASURED as main
+            // effects + pairwise interactions — never assumed additive/commutative by a rung order.
+            const comps = ablateArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean);
+            const nodes = buildAblationGraph(comps, { premiseConfig, predictors });
+            const graphDir = path.join(outDir, 'graph');
+            const results = [];
+            for (const node of nodes) {
+                const nodeOut = path.join(graphDir, node.mask);
+                console.log(`\n[ablate] config ${node.mask} ...`);
+                const report = await runAblation({
+                    backend: pool, llm, problems, recipes: node.recipes, N, maxLlmCalls, outDir: nodeOut,
+                    premises: node.premises, menu: node.menu, rowTimeoutMs, predictors: node.predictors, predictorsProvenance,
+                    provenance: { ...provenance, componentMask: node.mask },
+                    onRow: (row) => {
+                        const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}${row.skipped ? ` skipped=${row.skipped}` : ''}`;
+                        console.log(`[ablate ${node.mask}] ${line}`);
+                        appendRow(nodeOut, row);
+                    }
+                });
+                results.push({ mask: node.mask, components: node.components, report });
+            }
+            const graphSummary = summarizeAblationGraph(results, problems, { premiseConfig, predictors });
+            writeReport(outDir, graphSummary);
+            console.log(renderMarkdown(graphSummary));
+            return;
+        }
+
         const report = await runAblation({
-            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs, predictors, predictorsProvenance,
+            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs, predictors, predictorsProvenance, provenance,
             onRow: (row) => {
                 const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}${row.skipped ? ` skipped=${row.skipped}` : ''}`;
                 console.log(`[ablation] ${line}`);
@@ -540,6 +646,178 @@ async function main() {
     } finally {
         await pool.shutdown(3000);
     }
+}
+
+// Ablation graph (§5.7/§5.8): the full factorial over the named component toggles. Each node is
+// a full configuration (a subset of the toggles); edges connect configurations differing in one
+// toggle. The summary reports per-node pass rate (with CI) and per-component MAIN EFFECTS +
+// PAIRWISE INTERACTIONS — the interaction terms are the additivity/commutativity test, because no
+// fixed rung order presumes them.
+//
+// Recognized component names (others are rejected loudly):
+//   menu       — tactic menu on/off (requires nothing extra)
+//   premises   — premise retrieval on/off (requires --premises=on for the 'on' nodes)
+//   predictors — causal failure predictors on/off (requires --predictors=... for the 'on' nodes)
+//   repulsion  — Goedel diversity penalty (applies to search recipes only)
+// A node's recipe is bestofn unless a search axis is requested; `search` toggles the axis
+// between bestofn and mcgs. The base node (all toggles off) is always included.
+export function buildAblationGraph(comps, { premiseConfig = null, predictors = null } = {}) {
+    const known = ['menu', 'premises', 'predictors', 'repulsion', 'search'];
+    const unknown = comps.filter(c => !known.includes(c));
+    if (unknown.length) {
+        throw new Error(`unknown ablation component(s): ${unknown.join(', ')}; known: ${known.join(', ')}`);
+    }
+    const bits = comps.length;
+    const nodes = [];
+    for (let mask = 0; mask < (1 << bits); mask++) {
+        const components = {};
+        for (let i = 0; i < bits; i++) components[comps[i]] = ((mask >> i) & 1) === 1;
+        // 'on' nodes that need external config are invalid without it — skip loudly.
+        if (components.premises && !premiseConfig) continue;
+        if (components.predictors && !predictors) continue;
+        const recipe = components.search ? 'mcgs' : 'bestofn';
+        const recipeName = components.repulsion ? `${recipe}+repulsion` : recipe;
+        const maskStr = comps.map((c, i) => (components[c] ? '1' : '0')).join('');
+        nodes.push({
+            mask: maskStr,
+            components,
+            recipes: [recipeName],
+            menu: !!components.menu,
+            premises: components.premises ? premiseConfig : null,
+            predictors: components.predictors ? predictors : null
+        });
+    }
+    return nodes;
+}
+
+// Main effect of a component: mean pass rate with it ON minus OFF, over all configurations that
+// differ only in that toggle (each pair counted once). A positive effect means the component
+// helps at equal budget; zero/negative means it does not.
+function mainEffects(nodes) {
+    const effects = {};
+    const comps = Object.keys(nodes[0]?.components ?? {});
+    for (const c of comps) {
+        let on = 0, off = 0, onN = 0, offN = 0;
+        for (const n of nodes) {
+            const rate = n.report?.perRecipe[0]?.passRate ?? 0;
+            if (n.components[c]) { on += rate; onN++; } else { off += rate; offN++; }
+        }
+        effects[c] = onN && offN ? on / onN - off / offN : null;
+    }
+    return effects;
+}
+
+// Pairwise interactions: for components A,B, the average of (rate(AB) - rate(A¬B) - rate(¬AB) +
+// rate(¬A¬B)) over all 4-node subgroups — the standard 2-factor interaction. Nonzero = the
+// effect of A depends on whether B is on (non-additive, order-dependent).
+function pairwiseInteractions(nodes) {
+    const comps = Object.keys(nodes[0]?.components ?? {});
+    const interactions = {};
+    for (let i = 0; i < comps.length; i++) {
+        for (let j = i + 1; j < comps.length; j++) {
+            const a = comps[i], b = comps[j];
+            const rate = n => n.report?.perRecipe[0]?.passRate ?? 0;
+            // take the 4 corners over a,b (all other components vary — average over them)
+            let ab = 0, anb = 0, nab = 0, nanb = 0, abN = 0, anbN = 0, nabN = 0, nanbN = 0;
+            for (const n of nodes) {
+                const r = rate(n);
+                if (n.components[a] && n.components[b]) { ab += r; abN++; }
+                else if (n.components[a] && !n.components[b]) { anb += r; anbN++; }
+                else if (!n.components[a] && n.components[b]) { nab += r; nabN++; }
+                else { nanb += r; nanbN++; }
+            }
+            if (abN && anbN && nabN && nanbN) {
+                interactions[`${a} x ${b}`] = ab / abN - anb / anbN - nab / nabN + nanb / nanbN;
+            } else {
+                interactions[`${a} x ${b}`] = null;
+            }
+        }
+    }
+    return interactions;
+}
+
+export function summarizeAblationGraph(results, problems, { premiseConfig = null, predictors = null } = {}) {
+    // Attach reports to nodes (order matches buildAblationGraph output, minus skipped 'on' nodes).
+    const nodes = results.map((r, i) => ({ ...r, components: r.components ?? {}, report: r.report }));
+    const effects = mainEffects(nodes);
+    const interactions = pairwiseInteractions(nodes);
+    const summary = {
+        generatedAt: new Date().toISOString(),
+        config: {
+            kind: 'ablation-graph',
+            corpus: results[0]?.report?.config?.provenance?.corpus ?? null,
+            problems: problems.map(p => p.id),
+            N: results[0]?.report?.config?.N ?? null,
+            maxLlmCalls: results[0]?.report?.config?.maxLlmCalls ?? null,
+            provenance: results[0]?.report?.config?.provenance ?? null
+        },
+        nodes: nodes.map(n => ({
+            mask: n.mask,
+            components: n.components,
+            recipe: n.recipes?.[0] ?? 'bestofn',
+            solved: n.report?.perRecipe[0]?.solved ?? 0,
+            total: n.report?.perRecipe[0]?.total ?? problems.length,
+            passRate: n.report?.perRecipe[0]?.passRate ?? 0,
+            passRateCI: n.report?.perRecipe[0]?.passRateCI ?? null,
+            llmCalls: n.report?.perRecipe[0]?.llmCalls ?? 0,
+            kernelChecks: n.report?.perRecipe[0]?.tacticCalls ?? 0
+        })),
+        mainEffects: effects,
+        interactions,
+        detail: []
+    };
+    summary.audit = auditAblationGraph(summary);
+    return summary;
+}
+
+// Ablation-graph audit: the graph has no per-row detail (each node is itself an audited ablation
+// report), so the audit verifies what a graph CAN verify: each node's CI recomputes, main effects
+// and interactions recompute from the node pass rates, and the provenance block is present.
+export function auditAblationGraph(summary) {
+    const checks = [];
+    const violations = [];
+    const ok = (name, passed, observed) => {
+        checks.push({ check: name, ok: passed, observed });
+        return passed;
+    };
+    const bad = (name, context) => violations.push({ check: name, ...context });
+
+    const nodes = summary.nodes ?? [];
+    for (const n of nodes) {
+        const expectedCI = wilsonInterval(n.solved, n.total);
+        const same = expectedCI === null && n.passRateCI === null
+            ? true
+            : expectedCI !== null && n.passRateCI !== null &&
+              Math.abs(expectedCI[0] - n.passRateCI[0]) < 1e-9 && Math.abs(expectedCI[1] - n.passRateCI[1]) < 1e-9;
+        if (!same) bad('graph_ci_recompute', { mask: n.mask, reported: n.passRateCI, recomputed: expectedCI });
+    }
+    ok('graph_ci_recompute', !violations.some(v => v.check === 'graph_ci_recompute'), {});
+
+    const prov = summary.config?.provenance ?? null;
+    const provMissing = prov ? ['toolchain', 'leanProject', 'model', 'provider', 'corpus'].filter(k => prov[k] == null) : ['entire block'];
+    if (provMissing.length) bad('provenance_present', { missing: provMissing });
+    ok('provenance_present', provMissing.length === 0, { missing: provMissing });
+
+    // Interaction recompute from node rates (the additivity/commutativity diagnostic).
+    const recomputedInteractions = pairwiseInteractions(nodes.map(n => ({ components: n.components, report: { perRecipe: [{ passRate: n.passRate }] } })));
+    for (const [k, v] of Object.entries(recomputedInteractions)) {
+        const reported = summary.interactions?.[k] ?? null;
+        if (reported === null || v === null) {
+            if (reported !== v) bad('interaction_recompute', { pair: k, reported, recomputed: v });
+        } else if (Math.abs(reported - v) > 1e-9) {
+            bad('interaction_recompute', { pair: k, reported, recomputed: v });
+        }
+    }
+    ok('interaction_recompute', !violations.some(v => v.check === 'interaction_recompute'), {});
+
+    return {
+        schema: 'ablation-graph/audit.v1',
+        checkCount: checks.length,
+        passed: checks.filter(c => c.ok).length,
+        checks,
+        violations,
+        allOk: violations.length === 0
+    };
 }
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('bench/ablation.js')) {

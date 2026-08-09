@@ -73,6 +73,7 @@ section only argues the shape.
 | `core/hasher.js` | absorbing hash chains; integrity verify | statement pinning + tamper-evident audit trail |
 | `core/state.js` | straighten/unstraighten (tree ↔ script) | lossless dual representation — the backbone (§4.2) |
 | `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
+| `core/patch.js` | typed mutation record (`Patch`, `patchFromEvent`) | the interface between probabilistic generation and deterministic compilation — the typed trace of the loop's mutations (§2.7) |
 | `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously |
 | `optimization/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
 | `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
@@ -81,16 +82,19 @@ section only argues the shape.
 | `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors — not yet built |
 | `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards — not yet built |
 | `growth/commit.js` | commit-per-lemma to a scratch repo | content-addressed library growth; statement hash in the message |
-| `growth/lemmaStore.js` | content-addressed lemma store | reproducible lemma reuse |
+| `growth/lemmaStore.js` | content-addressed lemma store → retrieval index | reproducible lemma reuse: exact reuse / specialization / generalization / proof-pattern transfer (§2.8) |
 | `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
 | `digest/writeup.js` | parse → render (Markdown/HTML, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
 | `digest/development.js` | whole-development digest (writeup + audit + hash chain) | the publication unit (§7) |
 
-> **Dead-code audit (build_order.md §5.5).** The former lazy family (`template`, `functor`,
-> `pipeline`, `context`, `stream`, `fix`, `lazify`, `promise`, `cache`, `serialize`), the `Patch`
-> envelope, and the `query/` API were removed as dead code — nothing outside their own tests used
-> them. `core/lazy` and `core/hasher` are the surviving foundations. The docs below describe the
-> live architecture only.
+> **Dead-code audit (build_order.md §5.5/§5.9).** The former lazy family (`template`, `functor`,
+> `pipeline`, `context`, `stream`, `fix`, `lazify`, `promise`, `cache`, `serialize`) and the
+> `query/` API were removed as dead code — nothing outside their own tests used them.
+> `core/lazy` and `core/hasher` are the surviving foundations. The `Patch` envelope was also
+> removed, but that removal was a coherence error, corrected in §5.9: the patch is re-introduced
+> as the typed mutation record projected from the live event stream (`core/patch.js`,
+> `patchFromEvent`), captured per lemma into the retrieval index + digest. The docs below describe
+> the live architecture.
 
 ### 3.1 Layering
 - **Foundations** — no proof-specific assumptions; unit-tested: `core/lazy`, `core/hasher`.
@@ -132,6 +136,10 @@ The mechanisms in plain language (the only load-bearing part):
   strictly decreases.
 - **Distributed proving (P7)**: shard a development across agents with single-owner lemma edits
   and coherence checks on overlaps before merging (`growth/multibody.js`).
+- **Lemma reuse as retrieval** (§2.8): index proven lemmas by statement hash / goal shape /
+  imports / deps / proof length / tactic trajectory; a new goal retrieves a similar proven lemma
+  for exact reuse, specialization, generalization, or proof-pattern transfer. Retrieval never
+  bypasses kernel verification.
 
 ### 4.1 The resulting design patterns (summary, plain terms)
 
@@ -182,7 +190,11 @@ Detailed contracts: `architecture.md`. This is the shape.
   definitionally-equal goals share an equivalence class (transposition merging; the adopted core of Wave2's
   e-graph structure — `architecture.md` §2.2, §10).
 - **`core/scheduler.js`** — dependency-ordered dispatch with a 7-state lifecycle (Wave2 §7–8;
-  `architecture.md` §2.6). The former `Patch` envelope was removed as dead code (§5.5).
+  `architecture.md` §2.6).
+- **`core/patch.js`** — the typed mutation record (§2.7, §5.9): `Patch` + `patchFromEvent(e)`,
+  the pure projection of a loop event into `{ node, op, replacement, scope, meta }`. The patch is
+  the interface between probabilistic generation and deterministic compilation; its stream is the
+  transformation history captured per lemma into the retrieval index + digest.
 - **`agent/loop.js`** — the six-stage loop (observe → propose → act → verify → repair →
   commit) as a class; every stage emits a traced event.
 - **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (built, P4; live-kernel

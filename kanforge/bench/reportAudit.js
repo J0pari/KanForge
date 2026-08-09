@@ -10,6 +10,7 @@
 // pushed to `violations` with enough context to locate the row. `allOk` is the conjunction.
 
 import { CausalAnalyzer } from '../optimization/causal.js';
+import { wilsonInterval } from './ablation.js';
 
 // ---------------------------------------------------------------------------
 // Ablation report (bench/ablation.js → report.json)
@@ -77,6 +78,28 @@ export function auditAblationReport(report) {
         }
     }
     ok('per_recipe_recompute', !violations.some(v => v.check === 'per_recipe_recompute'), {});
+
+    // CI recompute: passRateCI must equal wilsonInterval(solved, total) (or be null for < 2 rows).
+    for (const s of perRecipe) {
+        const recipeRows = rows.filter(r => r.recipe === s.recipe);
+        const solved = recipeRows.filter(r => r.solved).length;
+        const expected = wilsonInterval(solved, recipeRows.length);
+        const reported = s.passRateCI ?? null;
+        const same = expected === null && reported === null
+            ? true
+            : expected !== null && reported !== null &&
+              Math.abs(expected[0] - reported[0]) < 1e-9 && Math.abs(expected[1] - reported[1]) < 1e-9;
+        if (!same) {
+            bad('pass_rate_ci_recompute', { recipe: s.recipe, reported, recomputed: expected });
+        }
+    }
+    ok('pass_rate_ci_recompute', !violations.some(v => v.check === 'pass_rate_ci_recompute'), {});
+
+    // Provenance: a benchmark run must carry the §5.7 provenance block with non-null keys.
+    const prov = report.config?.provenance ?? null;
+    const provMissing = prov ? ['toolchain', 'leanProject', 'model', 'provider', 'corpus'].filter(k => prov[k] == null) : ['entire block'];
+    if (provMissing.length) bad('provenance_present', { missing: provMissing });
+    ok('provenance_present', provMissing.length === 0, { missing: provMissing });
 
     // Solved rows carry no error; failed rows carry one. A "solved" row whose error is set, or
     // a row with neither solved nor error, means the outcome enum is inconsistent.

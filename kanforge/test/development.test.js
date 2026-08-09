@@ -66,6 +66,20 @@ test('writeDevelopmentDigest writes md/html/json', () => {
     assert.ok(md.includes('Chain head'));
 });
 
+test('development digest carries the §5.9 patch stream as transformation history', () => {
+    const l1 = mkLemma('l1', 'rfl');
+    l1.patchStream = [
+        { op: 'tactic', node: 'g1', replacement: 'rfl', scope: 'goal', meta: { attempt: 1, via: 'proposal' } },
+        { op: 'lemma', node: l1.id, scope: 'lemma' }
+    ];
+    const digest = assembleDevelopmentDigest({ theorem: 'theorem t : True := by sorry', refined: makeRefined([l1]) });
+    assert.strictEqual(digest.lemmas[0].patchStream.length, 2);
+    const md = renderDevelopmentWriteup(digest);
+    assert.ok(md.includes('Patch stream (2)'));
+    assert.ok(md.includes('tactic'));
+    assert.ok(md.includes('rfl'));
+});
+
 test('commitLemma writes artifacts and commits with the statement hash in the message', () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-'));
     const stmt = 'lemma l1 : True := by sorry';

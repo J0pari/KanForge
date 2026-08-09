@@ -11,6 +11,8 @@ import { SkeletonGenerator, normalizeStub } from './skeleton.js';
 import { validateBlueprint, topologicalOrder } from './dag.js';
 import { checkDrift } from './drift.js';
 import { hashStatement } from '../lean/pin.js';
+import { buildLemmaIndex } from '../growth/lemmaStore.js';
+import { Patch, patchStreamFromEvents } from '../core/patch.js';
 
 export class BlueprintRefiner {
     constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 200, lemmaStore = null, dataset = null } = {}) {
@@ -79,13 +81,29 @@ export class BlueprintRefiner {
     }
 
     async _attempt(stub, working) {
+        // §5.7 Stage 2 — exact reuse: a previously-verified statement (same hash) in the store
+        // reuses its stored proof with zero LLM/kernel spend. The proof is re-verified by the
+        // kernel at commit — retrieval never bypasses verification.
+        const stmtHash = hashStatement(stub.statement);
+        const reused = this.lemmaStore?.get(stmtHash);
+        if (reused?.proofScript) {
+            stub.proof = reused.proofScript;
+            // §5.9: a store hit is a typed `reuse` patch — recorded, not a silent shortcut.
+            stub.patchStream = [new Patch({ node: stmtHash, op: 'reuse', replacement: reused.proofScript, scope: 'lemma', meta: { source: reused.statementHash ?? stmtHash } })];
+            return { proved: true, resplit: false, added: 0, reused: true };
+        }
+
         const userOnEvent = this.loopOptions.onEvent;
+        const lemmaEvents = [];
         const loop = new TacticLoop({
             backend: this.backend,
             llm: this.llm,
             ...this.loopOptions,
             onEvent: e => {
-                this._capture(e);
+                this._currentStub = stub;
+                lemmaEvents.push(e);
+                this._capture(e, lemmaEvents);
+                this._currentStub = null;
                 userOnEvent?.(e);
             }
         });
@@ -95,6 +113,9 @@ export class BlueprintRefiner {
         if (outcome.ok) {
             const verified = loop.events().filter(e => e.type === 'lemma_verified').pop();
             stub.proof = verified?.proofScript ?? '';
+            // §5.9: the typed mutation record — the lemma's patch stream is its transformation
+            // history, stored on the stub so both the retrieval index entry and the digest carry it.
+            stub.patchStream = patchStreamFromEvents(loop.events().filter(e => e.lemmaId === verified?.lemmaId));
             return { proved: true, resplit: false, added: 0 };
         }
 
@@ -127,18 +148,24 @@ export class BlueprintRefiner {
         return { proved: false, resplit: true, added };
     }
 
-    _capture(event) {
+    _capture(event, lemmaEvents = []) {
         if (!this.lemmaStore && !this.dataset) return;
         const { statement } = event;
         if (event.type === 'lemma_verified') {
             if (this.lemmaStore) {
-                this.lemmaStore.put(hashStatement(statement), {
+                const stub = this._currentStub;
+                this.lemmaStore.put(hashStatement(statement), buildLemmaIndex({
+                    statementHash: hashStatement(statement),
                     statement,
                     proofScript: event.proofScript,
-                    goalCount: event.goalCount,
-                    ms: event.ms,
-                    timestamp: Date.now()
-                });
+                    deps: stub?.deps ?? [],
+                    goalCount: event.goalCount ?? null,
+                    ms: event.ms ?? null,
+                    // §5.9: the typed transformation history. `lemma_verified` is the lemma's
+                    // terminal event, so the accumulated array is complete at this point; the
+                    // reuse fast-path sets stub.patchStream directly (no loop ran).
+                    patchStream: (stub?.patchStream ?? patchStreamFromEvents(lemmaEvents))
+                }));
             }
             if (this.dataset) {
                 this.dataset.addSample({ lemma: statement }, event.proofScript ?? '', 'verified');

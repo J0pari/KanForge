@@ -43,7 +43,8 @@ export function assembleDevelopmentDigest({ theorem, refined, statementHash = nu
             statement: l.statement,
             deps: l.deps,
             pinnedHash: l.pinnedHash,
-            proof: l.proof ?? null
+            proof: l.proof ?? null,
+            patchStream: l.patchStream ?? [] // §5.9: typed transformation history per lemma
         })),
         proved,
         unproved,
@@ -94,6 +95,16 @@ export function renderDevelopmentWriteup(digest) {
             lines.push('');
             lines.push('```lean');
             lines.push(l.proof);
+            lines.push('```');
+        }
+        if (l.patchStream?.length) {
+            lines.push(`- Patch stream (${l.patchStream.length}):`);
+            lines.push('');
+            lines.push('```');
+            for (const p of l.patchStream) {
+                const meta = p.meta && Object.keys(p.meta).length ? ` meta={${Object.entries(p.meta).map(([k, v]) => `${k}:${v}`).join(',')}}` : '';
+                lines.push(`${p.op} ${p.scope ?? ''}${p.node ? ` ${String(p.node).slice(0, 12)}` : ''}${p.replacement ? ` <- ${String(p.replacement).slice(0, 40)}` : ''}${meta}`);
+            }
             lines.push('```');
         }
         lines.push('');

@@ -90,7 +90,34 @@ process; statements should import the specific Mathlib modules they need.
 
 ## Usage
 
-### Running the Smoke Test
+### Running the open-problem workflow (the one intended use)
+
+KanForge exists to take an open target theorem and produce a kernel-verified proof plus a
+reproducible audit trail (architecture.md §0). The blueprint runner is that pipeline:
+
+```bash
+# Prove a theorem with no known answer in hand: skeleton → refine → digest → per-lemma commits
+node blueprint/run.js "import Mathlib.Data.Nat.Basic
+
+example (a b c d : Nat) (hab : a ≤ b) (hcd : c ≤ d) : a * c ≤ b * d := by sorry" \
+  --out-dir=runs/my_target --repo-dir=runs/my_target_repo
+
+# A re-run of an already-proven development reuses the stored proofs (zero LLM/kernel spend)
+node blueprint/run.js "<same theorem>" --out-dir=runs/my_target_rerun
+```
+
+The run writes `development.md` / `development.html` / `development.json` (writeup + audit pack +
+hash chain) and commits each verified lemma to the scratch repo with its statement hash in the
+commit message.
+
+### Running the component ablation graph (the measurement apparatus)
+
+```bash
+# Full factorial over component toggles: main effects + pairwise interactions at equal budget
+node bench/ablation.js --set=core --ablate=menu,premises,predictors --max-llm-calls=60
+```
+
+### Running the Smoke Test (safety harness)
 
 ```bash
 # Run all 23 core smoke problems
@@ -146,6 +173,7 @@ kanforge/
 │   ├── egraph.js       # Goal equivalence graph
 │   ├── pullgraph.js    # Memoized dependency DAG
 │   ├── scheduler.js    # Dependency-ordered dispatch
+│   ├── patch.js        # Typed mutation record (Patch + patchFromEvent)
 │   ├── state.js        # Proof tree ↔ script conversion
 │   ├── hasher.js       # Statement/event hash chains
 │   └── guardrails.js   # Invariant enforcement
@@ -199,7 +227,8 @@ live suite covers a Mathlib-only module (`Mathlib.Data.Real.Basic`, `#check Real
 `linarith`, `norm_num`, `tauto`, etc. — are available when the statement imports the module that
 provides them (e.g. `Mathlib.Data.Real.Basic` / `Mathlib.Data.Nat.Basic`).
 
-**Verified against the real Lean 4 kernel** (live REPL suite, no mocks; core Lean + Std only):
+**Verified against the real Lean 4 kernel** (live REPL suite, no mocks; core Lean + Std, plus the
+Mathlib-enabled repl in `lean-project`):
 
 - Linear arithmetic over `Nat` via `omega` — `trans_lt` proved end-to-end by the loop
 - Multi-goal decomposition via `induction` (case `zero` / `succ`), closed with `rfl`
@@ -219,33 +248,52 @@ provides them (e.g. `Mathlib.Data.Real.Basic` / `Mathlib.Data.Nat.Basic`).
 - Blueprint DAG validation + topological ordering (`blueprint/dag.js`)
 - Skeleton decomposition parsing + stub normalization (incl. `lemma` → `theorem`)
 - Refine loop: bottom-up fill, re-split (adds children, never edits statements), drift checks
-- Lemma-store persistence (write-through atomic, corruption-tolerant) and training-dataset
-  append/split/contamination logic
+- Lemma-store persistence + **retrieval index** (build_order.md §5.7): index columns at capture,
+  exact-reuse lookup, `findSimilar` ranked retrieval
+- Training-dataset append/split/contamination logic
 - Premise retrieval (`search/premises.js`): BM25 lexical scorer ranks a premise corpus against the
   goal; `TacticLoop` injects the top-k premises into the prompt, and premise-locked mode makes
   `premise-locked` commit-time guardrail tripping a kernel-verified proof that cites an unretrieved
   premise. The lexical baseline is the bar any learned retriever must beat.
 - Search ablation harness (`bench/ablation.js`): runs the smoke set through every recipe —
   `bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion` — under a
-  shared LLM-call budget and writes per-recipe + per-problem comparison tables (pass rate AND budget,
-  not pass rate alone), implementing the "compare, then decide" acceptance of `build_order.md` §5.1.
+  shared LLM-call budget and writes per-recipe + per-problem comparison tables (pass rate + Wilson
+  CI + cost), implementing the "compare, then decide" acceptance of `build_order.md` §5.1.
+- Component ablation **graph** (`bench/ablation.js --ablate=<comps>`, build_order.md §5.8): full
+  factorial over component toggles with per-configuration pass rates, component **main effects**,
+  and **pairwise interactions** — the additivity/commutativity test, with no assumed rung order.
+- Metrics catalog (`optimization/metrics.js`, architecture.md §6.1): search efficiency/quality,
+  planning, learning, and economic KPIs from the event stream; values the stream cannot produce
+  are `null`, never fabricated.
 - Repulsion (Goedel-style diversity): `search/repulsion.js` `RepulsionSampler` steers proposals away
   from already-tried tactics ("do not repeat") and refuses duplicate re-checks in `MCGS`/`BestFirstSearch`.
 
 **Not built / stubbed — do not treat as working behavior:**
 
-- **Search baselines in the live loop** — `agent/loop.js` only consumes `swiss` (via `useSwiss:
-  true`) as a per-goal strategy. `bestofn`, `bfs`, `mcgs`, `repulsion` are runnable as standalone
+- **Search baselines in the live loop** — `agent/loop.js` consumes `swiss` (via `useSwiss: true`)
+  as a per-goal strategy. `bestofn`, `bfs`, `mcgs`, `repulsion` are runnable as standalone
   strategies and as recipes of the ablation harness (`bench/ablation.js`), but the loop has no
   goal-selection mode that consumes them directly yet — that wiring is the measured next step once
   the ablation comparison exists.
-- **`kanforge/runs/`** — the directory contains audit packs from **mock-backend test runs**. Some
-  entries (e.g. `P → Q` "proved" by `intro h; omega`) are **not** kernel-verified; they were
-  produced by the test mock and are not real theorems. Do not cite `runs/` output as evidence.
-- **CI** — no CI configuration; `npm test` runs locally only.
+- **`kanforge/runs/`** — older entries are audit packs from **mock-backend test runs** (e.g.
+  `P → Q` "proved" by `intro h; omega`) that are **not** kernel-verified; do not cite them as
+  evidence. Newer runs from `blueprint/run.js` write a kernel-verified development digest
+  (writeup + audit + hash chain) plus per-lemma commits; those are real.
+- **CI** — no CI configuration; `npm test` runs locally only. The `*.live.test.js` suites (real
+  repl binary) skip automatically when the binary/project is unavailable.
 - **Inherited footprint** — roughly half the repo's disk footprint is from the unrelated prior
   project this was scaffolded from (a document generator + a higher-category-theory course).
   Documented, not hidden: see `docs/patterns_from_hct.md`.
+
+**Removed as dead code (build_order.md §5.5), with one correction (§5.9):** the former lazy-family
+(`core/pipeline`, `functor`, `promise`, `cache`, `context`, `fix`, `lazify`, `serialize`, `stream`,
+`template`) and the `query/` API were removed — nothing in the live path used them, and the query
+server's `/integrity/verify` returned a hardcoded `ok` rather than verifying. `core/lazy` and
+`core/hasher` are the surviving foundations. The `Patch` envelope was removed in the same sweep,
+but that removal was a coherence error — the loop's core operation IS a typed mutation — and is
+corrected in §5.9: the patch is re-introduced as the typed mutation record projected from the live
+event stream (`core/patch.js` `patchFromEvent`), captured per lemma into the retrieval index +
+development digest as the transformation history.
 
 ## Design Principles
 
@@ -290,6 +338,9 @@ provides them (e.g. `Mathlib.Data.Real.Basic` / `Mathlib.Data.Nat.Basic`).
       loop, re-splits stuck stubs (adds children, never edits statements), drift-checked each round
 - [x] **Growth persistence** — `growth/lemmaStore.js` (content-addressed, write-through) and
       `growth/dataset.js` (append-only JSONL, held-out split, contamination check)
+- [x] **Development digest + per-lemma commits** — `blueprint/run.js` writes the whole-development
+      writeup/audit/hash-chain (`digest/development.js`) and commits each verified lemma to a
+      scratch repo (`growth/commit.js`); every run emits a reproducible publication artifact.
 - [x] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
       unblocks learned premise retrieval and the miniF2F corpus. Live suite exercises `Mathlib.Data.Real.Basic`
       via the `LEAN_PATH` the backend reconstructs from `KANFORGE_LEAN_PROJECT`.
@@ -299,8 +350,18 @@ provides them (e.g. `Mathlib.Data.Real.Basic` / `Mathlib.Data.Nat.Basic`).
       repl build).
 - [x] **Search ablation harness** — `bench/ablation.js`: smoke set × every recipe (bestofn, swiss,
       ±repulsion, bfs, mcgs) under a shared budget, with per-recipe/per-problem comparison tables
-      (pass rate + LLM/kernel cost). This is the "compare, then decide" machinery that settles
+      (pass rate + Wilson CI + LLM/kernel cost). This is the "compare, then decide" machinery that settles
       swiss-vs-mcgs empirically; the live-loop goal-selection wiring is gated on its first real run.
+- [x] **Ablation graph + benchmark discipline** — `bench/ablation.js --ablate=<comps>` runs the
+      full factorial over component toggles with main effects + pairwise interactions
+      (build_order.md §5.8); every report carries a full provenance block (toolchain, model,
+      corpus, policy, resource usage).
+- [x] **Metrics catalog** — `optimization/metrics.js` emits the §6.1 KPI catalog
+      (search efficiency/quality, planning, learning, economic) from the event stream; loop
+      instruments llm latency/tokens + first-success rank.
+- [x] **Lemma store → retrieval index** — `growth/lemmaStore.js` indexes by goal shape, imports,
+      deps, proof length, tactic trajectory; `blueprint/refine.js` exact-reuses stored proofs
+      (build_order.md §5.7).
 - [ ] **LLM-as-judge** — trained 8B validator for tactic ranking and proof grading
 - [ ] **Category-aware tactics** — detect problem type (algebra, geometry, combinatorics) and adjust tactic libraries
 - [ ] **Proof critic** — auto-generate issue summaries to guide repair loops

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { auditAblationReport, auditTrainerReport } from '../bench/reportAudit.js';
+import { wilsonInterval } from '../bench/ablation.js';
 import { CausalAnalyzer } from '../optimization/causal.js';
 
 test('ablation audit passes on a self-consistent report', () => {
@@ -12,10 +13,13 @@ test('ablation audit passes on a self-consistent report', () => {
     ];
     const report = {
         generatedAt: 't',
-        config: { recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 60, problemCount: 2 },
+        config: {
+            recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 60, problemCount: 2,
+            provenance: { toolchain: 't', leanProject: 'p', model: 'm', provider: 'o', corpus: 'core' }
+        },
         perRecipe: [
-            { recipe: 'bestofn', solved: 1, total: 2, passRate: 0.5, llmCalls: 13, tacticCalls: 5, skipped: 1, wallMs: 300, solvedLlmCalls: 5, meanLlmCallsPerSolved: 5, problems: [] },
-            { recipe: 'mcgs', solved: 1, total: 2, passRate: 0.5, llmCalls: 10, tacticCalls: 6, skipped: 2, wallMs: 240, solvedLlmCalls: 4, meanLlmCallsPerSolved: 4, problems: [] }
+            { recipe: 'bestofn', solved: 1, total: 2, passRate: 0.5, passRateCI: wilsonInterval(1, 2), llmCalls: 13, tacticCalls: 5, skipped: 1, wallMs: 300, solvedLlmCalls: 5, meanLlmCallsPerSolved: 5, problems: [] },
+            { recipe: 'mcgs', solved: 1, total: 2, passRate: 0.5, passRateCI: wilsonInterval(1, 2), llmCalls: 10, tacticCalls: 6, skipped: 2, wallMs: 240, solvedLlmCalls: 4, meanLlmCallsPerSolved: 4, problems: [] }
         ],
         perProblem: [
             { id: 'a', tier: 1, solvedBy: ['bestofn'] },
@@ -91,6 +95,49 @@ test('ablation audit flags a row that blew its budget', () => {
     const audit = auditAblationReport(report);
     assert.strictEqual(audit.allOk, false);
     assert.ok(audit.violations.some(v => v.check === 'budget_respected'));
+});
+
+test('ablation audit flags a fabricated pass-rate CI', () => {
+    const rows = [
+        { recipe: 'bestofn', id: 'a', tier: 1, solved: true, error: null, llmCalls: 5, tacticCalls: 3, skipped: 0, ms: 100 },
+        { recipe: 'bestofn', id: 'b', tier: 1, solved: false, error: 'budget exhausted', llmCalls: 8, tacticCalls: 2, skipped: 0, ms: 200 }
+    ];
+    const report = {
+        generatedAt: 't',
+        config: { recipes: ['bestofn'], N: 4, maxLlmCalls: 60, problemCount: 2 },
+        perRecipe: [
+            // passRateCI is wrong on purpose: [0.0, 1.0] is not the Wilson interval for 1/2
+            { recipe: 'bestofn', solved: 1, total: 2, passRate: 0.5, passRateCI: [0, 1], llmCalls: 13, tacticCalls: 5, skipped: 0, wallMs: 300, solvedLlmCalls: 5, meanLlmCallsPerSolved: 5, problems: [] }
+        ],
+        perProblem: [
+            { id: 'a', tier: 1, solvedBy: ['bestofn'] },
+            { id: 'b', tier: 1, solvedBy: ['bestofn'] }
+        ],
+        detail: rows,
+        pairwise: []
+    };
+    const audit = auditAblationReport(report);
+    assert.strictEqual(audit.allOk, false);
+    assert.ok(audit.violations.some(v => v.check === 'pass_rate_ci_recompute'));
+});
+
+test('ablation audit flags a missing provenance block', () => {
+    const rows = [
+        { recipe: 'bestofn', id: 'a', tier: 1, solved: true, error: null, llmCalls: 5, tacticCalls: 3, skipped: 0, ms: 100 }
+    ];
+    const report = {
+        generatedAt: 't',
+        config: { recipes: ['bestofn'], N: 4, maxLlmCalls: 60, problemCount: 1 },
+        perRecipe: [
+            { recipe: 'bestofn', solved: 1, total: 1, passRate: 1, llmCalls: 5, tacticCalls: 3, skipped: 0, wallMs: 100, solvedLlmCalls: 5, meanLlmCallsPerSolved: 5, problems: [] }
+        ],
+        perProblem: [{ id: 'a', tier: 1, solvedBy: ['bestofn'] }],
+        detail: rows,
+        pairwise: []
+    };
+    const audit = auditAblationReport(report);
+    assert.strictEqual(audit.allOk, false);
+    assert.ok(audit.violations.some(v => v.check === 'provenance_present'));
 });
 
 // Trainer report audit: the exact regression class that produced "solved=1 failed=5 events=48"
