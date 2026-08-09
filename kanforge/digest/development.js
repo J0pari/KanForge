@@ -11,7 +11,9 @@ import { hashChainEntry } from '../core/hasher.js';
 
 // Assemble the development-level publication record.
 //   refined: { ok, refined: { lemmas: [{ id, statement, deps, pinnedHash, proof }] }, proved, unproved, rounds, stored }
-export function assembleDevelopmentDigest({ theorem, refined, statementHash = null, assumptions = [] }) {
+//   provenance: { toolchain, leanProject, model, provider, ... } — architecture.md §5.7 requires
+//   the model + environment in every report so a result is reproducible and attributable.
+export function assembleDevelopmentDigest({ theorem, refined, statementHash = null, assumptions = [], provenance = null }) {
     const lemmas = refined.refined.lemmas;
     const proved = refined.proved;
     const unproved = refined.unproved;
@@ -38,6 +40,7 @@ export function assembleDevelopmentDigest({ theorem, refined, statementHash = nu
     return {
         theorem,
         statementHash: statementHash ?? hashStatement(theorem),
+        provenance: provenance ?? null,
         lemmas: lemmas.map(l => ({
             id: l.id,
             statement: l.statement,
@@ -70,6 +73,15 @@ export function renderDevelopmentWriteup(digest) {
     lines.push(`- Statement hash: \`${digest.statementHash}\``);
     lines.push(`- Proved: ${digest.proved.length}/${digest.lemmas.length}`);
     lines.push(`- Unproved: ${digest.unproved.length}`);
+    if (digest.provenance) {
+        lines.push('');
+        lines.push('## Provenance');
+        lines.push('');
+        for (const [k, v] of Object.entries(digest.provenance)) {
+            if (v === null || v === undefined) continue;
+            lines.push(`- ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+        }
+    }
     lines.push('');
     lines.push('## Assumption ledger');
     lines.push('');

@@ -66,6 +66,21 @@ test('writeDevelopmentDigest writes md/html/json', () => {
     assert.ok(md.includes('Chain head'));
 });
 
+test('development digest records model provenance in JSON + writeup (architecture.md §5.7)', () => {
+    const l1 = mkLemma('l1', 'rfl');
+    const refined = makeRefined([l1]);
+    const digest = assembleDevelopmentDigest({
+        theorem: 'theorem t : True := by sorry',
+        refined,
+        provenance: { provider: 'opencode', model: 'deepseek-v4-flash', toolchain: 'leanprover/lean4:v4.33.0-rc1' }
+    });
+    assert.strictEqual(digest.provenance.model, 'deepseek-v4-flash');
+    assert.strictEqual(digest.provenance.provider, 'opencode');
+    const md = renderDevelopmentWriteup(digest);
+    assert.ok(md.includes('## Provenance'));
+    assert.ok(md.includes('model: deepseek-v4-flash'));
+});
+
 test('development digest carries the §5.9 patch stream as transformation history', () => {
     const l1 = mkLemma('l1', 'rfl');
     l1.patchStream = [

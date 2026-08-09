@@ -65,7 +65,12 @@ export async function trainPredictors({ backend, llm, problems = SMOKE_PROBLEMS,
 
     const report = {
         generatedAt: new Date().toISOString(),
-        config: { window, minSupport, minConfidence, problemCount: problems.length, solved, failed },
+        config: {
+            window, minSupport, minConfidence, problemCount: problems.length, solved, failed,
+            // Provenance (architecture.md §5.7): the model that produced this training run.
+            model: llm?.getModel?.() ?? null,
+            provider: llm?.getProvider?.() ?? null
+        },
         problems: problems.map(p => ({ id: p.id, tier: p.tier, family: p.family })),
         lemmas,
         predictors,

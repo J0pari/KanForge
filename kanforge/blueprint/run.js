@@ -16,7 +16,7 @@ import { hashStatement } from '../lean/pin.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, repoDir = null } = {}) {
+export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, repoDir = null, provenance = null } = {}) {
     if (!backend || !llm) throw new Error('runBlueprintTheorem requires a real backend and a real llm client');
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
@@ -47,7 +47,8 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         theorem,
         refined,
         statementHash: hashStatement(theorem),
-        assumptions: generated.warnings ?? []
+        assumptions: generated.warnings ?? [],
+        provenance
     });
     const digestPaths = writeDevelopmentDigest(digest, workDir);
 
@@ -133,6 +134,19 @@ async function main() {
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
+    // Provenance block (architecture.md §5.7): every development report records the model that
+    // produced it, so a result is attributable and reproducible. The active model is the value of
+    // KANFORGE_LLM_MODEL at run time — flagging it here means a switched model is never ambiguous
+    // in the digest.
+    const provenance = {
+        toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN ?? null,
+        leanProject: ENV.KANFORGE_LEAN_PROJECT ?? null,
+        provider: llmConfig.provider ?? null,
+        model: llmConfig.model ?? null,
+        promptVersion: null // prompts are inline in agent/prompts.js; a version constant is §5.8 backlog
+    };
+    console.log(`[blueprint] model: ${llmConfig.provider}/${llmConfig.model} (KANFORGE_LLM_MODEL)`);
+
     try {
         const r = await runBlueprintTheorem({
             backend: pool,
@@ -141,7 +155,8 @@ async function main() {
             outDir,
             loopOptions: { concurrency, maxTacticsPerGoal: maxTactics },
             maxRounds,
-            repoDir
+            repoDir,
+            provenance
         });
         printBlueprintSummary(r);
         if (!r.ok) process.exit(1);

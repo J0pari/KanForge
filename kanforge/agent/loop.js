@@ -471,6 +471,8 @@ export class TacticLoop {
 
         // KPI summary (build_order.md §5.6, architecture.md §6.1): surface the full metrics
         // catalog so the bench and digest layers can report quantitatively, not just functionally.
+        // Provenance (architecture.md §5.7): the model that produced this run is recorded so
+        // telemetry is attributable when the model is switched.
         const wallMs = Date.now() - (this._runStart ?? Date.now());
         const metrics = computeMetrics(this.store.events);
         metrics.secondsPerTheorem = (metrics.verifiedLemmas > 0 ? wallMs / 1000 / metrics.verifiedLemmas : null);
@@ -478,7 +480,9 @@ export class TacticLoop {
             ...metrics,
             llmCalls: this.llmCalls,
             tacticCalls: this.tacticCalls,
-            wallMs
+            wallMs,
+            model: this.llm?.getModel?.() ?? null,
+            provider: this.llm?.getProvider?.() ?? null
         };
 
         return outcome;
