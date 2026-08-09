@@ -122,6 +122,4 @@ All tricks below apply at the **tactic level** (Level 2, `architecture.md` §2.2
 The foundational primitives in `kanforge/core/` (`lazy`, `hasher`, `patch`) and the
 telemetry/instrumentation modules (`optimization/*`, `digest/*`, `growth/*`) are re-implementations
 of lazy build-system machinery under KanForge's domain (proofs, not documents); correctness is
-enforced by the unit-test suite, not by trust in the source. Detailed name lineage is recorded in
-`patterns_from_hct.md` so that `architecture.md` and `blueprint.md` can state contracts without
-external attribution.
+enforced by the unit-test suite, not by trust in the source.

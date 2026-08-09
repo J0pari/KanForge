@@ -9,10 +9,9 @@ it instead.
 | `architecture.md` | repo layout, module/file names, API contracts, wire formats, event vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, module inventory | — |
 | `research_notes_2026.md` | systems landscape, working tricks, design warnings, source list, implementation lineage | — |
 | `build_order.md` | phases, deliverables, acceptance criteria, sequencing, staffing, definition of done | architecture (layout, events, reward, guardrails), research_notes (evidence) |
-| `blueprint.md` | goal/non-goals, design narrative, module inventory, architecture overview, evaluation plan | architecture, research_notes, patterns_from_hct |
-| `patterns_from_hct.md` | historical HCT metaphor lineage → design names (non-binding; no mapping is load-bearing) | architecture (canonical module paths) |
-| `Research/whitepaper.md` | aspirational vision (template source doc), not binding | — |
-| `Research/architecture wave2.md` | aspirational wave-2 design (template source doc), not binding; adopted items are those reflected in architecture.md/build_order.md; everything else is deferred | — |
+| `blueprint.md` | goal/non-goals, design narrative, module inventory, architecture overview, evaluation plan | architecture, research_notes |
+| `Research/KanForge_whitepaper.md` | aspirational vision (template source doc), not binding | — |
+| `Research/KanForge_architecture.md` | aspirational compiler-architecture vision (template source doc), not binding; adopted items are those reflected in architecture.md/build_order.md; everything else is deferred | — |
 
 Editing rule: when a fact changes, edit its owner doc and update *references* (pointers) in the
 others — never duplicate the fact.

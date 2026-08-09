@@ -283,9 +283,6 @@ Mathlib-enabled repl in `lean-project`):
   (writeup + audit + hash chain) plus per-lemma commits; those are real.
 - **CI** — no CI configuration; `npm test` runs locally only. The `*.live.test.js` suites (real
   repl binary) skip automatically when the binary/project is unavailable.
-- **Inherited footprint** — roughly half the repo's disk footprint is from the unrelated prior
-  project this was scaffolded from (a document generator + a higher-category-theory course).
-  Documented, not hidden: see `docs/patterns_from_hct.md`.
 
 **Foundations:** `core/lazy` and `core/hasher` are the surviving foundational primitives; the
 `query/` API is deferred (architecture.md §8). The patch algebra lives in `core/patch.js`

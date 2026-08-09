@@ -6,9 +6,7 @@ demands it. Implementation lineage (which existing libraries the foundational pr
 a provenance matter, documented in `research_notes_2026.md` §4, not argued here.
 
 **Working title:** *KanForge*. The mechanisms are ordinary programming constructs (lazy
-evaluation, pipeline stage composition, a proof DAG, pinned statements). Historical name lineage
-is documented in `patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the
-agent.
+evaluation, pipeline stage composition, a proof DAG, pinned statements).
 
 > This document is the design narrative. It states *why* and *what*. The *how* — module
 > contracts, file layout, event vocabulary, reward defaults, wire formats — lives in
@@ -106,8 +104,7 @@ contracts is `architecture.md`.
 ## 4. Design patterns (plain terms)
 
 The mechanisms below are ordinary programming constructs — lazy evaluation, pipeline stage
-composition, a proof DAG, pinned statements. Historical name lineage is documented in
-`patterns_from_hct.md`; it is intuition, not a claim about the mathematics of the agent.
+composition, a proof DAG, pinned statements.
 `architecture.md` defines the actual contract in plain terms.
 
 The mechanisms in plain language (the only load-bearing part):
@@ -148,7 +145,7 @@ The mechanisms in plain language (the only load-bearing part):
 
 ### 4.2 Inspiration vs specification
 
-The name lineage in `patterns_from_hct.md` is historical; it is not the specification. The rule:
+The name lineage of the mechanisms is historical; it is not the specification. The rule:
 wherever a historical mapping would require implementing its literal mathematical object, the module
 contract in `architecture.md` wins and the mapping is re-framed — never the reverse. Implementors
 must not add a category-theory dependency or a "Kan-extension engine".
