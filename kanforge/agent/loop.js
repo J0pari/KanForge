@@ -30,6 +30,7 @@ import { straighten, buildProofSource } from '../core/state.js';
 import { Guardrails } from '../core/guardrails.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
+import { computeMetrics } from '../optimization/metrics.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
 import { bestOfNWithSwiss, buildPairwiseJudge } from '../search/swiss.js';
@@ -457,6 +458,15 @@ export class TacticLoop {
                 this._emit({ type: 'guardrail_trip', lemmaId: null, violation: { type: 'HASH_CHAIN_BROKEN', message: chain.reason } }, null);
             }
         }
+
+        // KPI summary (build_order.md P1.1): surface success rate + cost per run so the bench
+        // and digest layers can report them without re-deriving from the event stream.
+        outcome.metrics = {
+            ...computeMetrics(this.store.events),
+            llmCalls: this.llmCalls,
+            tacticCalls: this.tacticCalls,
+            guardrailTrips: this.store.events.filter(e => e.type === 'guardrail_trip').length
+        };
 
         return outcome;
     }

@@ -68,43 +68,36 @@ section only argues the shape.
 
 | Module | Role in KanForge | Why it exists |
 |---|---|---|
-| `core/lazy.js` | memoized thunk; `map`/`flatMap` sequential composition | goals/lemmas are expensive; compute each at most once, only when forced (§4.6) |
-| `core/template.js` | strings materialize only on `toString()` | build prompts/tactic templates without paying for unneeded text |
-| `core/functor.js` | `map`/`extract` over "possibly-lazy" structures | work uniformly over results that may or may not be computed yet |
-| `core/pipeline.js` | stage composition | the agent loop is a pipeline of stages; stages compose in order and each emits traced events (§4.5) |
-| `core/context.js` | environment-passing | thread per-run config (budget, model, library) without globals |
-| `core/stream.js` | head-strict / tail-lazy streams | search frontiers, event streams, telemetry windows are unbounded but cheaply forced |
-| `core/fix.js`, `lazify` | lazy self-referential streams; memoized proxied calls | search frontiers are unbounded but only forced as far as needed (§4.1) |
-| `core/pullgraph.js` | pull-based dependency DAG; invalidation; serialize/deserialize; error boundaries | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's e-graph); checkpoint/resume, error containment (§4.6) |
-| `core/promise.js` | async-thunk pull | async Lean round-trips without leaking partial state |
-| `core/cache.js` | lazy keyed cache | lemma/mathlib caches; compact-eager vs general-lazy split (§4.6) |
+| `core/lazy.js` | memoized thunk | goals/lemmas are expensive; PullGraph registers each computation lazily (§4.6) |
+| `core/pullgraph.js` | memoized dependency DAG; invalidation; serialize/deserialize | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's e-graph); checkpoint/resume, error containment (§4.6) |
 | `core/hasher.js` | absorbing hash chains; integrity verify | statement pinning + tamper-evident audit trail |
 | `core/state.js` | straighten/unstraighten (tree ↔ script) | lossless dual representation — the backbone (§4.2) |
-| `core/patch.js` | typed patch envelope | candidates as reorderable/mergeable/discardable graph mutations |
 | `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
 | `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously |
 | `optimization/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
 | `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
 | `optimization/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
-| `optimization/metrics.js` | KPI calculator | agent KPIs: pass@1/k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, reuse, guardrail trips |
-| `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
-| `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards |
-| `growth/commit.js` | commit-per-lemma | content-addressed library growth; statement hash in the message |
+| `optimization/metrics.js` | KPI calculator (wired into the loop's per-run outcome) | agent KPIs: pass@1/k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, reuse, guardrail trips |
+| `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors — not yet built |
+| `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards — not yet built |
+| `growth/commit.js` | commit-per-lemma to a scratch repo | content-addressed library growth; statement hash in the message |
 | `growth/lemmaStore.js` | content-addressed lemma store | reproducible lemma reuse |
 | `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
-| `digest/writeup.js` | parse → render (Markdown/HTML/PDF, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
-| `query/server.js` | signed, rate-limited query API over telemetry | "why is the agent failing" API for humans |
-| `query/formatters.js` + `gui/` | semantic formatters; WebSocket dashboard | CLI/GUI explanations and the operator cockpit |
+| `digest/writeup.js` | parse → render (Markdown/HTML, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
+| `digest/development.js` | whole-development digest (writeup + audit + hash chain) | the publication unit (§7) |
+
+> **Dead-code audit (build_order.md §5.5).** The former lazy family (`template`, `functor`,
+> `pipeline`, `context`, `stream`, `fix`, `lazify`, `promise`, `cache`, `serialize`), the `Patch`
+> envelope, and the `query/` API were removed as dead code — nothing outside their own tests used
+> them. `core/lazy` and `core/hasher` are the surviving foundations. The docs below describe the
+> live architecture only.
 
 ### 3.1 Layering
-- **Foundations** — no proof-specific assumptions; generic lazy/pull primitives, fully
-  unit-tested: `lazy`, `stream`, `promise`, `cache`, `pipeline`, `context`, `fix`, `functor`,
-  `template`, `serialize`, `hasher`.
+- **Foundations** — no proof-specific assumptions; unit-tested: `core/lazy`, `core/hasher`.
 - **Proof domain** — what makes this a *proof* refinery rather than a generic build system:
-  `pullgraph` (proof DAG), `state` (tree↔script), `patch`, `scheduler`, `guardrails`, plus
+  `pullgraph` (proof DAG), `state` (tree↔script), `scheduler`, `guardrails`, plus
   `lean/*`, `agent/*`, `blueprint/*`, `search/*`.
-- **Instrumentation, growth, presentation** — `optimization/*`, `growth/*`, `query/*`,
-  `digest/*`, `bench/*`.
+- **Instrumentation, growth, presentation** — `optimization/*`, `growth/*`, `digest/*`, `bench/*`.
 
 Order of construction (which module lands in which phase) is `build_order.md`; precedence of
 contracts is `architecture.md`.
@@ -120,10 +113,10 @@ composition, a proof DAG, pinned statements. Historical name lineage is document
 
 The mechanisms in plain language (the only load-bearing part):
 
-- **Lazy evaluation everywhere**: memoized thunks, lazily-forced unbounded streams,
-  self-referential frontiers (`core/lazy`, `core/fix`, `core/stream`).
-- **Pipeline stage composition for the loop**: observe → propose → act → verify → repair →
-  commit, each stage emitting a traced event (`core/pipeline`, `agent/loop.js`).
+- **Memoized pull DAG**: each lemma/goal computation is a memoized thunk registered on the DAG;
+  the scheduler dispatches dependency-ordered (`core/lazy`, `core/pullgraph`, `core/scheduler`).
+- **Stage-structured loop**: observe → propose → act → verify → repair → commit, each stage
+  emitting a traced event (`agent/loop.js` — a class, not a composed monadic pipeline).
 - **Dual proof representation**: a proof tree (for surgery) and a Lean script (for the kernel),
   converted losslessly (`core/state.js`).
 - **LLM proposes, kernel disposes**: every tactic is verified by Lean before commit; a goal is
@@ -135,8 +128,6 @@ The mechanisms in plain language (the only load-bearing part):
   (`core/guardrails.js`).
 - **Blueprint skeleton → refine**: decompose a theorem into typechecked `sorry` stubs, then fill
   the lowest stub bottom-up (`blueprint/`, P4).
-- **Caching split**: eagerly materialize small objects, lazily generate the rest
-  (`core/cache.js`).
 - **Open-goal accounting for progress**: a lemma makes progress when its open-goal count/rank
   strictly decreases.
 - **Distributed proving (P7)**: shard a development across agents with single-owner lemma edits
@@ -147,11 +138,10 @@ The mechanisms in plain language (the only load-bearing part):
 - Dual proof representations with lossless straighten/unstraighten.
 - LLM-propose + kernel-verify loop with a goal-solved stopping rule.
 - Blueprint skeleton → refine two-phase buildout (statements never change; stubs shrink).
-- Lazily-forced unbounded search frontiers.
+- Memoized dependency-ordered dispatch over the proof DAG.
 - Coherence-checked distributed proving (P7).
 - Open-goal accounting for progress.
-- Eager-vs-lazy caching split by object size.
-- Pipeline stage composition of the whole loop.
+- Stage-structured loop (observe → propose → act → verify → repair → commit) as a class.
 
 ### 4.2 Inspiration vs specification
 
@@ -178,36 +168,37 @@ Detailed contracts: `architecture.md`. This is the shape.
                      Sharpening: causal analysis → reward → GRPO / search bias
                           │
                           ▼
-                     Digestion (writeups) · per-lemma git commits · Hasher audit · query API
+                     Digestion (writeups) · per-lemma git commits · Hasher audit · development digest
 ```
 
 ### 5.1 Component notes (behavior, not contracts)
-- **`lean/backend.js`** — adapter interface + two implementations (REPL over a process pool,
-  `lean` CLI; `lean4web` is deferred until a real instance is exercised). Default for RL is the
-  REPL over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes every checked goal
-  carry a hash; mutation = `WEAKENED` + guardrail trip.
-- **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); `pull()`
-  proves on demand, `serialize()` is the checkpoint. Error boundary per node:
+- **`lean/backend.js`** — adapter interface + factory (`createBackend`), two implementations (REPL
+  over a process pool, `lean` CLI; `lean4web` is deferred until a real instance is exercised).
+  Default is the REPL over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes
+  every checked goal carry a hash; mutation = `WEAKENED` + guardrail trip.
+- **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); memoized per node, `serialize()` is the checkpoint, `invalidate()` triggers transitive re-verification. The scheduler dispatches via a `check(nodeId)` callback; the loop reads
+  `nodes.get(id).computation.value` directly. Error boundary per node:
   `retry → repair → skip (never weaken)`. Node identity is normalized so alpha-equivalent /
   definitionally-equal goals share an equivalence class (transposition merging; the adopted core of Wave2's
   e-graph structure — `architecture.md` §2.2, §10).
-- **`core/patch.js` + `core/scheduler.js`** — candidates are typed patches (Wave2 §4; the
-  Lean-relevant operator subset: tactic / lemma / rewrite / replace), and dispatch is a
-  dependency-ordered scheduler with a 7-state lifecycle (Wave2 §7–8; `architecture.md` §2.6–2.7).
-- **`agent/loop.js`** — the six-stage pipeline loop (observe → propose → act → verify → repair →
-  commit); every stage emits a traced event.
+- **`core/scheduler.js`** — dependency-ordered dispatch with a 7-state lifecycle (Wave2 §7–8;
+  `architecture.md` §2.6). The former `Patch` envelope was removed as dead code (§5.5).
+- **`agent/loop.js`** — the six-stage loop (observe → propose → act → verify → repair →
+  commit) as a class; every stage emits a traced event.
 - **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (built, P4; live-kernel
   tested): stub statements are kernel-typechecked so the DAG is kernel-valid even before proving;
   refine fills the lowest unproved stub bottom-up and re-splits stuck stubs (never edits statements).
 - **`optimization/*`** — `causal.js` produces the transition matrix, failure predictors,
   bottlenecks, critical path. These are the RL features and the "why is it failing" answers.
+  `metrics.js` KPIs are attached to every loop outcome.
 - **`search/*`** — best-of-N baseline, BFS, MCGS with transposition merging, repulsion,
-  premise retrieval.
-- **`growth/commit.js`** — commit-per-lemma with statement hash in the message; the lemma store
-  is content-addressed.
-- **`query/server.js`** — signed API answering the questions above for humans; GUI via `query/gui/`.
-- **`digest/writeup.js` + `auditPack.js`** — human-readable proofs plus the full reproducible
-  artifact set.
+  premise retrieval, goal-shape tactic menu.
+- **`growth/commit.js`** — commit-per-lemma to a scratch repo with statement hash in the message;
+  the lemma store is content-addressed. Wired into `blueprint/run.js`'s DoD tail.
+- **`digest/writeup.js` + `auditPack.js` + `development.js`** — per-lemma and whole-development
+  writeups plus the full reproducible artifact set (writeup, audit JSON, hash chain).
+- **`query/`** — removed as dead code (nothing constructed it; `/integrity/verify` lied). See
+  `architecture.md` §8.
 
 ---
 

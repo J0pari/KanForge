@@ -20,9 +20,7 @@ export { Scheduler } from './core/scheduler.js';
 export { GoalEGraph } from './core/egraph.js';
 export { Guardrails, HARD_INVARIANTS, FORBIDDEN_TOKENS } from './core/guardrails.js';
 export { straighten, unstraighten, assertRoundTrip, buildProofSource } from './core/state.js';
-export { Patch, PATCH_OPS } from './core/patch.js';
 export { Lazy } from './core/lazy.js';
-export { Pipeline } from './core/pipeline.js';
 export { hashChainEntry, verifyHashChain } from './core/hasher.js';
 
 // Search (premise retrieval, selection baselines)

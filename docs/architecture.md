@@ -152,27 +152,16 @@ ESM package, `"type": "module"`.
 kanforge/
   index.js                   # root entry point
   env.js                     # environment/config loader
-  core/                      # lazy/pull machinery + proof-state primitives
-    lazy.js                  # Lazy (memoized thunks)
-    lazify.js                # lazify (memoized proxied calls)
-    template.js              # LazyTemplate (defer string building)
-    functor.js               # LazyMapper (map/extract over structured results)
-    stream.js                # LazyStream (head-strict / tail-lazy)
-    pipeline.js              # Pipeline.compose (stage composition)
-    context.js               # ConfigContext (per-run config threading)
-    fix.js                   # lazy self-referential streams (memoized fixpoint)
-    promise.js               # PullPromise (async thunk)
-    cache.js                 # PullCache + compact/eager split
+  core/                      # memoized DAG + proof-state primitives (the live surface only)
+    lazy.js                  # Lazy (memoized thunks) — used by PullGraph
     pullgraph.js             # proof DAG: nodes, edges, invalidate, serialize
     egraph.js                # goal equivalence classes (Level 2 search structure, §2.2)
-    serialize.js             # StateSerializer
     hasher.js                # Hasher (statement/event hash chains)
     state.js                 # straighten / unstraighten (tree ↔ script)
-    patch.js                 # typed patch envelope (Wave2 §4): node, op, replacement, scope, meta
     scheduler.js             # dependency-ordered dispatch over the PullGraph (Wave2 §7–8)
     guardrails.js            # invariant spec + guardrail logic
   lean/
-    backend.js               # adapter interface + factory
+    backend.js               # adapter interface + factory (createBackend)
     backendRepl.js           # leanprover-community/repl impl (JSON-lines, pool)
     backendCli.js            # `lean` CLI impl
     pin.js                   # toolchain + mathlib4 pin, statement hashing
@@ -192,7 +181,7 @@ kanforge/
     skeleton.js              # theorem → DAG of kernel-typechecked sorry-stubs (LLM decomposition; every stub backend-checked; lemma→theorem normalization)
     dag.js                   # blueprint validation, topological order, cycle detection, dependents index
     refine.js                # fill the lowest unproved stub bottom-up via the loop; re-split on failure (adds children, never edits statements)
-    run.js                   # skeleton → refine CLI driver; writes per-run lemma store + training dataset under runs/
+    run.js                   # skeleton → refine CLI driver; writes per-run lemma store + training dataset + development digest + per-lemma commits under runs/
     drift.js                 # re-verify pinned statement hashes
   search/
     bestofn.js               # baseline
@@ -201,25 +190,23 @@ kanforge/
     repulsion.js             # Goedel-style diversity penalty
     premises.js              # premise retrieval + premise-locked flag
     swiss.js                 # Swiss-tournament best-of-n (Bradley-Terry ranking, LLM pairwise judge, §5)
+    tacticMenu.js            # goal-shape-keyed tactic capability menu
   optimization/
     bus.js                   # central event bus
     store.js                 # bounded event store (causal parent links)
     causal.js                # causal analysis (transition matrix, predictors)
-    metrics.js               # KPI calculator
-    patterns.js              # degeneracy / reward-hacking monitors
-    exporter.js              # telemetry export
+    metrics.js               # KPI calculator (wired into the loop's per-run outcome)
+    patterns.js              # degeneracy / reward-hacking monitors — not yet built
+    exporter.js              # telemetry export — not yet built
     reward.js                # reward function (initial defaults, §6)
-    grpo.js                  # GRPO update harness
-    ttrl.js                  # test-time RL
+    grpo.js                  # GRPO update harness — not yet built
+    ttrl.js                  # test-time RL — not yet built
   digest/
-    writeup.js               # Markdown/HTML/PDF with KaTeX
-    auditPack.js             # the publication unit (§7)
-  query/
-    server.js                # signed query API
-    formatters.js            # semantic text formatters
-    gui/                     # WebSocket dashboard
+    writeup.js               # Markdown/HTML with KaTeX
+    auditPack.js             # per-lemma publication unit (§7)
+    development.js           # whole-development digest (writeup + audit + hash chain)
   growth/
-    commit.js                # commit-per-lemma (statement hash in message)
+    commit.js                # commit-per-lemma to a scratch repo (statement hash in message)
     lemmaStore.js            # content-addressed lemma store, persisted to <dir>/lemmas/*.json (write-through atomic, corruption-tolerant)
     dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
@@ -232,17 +219,7 @@ kanforge/
     stepSmoke.js             # multi-step tier problems (build_order.md §5.4)
     verifyStepSet.js         # full-paces chain verifier for the step tier
   test/                      # unit + integration tests (Node built-in test runner)
-    core.test.js             # core/ primitives
-    state.test.js            # tree ↔ script round-trip
-    guardrails.test.js       # invariant checks
-    integration.test.js      # end-to-end loop tests
-    live.repl.test.js        # real repl binary resilience suite (P0.3 gate)
-    optimization.test.js     # telemetry + metrics
-    architectural.test.js    # module inventory + contract checks
-    goalText.test.js         # goal text extraction
-    swiss.test.js            # Swiss-tournament ranking
-  corpus/
-    miniF2F-split/ putnam/ proverbench/ proofnet/ workbook/ open-targets/
+  corpus/                    # open-target corpus (P7) — not yet populated
 ```
 
 ---
@@ -255,12 +232,6 @@ Lazy.of(fn)         // memoized thunk
 lazy.map(fn)        // transform
 lazy.flatMap(fn)    // sequential composition
 lazy.get()          // force
-```
-
-### 2.2 `Pipeline`
-```js
-Pipeline.compose(...stages)      // stages applied in order (preserves lazy/promise wrapping)
-stage = { run(ctx, input) -> Promise<output>, name, track(evt) }
 ```
 
 ### 2.2 Two-level proof structure
@@ -288,7 +259,10 @@ The LLM operates at Level 2: it proposes ONE tactic for ONE goal. The backend ap
 
 The scheduler operates at Level 1: it dispatches lemmas dependency-ordered. Within each lemma, the tactic-level search runs to completion (or budget exhaustion) before the lemma is marked verified or failed.
 
-This two-level structure is what makes the patch algebra meaningful: a `tactic` patch is a single tactic applied to a single goal, producing subgoals. A proof is a tree of tactic patches extracted from the e-graph. The DAG tracks both levels: lemma dependencies at Level 1, goal e-graphs at Level 2.
+This two-level structure is what makes the loop's operations meaningful: a single tactic applied to
+a single goal produces zero or more subgoal equivalence classes; a proof is a tree of such
+applications extracted from the e-graph. The DAG tracks both levels: lemma dependencies at Level 1,
+goal e-graphs at Level 2.
 
 ### 2.3 `PullGraph` — the proof DAG
 Node (Level 1 — lemma):
@@ -332,12 +306,15 @@ Edge:
 ```
 API:
 ```js
-graph.pull(nodeId)                    // recurse deps, compute, cache; error boundary
-graph.invalidate(nodeId)              // transitive re-prove downstream (invalidate dependents)
-graph.serialize() / deserialize(json) // checkpoint / resume (whole forest = transaction log)
-graph.diff()                          // blueprint diff between runs
-graph.subgraph(targetId)              // critical path extraction
+graph.register(nodeId, computation, errorHandler?) // register a memoized computation (Lazy-wrapped)
+graph.dependsOn(nodeId, depId)                    // record a dependency edge
+graph.resolve(nodeId)                             // force a memoized value (scheduler dispatch path)
+graph.invalidate(nodeId)                          // transitive re-prove downstream (invalidate dependents)
+graph.serialize() / deserialize(json)             // checkpoint / resume (whole forest = transaction log)
 ```
+The `pull`/`subgraph`/`diff`/`morphism`/`compose` members once documented here were removed as dead
+code (the loop and scheduler use only the surface above). The scheduler performs dependency-ordered
+dispatch; the loop reads `nodes.get(id).computation.value` directly under its own budget.
 
 ### 2.4 `state.js` — straighten/unstraighten (tree ↔ script)
 ```js
@@ -386,8 +363,10 @@ violation of even a scoped grant still trips.
 ### 2.6 `scheduler.js` — dependency-ordered dispatch (Wave2 §7–8)
 The scheduler operates at Level 1 (lemma DAG): it dispatches lemmas dependency-ordered to the backend pool. Within each lemma, the tactic-level search (Level 2, §4) runs to completion.
 
-`pull()` is pull-driven; the scheduler adds the *concurrent* dimension: batch the lemmas `pull()`
-would compute, ordered by the dependency DAG, and dispatch them to the backend pool.
+The graph is memoized per node; the scheduler adds the *concurrent* dimension: batch the lemmas,
+order by the dependency DAG, and dispatch them to the backend pool via a `check(nodeId)` callback
+(the loop's per-lemma `_proveLemma`). The `pull()` member once documented here was removed as dead
+code (nothing called it — the loop reads `nodes.get(id).computation.value` directly).
 
 Node lifecycle (extends the proof-state axis in §2.3; the scheduler's view):
 ```
@@ -399,24 +378,20 @@ CACHED   (restored from a checkpoint; skipped, never re-dispatched)
 - A node dispatches only when all its deps are VERIFIED or CACHED; a failed dep fails its
   dependents without dispatch (never weaken).
 - Priority tuple (default, overridable): dependency criticality → cache reuse → verification
-  history → estimated cost → patch confidence (Wave2 §8). Ties break by node id (deterministic).
+  history → estimated cost (Wave2 §8). Ties break by node id (deterministic).
 - Guarantees: no cyclic dispatch (DAG), bounded in-flight (concurrency), deterministic ordering,
   maximal independent parallelism.
 - API: `enqueue(ids)`, `run()` -> `{ ok, results, failures }`, `onProgress`, timeout/kill-on-hang.
 - Locality: work scales with affected subgraph depth, not project size (Wave2 §14).
 
-### 2.7 `patch.js` — typed patch envelope (Wave2 §4)
-Candidates are typed graph mutations, not source strings:
-```js
-p = { node, op, replacement, scope, meta }
-op ∈ { 'tactic', 'lemma', 'rewrite', 'replace' }   // Lean-relevant subset of Wave2 §4
-```
-- `tactic`   — a SINGLE tactic applied to a goal equivalence class, producing zero or more subgoal classes (kernel check via `applyTactic`)
-- `lemma`    — introduce a helper lemma (adds a stub child at Level 1; statement pinned)
-- `rewrite`  — alternative proof path (transposition-merge target; dedup, no tree mutation)
-- `replace`  — replace a failing subproof subtree (tree-level repair, re-straighten)
-
-A proof is a tree of `tactic` patches extracted from the e-graph (root equivalence class to solved leaves). The LLM proposes one `tactic` patch per call; the backend applies it and returns new goal equivalence classes. Patches are first-class: reorderable, mergeable, discarded, replayed — independent of source text. `meta` carries model id, prompt ref, confidence (feeds scheduler priority + reward).
+### 2.7 Proof operations (was "typed patch envelope")
+The candidate-mutation envelope (`Patch`/`PATCH_OPS`) once documented here was removed as dead code:
+nothing constructed a `Patch`. The live loop works directly on the two-level structure — it proposes
+a tactic string for one goal equivalence class, the backend applies it and returns new subgoal
+classes (kernel-checked via `applyTactic`), and the e-graph records the edge. A proof is a tree of
+tactic applications extracted from the e-graph (root equivalence class to solved leaves). If a typed
+mutation envelope is ever needed it will be re-introduced with a live consumer; until then the loop
+is the contract.
 
 ---
 
@@ -492,15 +467,22 @@ The agent loop operates at Level 2 (goal e-graph within a single lemma). The sch
 
 **Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application reduces the current goal to zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
 
-```js
-const agent = Pipeline.compose(observe, propose, act, verify, repair, commit)
+The loop is a class (`TacticLoop`, `agent/loop.js`), not a composed monadic pipeline. It implements
+the observe → propose → act → verify → repair → commit stages as explicit methods over the e-graph,
+with a stateful budget, concurrency, and repair path that a stateless composition would misrepresent:
+
+```
 observe(goal)   -> PromptInput        // goal (type + context) + retrieved premises → prompt
-propose(input)  -> Patch[]            // LLM: ONE tactic patch per call (§2.7)
-act(patch)      -> Applied            // backend.applyTactic(goal, tactic) → new subgoals
+propose(input)  -> tactic             // LLM: ONE tactic string per call
+act(tactic)     -> Applied            // backend.applyTactic(goal, tactic) → new subgoals
 verify(result)  -> Verification       // kernel check of tactic application; record PASS|FAIL
-repair(fail)    -> Patch[]            // isolate failing sub-goal (Wave2 §11 error); low top-K retry
+repair(fail)    -> tactic             // isolate failing sub-goal (Wave2 §11 error); low top-K retry
 commit(verified)-> LemmaRef           // all goals solved → compose proof script → verify full statement
 ```
+
+(The `Pipeline.compose` stage-combinator once documented here was removed as dead code — nothing
+called it; the loop is the contract. The `Patch` envelope is likewise gone; the loop passes tactic
+strings directly. See §2.7.)
 
 Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the e-graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it makes no progress.
 
@@ -582,20 +564,16 @@ Statement hash chain (`hasher.js`): every verified lemma appends
 
 ---
 
-## 8. Query API (signed)
+## 8. Query API (not yet built — deferred)
 
-```
-/proof/{lemmaId}            // statement, status, proof tree/script, deps
-/proof/explainFailure       // repair post-mortem
-/proof/predictors           // failure predictors
-/proof/criticalPath
-/proof/bottlenecks
-/proof/anomalies
-/proof/guardrails           // invariant violation log
-/integrity/verify           // re-check the hash chain + invariants
-```
-All endpoints require HMAC signature and are rate-limited. GUI (WebSocket dashboard) renders the
-transition matrix, predictors, live frontier.
+A signed, rate-limited query API over the telemetry was once specified here with nine endpoints,
+HMAC signing, and a WebSocket dashboard. It was removed as dead code: no server existed, nothing
+constructed it, and `/integrity/verify` returned `{ ok: true }` unconditionally — a lie, not an
+implementation. The proof-of-correctness surface that actually exists is the **development digest**
+(`digest/development.js`): writeup + audit pack + hash chain written per blueprint completion, plus
+`growth/commit.js`'s per-lemma git commits. If an operator-facing query API is wanted it will be
+re-specified against a real consumer (P7), with `/integrity/verify` implemented as a real
+`verifyHashChain` over the run's chain — never a hardcoded `ok`.
 
 ---
 
@@ -604,18 +582,18 @@ transition matrix, predictors, live frontier.
 Per-module rationale and the build sequence are `blueprint.md` §3 and `build_order.md`. Summary
 by role:
 
-- **Foundations** (generic, fully unit-tested, no proof assumptions): `core/lazy`, `core/lazify`,
-  `stream`, `promise`, `cache`, `pipeline`, `context`, `fix`, `functor`, `template`, `serialize`,
-  `hasher`.
+- **Foundations** (generic, unit-tested, no proof assumptions): `core/lazy` (memoized thunk used by
+  `PullGraph`), `core/hasher`.
 - **Proof domain** (the contribution that makes this a proof refinery): `core/pullgraph` (proof
-  DAG), `core/egraph` (goal equivalence classes), `core/state` (tree↔script), `core/patch`,
-  `core/scheduler`, `core/guardrails`, `lean/*` (incl. `goalText`), `agent/*`, `blueprint/*`,
+  DAG), `core/egraph` (goal equivalence classes), `core/state` (tree↔script), `core/scheduler`,
+  `core/guardrails`, `lean/*` (incl. `goalText`), `agent/*`, `blueprint/*`,
   `search/*` (incl. `swiss`).
-- **Instrumentation / growth / query / digest**: `optimization/*`, `growth/*`, `query/*`,
-  `digest/*`, `bench/*` (incl. `smoke`).
+- **Instrumentation / growth / digest**: `optimization/*`, `growth/*`, `digest/*`, `bench/*`
+  (incl. `smoke`).
 
-Lineage: the foundational primitives adapt established lazy-computation patterns documented in
-`research_notes_2026.md` §4; provenance is evidence, not design argument — contracts here are
+Lineage: `core/lazy` and `core/hasher` are the only foundational primitives that survived the
+dead-code audit (see build_order.md §5.5); the rest of the former lazy/pipeline/patch family was
+removed because nothing used it. Provenance is evidence, not design argument — contracts here are
 self-contained.
 
 ---

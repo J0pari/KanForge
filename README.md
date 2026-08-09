@@ -142,12 +142,13 @@ kanforge/
 │   ├── repair.js       # Error-driven repair (classify, retry)
 │   └── solve.js        # Per-lemma solving logic
 ├── core/               # Foundational primitives
+│   ├── lazy.js         # Memoized thunks (used by PullGraph)
 │   ├── egraph.js       # Goal equivalence graph
-│   ├── pullgraph.js    # Pull-based dependency graph
+│   ├── pullgraph.js    # Memoized dependency DAG
 │   ├── scheduler.js    # Dependency-ordered dispatch
 │   ├── state.js        # Proof tree ↔ script conversion
-│   ├── guardrails.js   # Invariant enforcement
-│   └── ...             # caching, hashing, lazy evaluation
+│   ├── hasher.js       # Statement/event hash chains
+│   └── guardrails.js   # Invariant enforcement
 ├── lean/               # Lean 4 backends (all drive the real kernel)
 │   ├── backend.js      # Backend interface
 │   ├── backendRepl.js  # REPL protocol implementation
@@ -165,7 +166,12 @@ kanforge/
 │   └── run.js          # Skeleton → refine CLI driver
 ├── growth/             # Persistence for the growth loop
 │   ├── lemmaStore.js   # Content-addressed lemma store (write-through JSON)
-│   └── dataset.js      # Append-only training samples + held-out split
+│   ├── dataset.js      # Append-only training samples + held-out split
+│   └── commit.js       # Per-lemma git commits to a scratch repo
+├── digest/             # Publication units
+│   ├── writeup.js      # Markdown/HTML proof writeups
+│   ├── auditPack.js    # Per-lemma audit pack
+│   └── development.js  # Whole-development digest (writeup + audit + hash chain)
 ├── search/             # Standalone search baselines
 │   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B)
 │   ├── bestofn.js      # Naive best-of-n baseline

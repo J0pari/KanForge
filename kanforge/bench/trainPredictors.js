@@ -84,7 +84,7 @@ export async function trainPredictors({ backend, llm, problems = SMOKE_PROBLEMS,
 }
 
 async function main() {
-    const { BackendRepl } = await import('../lean/backendRepl.js');
+    const { createBackend } = await import('../lean/backend.js');
     const { loadLLMConfig, createLLM } = await import('../agent/llm.js');
     const { loadEnv } = await import('../env.js');
     const ENV = loadEnv();
@@ -105,7 +105,8 @@ async function main() {
         process.exit(2);
     }
 
-    const pool = new BackendRepl({
+    const pool = createBackend({
+        type: 'repl',
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         leanProject: ENV.KANFORGE_LEAN_PROJECT,

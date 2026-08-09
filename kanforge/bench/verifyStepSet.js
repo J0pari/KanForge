@@ -182,7 +182,7 @@ function appendRow(outDir, row) {
 }
 
 async function main() {
-    const { BackendRepl } = await import('../lean/backendRepl.js');
+    const { createBackend } = await import('../lean/backend.js');
     const { loadEnv } = await import('../env.js');
     const ENV = loadEnv();
 
@@ -203,7 +203,8 @@ async function main() {
     }
     const outDir = outArg ? outArg.split('=')[1] : path.join(__dirname, 'ablation', `verifyStep_${Date.now()}`);
 
-    const pool = new BackendRepl({
+    const pool = createBackend({
+        type: 'repl',
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         leanProject: ENV.KANFORGE_LEAN_PROJECT,

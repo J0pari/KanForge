@@ -1,9 +1,16 @@
 // Statement pinning (architecture.md §3 + §3.1 pin drift).
-// A statement pin is the toolchain + mathlib context plus a hash of the canonical
-// `#print`-normalized form. Hash comparison is only valid under the SAME normVersion:
-// a Lean/mathlib update can change the printed form without changing meaning, so a pin
-// mismatch under a different norm/toolchain reports DRIFT (operator re-pins deliberately);
-// a hash mismatch under the same norm reports WEAKENED (statement text mutated).
+// A statement pin is the toolchain + mathlib context plus a hash of the canonical normalized
+// form. Hash comparison is only valid under the SAME normVersion: a Lean/mathlib update can
+// change the meaning of a term without changing the toolchain, so a pin mismatch under a
+// different norm/toolchain reports DRIFT (operator re-pins deliberately); a hash mismatch under
+// the same norm reports WEAKENED (statement text mutated).
+//
+// The canonical form is WHITESPACE-COLLAPSED text (trim + collapse runs of whitespace), NOT a
+// `#print`-normalized term. This is a deliberate simplification: it is stable across machines,
+// needs no kernel round-trip, and detects statement-text mutation. It does NOT canonicalize
+// alpha-renaming or definitional unfolding; statements that differ only by such semantics share
+// a namespace of "same hash, possibly different meaning" and rely on the toolchain pin + kernel
+// re-verification, not on the hash, for correctness.
 
 import crypto from 'node:crypto';
 

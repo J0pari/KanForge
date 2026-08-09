@@ -1,21 +1,20 @@
-// Dependency graph of memoized computations (architecture.md §2.3): pulling a node forces its
-// dependencies first; error boundaries and an opt-in progress hook are supported.
+// Memoized dependency DAG (architecture.md §2.3). This is the live surface the proof loop and
+// scheduler actually use: register a memoized computation per node, record dependency edges
+// (dependsOn), force via the scheduler's check callback, serialize/deserialize for checkpoint
+// resume, and invalidate transitively. No categorical decoration — the review's dead
+// identities/compositions/compose/pull/subgraph/diff members were removed (nothing read them).
 
 import { Lazy } from './lazy.js';
 
 export class PullGraph {
     constructor() {
         this.objects = new Map();
-        this.morphisms = new Map();
-        this.identities = new Map();
-        this.compositions = new Map();
+        this.edges = new Map();          // nodeId -> Set(dependencyIds)
 
         this.pullCount = 0;
         this.cacheHits = 0;
         this.totalPulls = 0;
         this.errorBoundaries = new Map();
-        this.progressCallback = null;
-        this.progressInterval = 1;
     }
 
     register(id, computation, errorHandler = null) {
@@ -23,188 +22,67 @@ export class PullGraph {
             computation: computation instanceof Lazy ? computation : new Lazy(computation),
             cached: false,
             value: undefined,
-            pullCount: 0,
-            category: 'pull-graph'
+            pullCount: 0
         };
-
         this.objects.set(id, obj);
-        this.identities.set(id, x => x);
-
         if (errorHandler) {
             this.errorBoundaries.set(id, errorHandler);
         }
-    }
-
-    morphism(sourceId, targetId, transform = x => x) {
-        const morphId = `${sourceId}->${targetId}`;
-        this.morphisms.set(morphId, {
-            source: sourceId,
-            target: targetId,
-            transform: transform instanceof Lazy ? transform : new Lazy(() => transform),
-            category: 'morphism'
-        });
-
-        if (!this.edges) this.edges = new Map();
-        if (!this.edges.has(targetId)) {
-            this.edges.set(targetId, new Set());
-        }
-        this.edges.get(targetId).add(sourceId);
-    }
-
-    compose(f, g) {
-        if (f.target !== g.source) {
-            throw new Error(`Cannot compose morphisms: ${f.source}->${f.target} and ${g.source}->${g.target}`);
-        }
-
-        const composed = {
-            source: f.source,
-            target: g.target,
-            transform: new Lazy(() => {
-                const fx = f.transform.value;
-                const gx = g.transform.value;
-                return x => gx(fx(x));
-            }),
-            category: 'composed-morphism'
-        };
-
-        const compId = `${f.source}->>${g.target}`;
-        this.compositions.set(compId, composed);
-        return composed;
+        return obj;
     }
 
     dependsOn(nodeId, dependencyId) {
-        this.morphism(dependencyId, nodeId);
+        if (!this.edges.has(nodeId)) {
+            this.edges.set(nodeId, new Set());
+        }
+        this.edges.get(nodeId).add(dependencyId);
     }
 
     get nodes() {
         return this.objects;
     }
 
-    pull(nodeId, pullPath = []) {
+    // Force a node's memoized computation through its error boundary (or surface the error).
+    resolve(nodeId) {
         const node = this.objects.get(nodeId);
         if (!node) {
             return { error: new Error(`Unknown object: ${nodeId}`), value: undefined };
         }
-
-        if (!node.cached) {
-            const currentPath = [...pullPath, nodeId];
-
-            if (this.progressCallback && this.pullCount % this.progressInterval === 0) {
-                this.progressCallback({
-                    pullCount: this.pullCount,
-                    totalPulls: this.totalPulls,
-                    cacheHits: this.cacheHits,
-                    nodeId,
-                    stage: 'dependencies',
-                    pullPath: currentPath
-                });
+        if (node.cached) {
+            this.cacheHits++;
+            return node.value;
+        }
+        this.totalPulls++;
+        this.pullCount++;
+        const errorHandler = this.errorBoundaries.get(nodeId);
+        if (errorHandler) {
+            try {
+                node.value = node.computation.value;
+            } catch (error) {
+                node.value = errorHandler(error, nodeId);
             }
-
-            const deps = this.edges?.get(nodeId);
-            if (deps) {
-                for (const depId of deps) {
-                    const depResult = this.pull(depId, currentPath);
-                    if (depResult?.error) {
-                        node.value = depResult;
-                        node.cached = true;
-                        return depResult;
-                    }
-                }
-            }
-
-            const errorHandler = this.errorBoundaries.get(nodeId);
-            if (errorHandler) {
-                try {
-                    node.value = node.computation.value;
-                } catch (error) {
-                    node.value = errorHandler(error, nodeId);
-                }
-            } else {
-                try {
-                    node.value = node.computation.value;
-                } catch (error) {
-                    node.value = { error, value: undefined };
-                    node.cached = true;
-                    return node.value;
-                }
-            }
-
-            node.cached = true;
-
-            if (this.progressCallback) {
-                this.progressCallback({
-                    pullCount: this.pullCount,
-                    nodeId,
-                    stage: 'complete',
-                    value: node.value,
-                    pullPath: currentPath
-                });
+        } else {
+            try {
+                node.value = node.computation.value;
+            } catch (error) {
+                node.value = { error, value: undefined };
+                node.cached = true;
+                return node.value;
             }
         }
-
+        node.cached = true;
         return node.value;
     }
 
-    setProgressCallback(callback) {
-        this.progressCallback = callback;
-    }
-
-    // Critical-path extraction (architecture.md §2.3): the ancestor cone of targetId —
-    // every node the target transitively depends on, with the edges among them.
-    subgraph(targetId) {
-        const ids = new Set();
-        const stack = [targetId];
-        while (stack.length) {
-            const id = stack.pop();
-            if (ids.has(id) || !this.objects.has(id)) continue;
-            ids.add(id);
-            for (const dep of this.edges?.get(id) ?? []) stack.push(dep);
-        }
-        const edges = {};
-        for (const id of ids) {
-            const deps = [...(this.edges?.get(id) ?? [])].filter(d => ids.has(d));
-            if (deps.length) edges[id] = deps;
-        }
-        return { root: targetId, ids: [...ids], edges };
-    }
-
-    // Blueprint diff between runs (architecture.md §2.3): nodes added/removed/changed
-    // relative to another graph (cached values compared structurally).
-    diff(other) {
-        const added = [];
-        const removed = [];
-        const changed = [];
-        for (const id of this.objects.keys()) {
-            if (!other.objects.has(id)) added.push(id);
-        }
-        for (const id of other.objects.keys()) {
-            if (!this.objects.has(id)) removed.push(id);
-        }
-        for (const [id, node] of this.objects) {
-            const otherNode = other.objects.get(id);
-            if (!otherNode) continue;
-            if (node.cached !== otherNode.cached ||
-                JSON.stringify(node.value ?? null) !== JSON.stringify(otherNode.value ?? null)) {
-                changed.push(id);
-            }
-        }
-        return { added, removed, changed };
-    }
-
-    setProgressInterval(n) {
-        this.progressInterval = n;
-    }
-
+    // Transitive re-verification of dependents (architecture.md §2.3, §2.5 invariant 6).
     invalidate(nodeId) {
         const node = this.objects.get(nodeId);
         if (node) {
             node.cached = false;
             node.computation.reset();
-            if (this.edges) {
-                for (const [id, deps] of this.edges) {
-                    if (deps.has(nodeId)) {
-                        this.invalidate(id);
-                    }
+            for (const [id, deps] of this.edges) {
+                if (deps.has(nodeId)) {
+                    this.invalidate(id);
                 }
             }
         }
@@ -213,43 +91,26 @@ export class PullGraph {
     serialize() {
         const serialized = {
             objects: [],
-            morphisms: [],
+            edges: [],
             pullCount: this.pullCount,
             timestamp: Date.now()
         };
-
         for (const [id, obj] of this.objects) {
             if (obj.cached && obj.value !== undefined) {
-                const entry = {
-                    id,
-                    value: obj.value,
-                    pullCount: obj.pullCount,
-                    category: obj.category
-                };
-
-                if (obj.contentHash) {
-                    entry.contentHash = obj.contentHash;
-                }
-
-                serialized.objects.push(entry);
+                serialized.objects.push({ id, value: obj.value, pullCount: obj.pullCount });
             }
         }
-
-        for (const [morphId, morph] of this.morphisms) {
-            serialized.morphisms.push({
-                id: morphId,
-                source: morph.source,
-                target: morph.target
-            });
+        for (const [id, deps] of this.edges) {
+            for (const dep of deps) {
+                serialized.edges.push({ source: id, target: dep });
+            }
         }
-
         return serialized;
     }
 
     static deserialize(data, computationRegistry) {
         const graph = new PullGraph();
         graph.pullCount = data.pullCount;
-
         for (const obj of data.objects) {
             const computation = computationRegistry?.get(obj.id);
             if (computation) {
@@ -258,18 +119,13 @@ export class PullGraph {
                 node.cached = true;
                 node.value = obj.value;
                 node.pullCount = obj.pullCount;
-                if (obj.contentHash) {
-                    node.contentHash = obj.contentHash;
-                }
             }
         }
-
-        for (const morph of data.morphisms) {
-            if (graph.objects.has(morph.source) && graph.objects.has(morph.target)) {
-                graph.morphism(morph.source, morph.target);
+        for (const edge of data.edges ?? []) {
+            if (graph.objects.has(edge.source) && graph.objects.has(edge.target)) {
+                graph.dependsOn(edge.source, edge.target);
             }
         }
-
         return graph;
     }
 }

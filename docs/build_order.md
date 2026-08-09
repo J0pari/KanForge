@@ -357,6 +357,48 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   higher `--row-timeout-ms`, and wire `findPremiseLockViolations` into `bench/ablation.js` so
   the locked control is enforced (not just prompted).
 
+### 5.5 Dead-code audit (built-but-unused → condensed or wired)
+A review flagged decorative architecture: modules documented as load-bearing that nothing in the
+live path used, and docs describing an elegant shape the code did not take. This phase is the
+audit + remediation discipline. **Rule:** every module/member is either (a) live — reachable from a
+run entry point — or (b) explicitly deferred in `architecture.md` (P6/P7), or (c) removed. No dead
+code and no doc claim about dead code may remain.
+- **Condensed (removed):**
+  - `core/pipeline.js` (`Pipeline.compose`) — the review's example: docs described the loop as a
+    composed monadic pipeline; the actual loop is a class. Nothing called `Pipeline.compose`. The
+    loop is the contract; the stage combinator was removed (`architecture.md` §4, §2.7).
+  - The rest of the lazy family — `core/{functor,promise,cache,context,fix,lazify,serialize,stream,template}.js` —
+    imported only by each other and `core.test.js`; the live path used only `core/lazy` (via
+    `PullGraph`). Removed; `core/lazy` + `core/hasher` are the surviving foundations (§9).
+  - `core/patch.js` (`Patch`/`PATCH_OPS`) — exported in `index.js`, never constructed. Removed;
+    the loop passes tactic strings directly (§2.7).
+  - `query/` (`server.js`, `formatters.js`) — `QueryServer` was never constructed and
+    `/integrity/verify` returned `{ ok: true }` unconditionally (a lie). Removed; `architecture.md`
+    §8 now marks the query API deferred and names the digest + commit as the real correctness
+    surface.
+  - `PullGraph.{identities, compositions, compose, morphism, pull, subgraph, diff,
+    setProgressCallback, setProgressInterval}` — decorative category theory; the loop uses only
+    `register`/`dependsOn`/`nodes`/`edges`/`serialize`/`invalidate`/`computation`. Condensed to
+    that live surface (`core/pullgraph.js`).
+- **Wired (was built but should be live):**
+  - `optimization/metrics.js` `computeMetrics` — now attached to every `TacticLoop` per-run
+    outcome (KPI summary), so the bench and digest layers report it without re-deriving.
+  - `lean/backend.js` `createBackend` — now the constructor for every run entry point
+    (`bench/run.js`, `bench/ablation.js`, `bench/trainPredictors.js`, `bench/verifyStepSet.js`,
+    `blueprint/run.js`), making the documented factory the actual path. `lean/backendCli.js` stays
+    reachable as the `cli` flavor.
+  - `growth/commit.js` — stub (message formatter only) extended with `writeLemmaArtifacts`,
+    `commitLemma`, `commitDevelopment` and wired into `blueprint/run.js`'s DoD tail (§7.4).
+- **Honesty fixes:**
+  - `lean/pin.js` comment claimed a canonical `#print`-normalized hash; the code collapses
+    whitespace only. The comment now says exactly that, and that `#print` normalization is *not*
+    performed (§3, `pin.js`).
+  - `architecture.md`/`blueprint.md` module tables and §4/§5 narrative rewritten to describe the
+    live architecture; all `Patch`/`Pipeline`/`query`/lazy-family references removed or marked.
+- **Acceptance:** every non-test JS file imports only live or explicitly-deferred modules; the full
+  non-live suite passes; a fresh `git grep` for the removed names returns only docs that say
+  "removed as dead code".
+
 ---
 
 ## Phase 6 — RL optimization
