@@ -19,6 +19,7 @@ import { TrainingDataset } from '../growth/dataset.js';
 import { assembleDevelopmentDigest, writeDevelopmentDigest } from '../digest/development.js';
 import { commitLemma, commitDevelopment, writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
+import { RunCheckpoint } from '../core/checkpoint.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,10 +31,24 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     const lemmaStore = new LemmaStore({ dir: path.join(workDir, 'lemma-store') });
     const dataset = new TrainingDataset({ dir: path.join(workDir, 'training-dataset') });
 
-    const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir });
-    const generated = await skeleton.generate(theorem);
-    if (!generated.ok) {
-        return { ok: false, stage: 'skeleton', error: generated.error, errors: generated.errors ?? [], workDir, stored: { lemmas: 0, samples: 0 } };
+    // Resume: if a previous run wrote a checkpoint (the skeleton passed), reload the blueprint
+    // and skip the skeleton call. The refiner auto-loads from the checkpoint on refine().
+    let generated;
+    const ckpt = new RunCheckpoint(workDir);
+    const resumeData = ckpt.load();
+    if (resumeData && resumeData.lemmas?.length) {
+        const theoremLemma = resumeData.lemmas.find(l => l.statement === theorem || l.pinnedHash === hashStatement(theorem));
+        if (theoremLemma) {
+            generated = { ok: true, blueprint: { theorem, lemmas: resumeData.lemmas.map(l => ({ id: l.id, statement: l.statement, deps: l.deps ?? [], pinnedHash: l.pinnedHash ?? l.id })) }, warnings: [] };
+            console.log(`[blueprint] resuming from checkpoint: ${resumeData.rounds?.length ?? 0} rounds, ${resumeData.lemmas.length} lemmas`);
+        }
+    }
+    if (!generated) {
+        const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir });
+        generated = await skeleton.generate(theorem);
+        if (!generated.ok) {
+            return { ok: false, stage: 'skeleton', error: generated.error, errors: generated.errors ?? [], workDir, stored: { lemmas: 0, samples: 0 } };
+        }
     }
 
     const refiner = new BlueprintRefiner({

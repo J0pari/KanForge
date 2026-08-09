@@ -13,9 +13,10 @@ import { checkDrift } from './drift.js';
 import { hashStatement } from '../lean/pin.js';
 import { buildLemmaIndex } from '../growth/lemmaStore.js';
 import { Patch, patchStreamFromEvents } from '../core/patch.js';
+import { RunCheckpoint } from '../core/checkpoint.js';
 
 export class BlueprintRefiner {
-    constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 200, lemmaStore = null, dataset = null } = {}) {
+    constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 200, lemmaStore = null, dataset = null, checkpoint = null } = {}) {
         if (!llm || !backend) {
             throw new Error('BlueprintRefiner requires a real llm client and a real backend');
         }
@@ -27,6 +28,7 @@ export class BlueprintRefiner {
         this.skeleton = new SkeletonGenerator({ llm, backend });
         this.lemmaStore = lemmaStore ?? null;
         this.dataset = dataset ?? null;
+        this.checkpoint = checkpoint ?? (outDir ? new RunCheckpoint(outDir) : null);
     }
 
     async refine(blueprint) {
@@ -37,8 +39,22 @@ export class BlueprintRefiner {
 
         const working = JSON.parse(JSON.stringify(blueprint));
         const rounds = [];
+        let hashChain = [];
         let guard = 0;
         let idleCount = 0;
+
+        // Resume from checkpoint: mark proved lemmas, restore rounds, continue hash chain.
+        const loaded = this.checkpoint?.load();
+        if (loaded) {
+            const { proved } = RunCheckpoint.applyResume(loaded);
+            for (const [id, l] of proved) {
+                const lemma = working.lemmas.find(w => w.id === id);
+                if (lemma) { lemma.proof = l.proof; lemma.stalled = false; }
+            }
+            rounds.push(...(loaded.rounds ?? []));
+            hashChain = (loaded.hashChain ?? []).map(e => ({ ...e }));
+            console.log(`[refine] resumed ${proved.size} proven lemmas from checkpoint (${loaded.rounds?.length ?? 0} rounds, ${loaded.savedAt})`);
+        }
 
         while (guard < this.maxRounds) {
             const drift = checkDrift(working.lemmas);
@@ -81,6 +97,9 @@ export class BlueprintRefiner {
             if (round.proved || round.added > 0) {
                 for (const l of working.lemmas) delete l.stalled;
             }
+
+            // Checkpoint after each round.
+            this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain });
         }
 
         const proved = working.lemmas.filter(l => l.proof).map(l => l.id);
@@ -95,6 +114,7 @@ export class BlueprintRefiner {
             proved,
             unproved,
             rounds,
+            hashChain,
             maxRoundsReached: guard >= this.maxRounds && unproved.length > 0,
             stored: {
                 lemmas: this.lemmaStore?.size ?? 0,
@@ -139,7 +159,9 @@ export class BlueprintRefiner {
             // §5.9: the typed mutation record — the lemma's patch stream is its transformation
             // history, stored on the stub so both the retrieval index entry and the digest carry it.
             stub.patchStream = patchStreamFromEvents(loop.events().filter(e => e.lemmaId === verified?.lemmaId));
-            return { proved: true, resplit: false, added: 0 };
+            // Carry the loop's hash chain entry to the run-level chain.
+            const chainEntry = outcome.hashChain?.length ? outcome.hashChain[outcome.hashChain.length - 1] : null;
+            return { proved: true, resplit: false, added: 0, hashChainEntry: chainEntry };
         }
 
         const failedEvt = loop.events().filter(e => e.type === 'lemma_failed').pop();

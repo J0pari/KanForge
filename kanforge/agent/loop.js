@@ -206,6 +206,11 @@ export class TacticLoop {
                         // tactic budget — within-run adaptation from this run's own outcomes.
                         if (this.ttrlPolicy) this.ttrlPolicy.observe(this.store.events);
                         const maxAttempts = this.ttrlPolicy?.stateFor(currentGoalClass.id).maxAttempts ?? this.maxTacticsPerGoal;
+                        // Causal predictor pre-filter (§5.3, §6 feedback interconnection): before
+                        // spending kernel time on a tactic, check whether it completes a known-
+                        // failing window. Rejected tactics skip the kernel call and count as
+                        // predictor-skips in telemetry — the LLM is not charged for the prediction.
+                        const predictorHistory = [];
                         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                             if (signal?.aborted) break;
 
@@ -218,6 +223,16 @@ export class TacticLoop {
                             }
 
                             this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
+
+                            // Feedback interconnection (architecture.md §0.3): a causal predictor
+                            // that knows a tactic head leads to kernel rejection can veto it before
+                            // the expensive call — zero kernel spend on a predicted failure.
+                            const head = tacticHead(tactic);
+                            if (this.predictors?.rejects(head, predictorHistory)) {
+                                this._emit({ type: 'tactic_predicted_failure', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, head }, lemmaId);
+                                continue;
+                            }
+                            predictorHistory.push(head);
 
                             this.tacticCalls++;
                             const result = await this.backend.applyTactic(goal, tactic);
@@ -637,6 +652,7 @@ export class TacticLoop {
             model: this.llm?.getModel?.() ?? null,
             provider: this.llm?.getProvider?.() ?? null
         };
+        outcome.hashChain = this.hashChain; // run-level chain per verified lemma
 
         // Degeneracy monitors (architecture.md §6, optimization/patterns.js): pure analysis of
         // the run's own event stream — error clusters, same-failure cycles, guardrail spikes.

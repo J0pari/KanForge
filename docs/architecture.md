@@ -282,16 +282,19 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
 | Commit Gate | Lemma Store | `lemmaStore.put(hash, index)` | `[BUILT]` `growth/lemmaStore.js` |
 | Lemma Store | Dataset | `dataset.addSample(lemma, proof, outcome)` | `[BUILT]` `growth/dataset.js` |
 | Lemma Store | Digest | `assembleDevelopmentDigest(...)` | `[BUILT]` `digest/development.js` |
+| Refine Loop | Checkpoint | `RunCheckpoint.save({ lemmas, rounds, hashChain })` after each round | `[BUILT]` `core/checkpoint.js` |
+| Blueprint Run | Checkpoint | `RunCheckpoint.load()` + resume — skip already-proved lemmas, continue hash chain | `[BUILT]` `core/checkpoint.js` + `blueprint/run.js` |
+| Loop | Feedback | `this.predictors.rejects(tacticHead(tactic), history)` per proposal — causal predictor pre-filter before kernel call | `[BUILT]` `agent/loop.js` → `optimization/causal.js` |
 
 **Interconnections that exist but are NOT the intended path:**
 
 | From | To | What happens | What should happen |
 |---|---|---|---|
 | Loop | E-Graph | Applies tactic directly via `egraph.applyTactic()` | Should go through patch algebra: `Patch({op:'applyTactic', tactic, goalClass})` → egraph applies → patch recorded as the mutation record. Currently Patch objects are created post-hoc from events (`patchFromEvent`) — the patch is a trace, not the interface. |
-| Blueprint Skeleton | Backend | `_tryCheck(stub)` — stripped fast check | Should warm pool once per run, then all stub checks use warm env; the chained path works on v4.33.0-rc1 (verified: warm 36s + check 0.4s). Currently the loop's `extractGoals` also opens a fresh leased session per lemma and pays cold import each time (~36s). |
-| Refine Loop | Skeleton re-split | Calls `skeleton.generate(stub)` on failure | When re-split produces no new children, the refine stops (line 60: `if (!madeProgress) break`). For a hard target, the first lemma's re-split returns empty → entire refine ends at round 1. The correct behavior: try every unproved leaf lemma at least once before deciding there's no progress; a stalled lemma doesn't mean OTHER lemmas can't be proved. |
+| Blueprint Skeleton | Backend | `_tryCheck(stub)` — fast chained check then fresh validation | The skeleton now double-validates stubs: fast warm-env check first, then a fresh-env check with the full statement (same rigor as `extractGoals`). A stub that typechecks in warm but not fresh (e.g., name collision with mathlib) is rejected at skeleton time. The chained env works for all statements on repl v4.33.0-rc1 (`isChainSafe` removed — ∀/∃ are chain-safe). `[FIXED]` |
+| Refine Loop | Skeleton re-split | Calls `skeleton.generate(stub)` on failure | When re-split produces no new children, the refine now marks the lemma `stalled` and continues to other ready lemmas (dependency-order selection: a lemma is only attempted when all its deps are proved). Previously one stalled lemma broke the entire refine loop. `[FIXED]` |
 | Refine Loop | Lemma re-split | Re-split children use the SAME stub statement the original skeleton produced | If the original skeleton's stub check was defective (e.g., name collision with mathlib — "has already been declared"), the lemma can never typecheck in a fresh session, and every round fails at `extractGoals`. The skeleton's stub checks must use the SAME env rigor as the loop (fresh session, not warm-only). |
-| Loop | Loop | One lemma attempt, then `fail()` on any error | The Research doc's repair (§10): "Compiler failures become structured search information. The diagnostic maps back to the affected graph neighborhood. Alternative patches are explored in the failed region." The current loop has a single repair attempt (repair.js) but doesn't map error locations back to goal classes or try alternative decompositions. |
+| Loop | Loop | One lemma attempt, then `fail()` on any error | The loop now surfaces `extractGoals` errors in `lemma_failed` events (not swallowed by `fail()`); KERNEL_REJECTED logs the verification error and assembled source head so refine rounds have diagnostic context. `[FIXED]` |
 | Loop | Commit | `verifyProof(source)` — the assembled full source | If `extractGoals` works on a leased session but the composed proof script has ordering/scope errors (e.g., bullets misaligned, variables shadowed), `verifyProof` fails ≡ `KERNEL_REJECTED`. The loop currently doesn't validate the composed source structure before commit — it trusts the extract+straighten path. |
 
 **Interconnections MISSING entirely:**
@@ -302,10 +305,9 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
 | Patch Algebra | E-Graph / AST | A validated patch is applied to synchronized representations (§3, §5). Currently there's no structural AST that synchronizes with the e-graph; the proof tree is the only structural form, extracted at commit time. |
 | E-Graph / AST | Dependency DAG | A verified transformation scopes invalidation to dependency descendants (§6). Currently PullGraph tracks lemma-level deps; the e-graph is per-lemma and doesn't propagate invalidation. |
 | Dependency DAG | Scheduler | The scheduler dispatches independent work based on build states (§7). Currently `core/scheduler.js` dispatches all lemmas without checking build-state invalidation — there's no incremental rebuild. |
-| Loop | Feedback | Telemetry → causal analysis → search policy → candidate prioritization (§14). The telemetry pipeline exists (bus → store → causal/patterns/metrics), and `compilePredictors` gates failing patterns, but the loop doesn't CONSUME predictions to change its proposal behavior within a run. |
 | Blueprint | Domain Presets | Corpus tags (35 distinct) → starter import modules per domain. Cold-start optimization for the repair loop (fewer round-trips); documented, not implemented. |
 
-The current test suite (270 tests) covers the components above in isolation — mock backend, mock LLM, synthetic events. The `[BUILT]` contracts are exercised by the live-path tests (`*.live.test.js`, `validateFormalization.js`). The `[STUBBED]` interconnections (refine re-split loop, skeleton stub-check rigor, extractGoals error surfacing) are what the blueprint run exposed. The `[MISSING]` interconnections are the Research doc's compiler framing that the current code doesn't yet realize.
+The current test suite (275 tests) covers the components above in isolation — mock backend, mock LLM, synthetic events. The `[BUILT]` contracts are exercised by the live-path tests (`*.live.test.js`, `validateFormalization.js`). The `[STUBBED]` interconnections that the blueprint run exposed have been addressed (refine dependency-order loop, skeleton double-validation, extractGoals error surfacing). The remaining `[MISSING]` interconnections are the Research doc's compiler framing that the current code doesn't yet realize: patch algebra as active mutation interface, synchronized AST/e-graph representations, incremental DAG invalidation, scheduler build-state dispatch, and domain presets.
 
 
 ---
@@ -327,6 +329,7 @@ kanforge/
     scheduler.js             # dependency-ordered dispatch over the PullGraph (Wave2 §7–8)
     patch.js                 # typed mutation record: Patch + patchFromEvent (§2.7)
     guardrails.js            # invariant spec + guardrail logic
+    checkpoint.js            # run-level checkpoint: blueprint state + rounds + hash chain + events — resumable
   lean/
     backend.js               # adapter interface + factory (createBackend)
     backendRepl.js           # leanprover-community/repl impl (JSON-lines, pool)
