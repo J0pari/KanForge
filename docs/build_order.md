@@ -249,10 +249,32 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   anomalies, critical path; `compilePredictors` turns predictors into a reject matcher). The
   search entry points (`bestofn`, `swiss`, `bfs`, `mcgs`) and the ablation drivers consult the
   matcher BEFORE kernel verification, and the ablation report logs `predictor-skips` per recipe.
-  Unit tests cover the analyzer and the budget-shift claim (`test/causal.test.js`).
-- **Open item:** the measured pass@1/cost table with `--predictors=<path.json>` on `--set=step`
-  (feeds the §5.4 tier ablation and the P6 gate); predictors are trained from a prior run's
-  event store (loop events carry id/t/parent).
+  Unit tests cover the analyzer and the budget-shift claim (`test/causal.test.js`). The trainer
+  (`bench/trainPredictors.js`) runs the REAL loop over a problem set and mines the event store;
+  its report is self-audited (`reportAudit.js`: terminal coverage, predictor support/fails/
+  confidence recomputed from the raw stream).
+- **Measured (§5.3 gate: MET).** Full real trainer run on `--set=step` (10 lemmas, real kernel +
+  real LLM, 139 traced events): `solved=4 failed=6`, report audit 10/10 PASS, 10 failure
+  predictors at confidence 1 (`ring`, `ring_nf`, `ring→ring`, `ring→ring_nf`, `ring_nf→ring`,
+  `intro→intro`, …) written to `bench/ablation/predictors_step.json`. With/without comparison on
+  `or_elim,mul_comm_rw`, recipes `bestofn,mcgs`, N=4, budget 60 (`bench/ablation/ablation_predictors_on|off/`):
+
+  | config | recipe | solved | llm calls | kernel checks | predictor-skips |
+  |---|---|---|---|---|---|
+  | predictors ON | bestofn | 1/2 | 5 | 2 | 3 |
+  | predictors ON | mcgs | 0/2 | 15 | 14 | 1 |
+  | predictors OFF | bestofn | 2/2 | 6 | 6 | 0 |
+  | predictors OFF | mcgs | 1/2 | 10 | 10 | 0 |
+
+  Budget-shift reading: with the pre-filter, `mul_comm_rw` [bestofn] spent 4 LLM proposals but
+  only 1 kernel check (3 rejected pre-verification); without it, kernel = LLM calls every time.
+  The rejected tactics were `ring`/`ring_nf`/`intro` — which genuinely fail on `b * a = c` from
+  hypothesis `h` (ring cannot use hypotheses), so the skips are correct rejections, not false
+  positives. The pass@1 delta between the two runs is dominated by LLM nondeterminism at N=4
+  (`mul_comm_rw` closed in 1 call OFF vs. missed within 4 calls ON); per the §5.4 note, re-run
+  any cell with a fresh seed to average it out.
+- **Open item:** the §5.4 premises axis on `--set=step` (a step-tier premise corpus is needed
+  first; the current corpora are mathlib-smoke-shaped).
 
 ### 5.4 Multi-step goal-directed ablation tier
 - The core (§5.1) and mathlib sets are each closable by ONE headline tactic, so they cannot
