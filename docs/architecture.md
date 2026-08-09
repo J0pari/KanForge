@@ -65,6 +65,29 @@ all hold; each is a mechanical or kernel-grounded check, not an appeal to the LL
    sentence; they audit the ledger + probes + consensus record, which is the reproducible evidence
    the sentence is the prose.
 
+6. **Missing-symbol repair is derived, not curated.** When a candidate fails typecheck with
+   "Unknown constant `X`" / "identifier `X` is unknown", the repair stage must know which mathlib
+   module declares `X`. That knowledge is **derived once from the pinned mathlib source**, not
+   hand-maintained: `lean/symbolIndex.js` maps every top-level declaration (full dotted name,
+   namespace nesting and `protected`/`private` prefixes tracked) to its defining module, built by
+   `bench/buildSymbolIndex.js` and cached per mathlib pin. Query tiers: (1) exact full-name match;
+   (2) last-segment match, preferring a module whose basename equals the segment; (3) module-
+   basename fallback for declarations with no source line at all — `to_additive`-generated names
+   like `Even` never appear in a source file, and mathlib's convention (the definition lives in a
+   file named after it, e.g. `Algebra/Group/Even.lean`) is the only signal that resolves them.
+   The curated table in `normalize.js` shrinks to what the index cannot derive: notation fixes
+   (`s.sum f` → `∑ x ∈ s, f x`) and non-constant type symbols (`ℕ`). This boundary is deliberate:
+   derived knowledge covers ANY symbol in ANY domain (the corpus spans 35 problem tags; a
+   Millennium-list target spans complex analysis, PDE, algebraic geometry, topology, complexity —
+   none of which a hand table can be "comprehensive" against in advance); curated knowledge
+   survives only where a module version changed the notation, which no source scan can recover.
+
+   Domain presets (corpus tag → starter import list, e.g. number theory →
+   `Nat.Prime.Defs` + `Nat.Parity`) are a **cold-start optimization only**: they seed the first
+   proposal so repair round-trips are fewer. Correctness never depends on them — the derived
+   index answers any missing symbol on the first repair. Presets key on the corpus's existing
+   tags and are a §7.1 follow-up, not a prerequisite of formalization.
+
 The methodology is the agent loop, lifted one level: `observe` (prose + asserted instances +
 retrieved definitions) → `propose` (independent candidate formalizations) → `act` (kernel
 typecheck) → `verify` (probes + pairwise `A ↔ B`) → `repair` (correct and re-derive on any
@@ -167,6 +190,8 @@ kanforge/
     backendCli.js            # `lean` CLI impl
     pin.js                   # toolchain + mathlib4 pin, statement hashing
     goalText.js              # goal text extraction / normalization
+    moduleResolver.js        # stale-alias → real module resolution within the pinned mathlib tree
+    symbolIndex.js           # derived symbol → defining-module index (built from the mathlib source; cached per pin)
   agent/
     loop.js                  # the agent loop: observe→propose→act→verify→repair→commit; PullGraph + scheduler + backendRepl + one LLM adapter; node id = statement hash; oldest-sorry priority; stop budget; traced events
     solve.js                 # goal-solved / lemma-proved stopping rules
@@ -219,6 +244,7 @@ kanforge/
     smoke.js                 # 23-problem miniF2F-style smoke set (5 tiers), runs over real repl
     stepSmoke.js             # multi-step tier problems (build_order.md §5.4)
     verifyStepSet.js         # full-paces chain verifier for the step tier
+    buildSymbolIndex.js      # one-time symbol→module index build from the pinned mathlib source (cached per pin)
   test/                      # unit + integration tests (Node built-in test runner)
   corpus/                    # open-target corpus (P7 intake gate §7.0): sources/ (primary docs) + index/corpus.json (322 open + Lean-formalized Erdős candidates)
 ```

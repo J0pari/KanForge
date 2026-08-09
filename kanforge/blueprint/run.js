@@ -2,9 +2,15 @@
 // re-split) → refined blueprint + LemmaStore/TrainingDataset capture.
 //
 // CLI: node blueprint/run.js '<theorem>' [--out-dir=<dir>] [--max-rounds=<n>]
-//      [--max-tactics=<n>] [--concurrency=<n>]
+//      [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--statement-file=<path>]
+//      [--recipe=...] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]
+//
+// --statement-file: read the theorem from a file instead of argv — unicode Lean statements are
+// mangled by some shells' argv encoding (observed: Windows PowerShell corrupts ∀ ∧ → ≠), so the
+// file form is the robust path for corpus statements.
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SkeletonGenerator } from './skeleton.js';
 import { BlueprintRefiner } from './refine.js';
@@ -119,22 +125,29 @@ async function main() {
     const ENV = loadEnv();
 
     const args = process.argv.slice(2);
-    const theorem = args.find(a => !a.startsWith('--'));
+    const theoremFile = argValue(args, '--statement-file=');
+    const theorem = theoremFile ? fs.readFileSync(theoremFile, 'utf8').trim() : args.find(a => !a.startsWith('--'));
     if (!theorem) {
-        console.error('usage: node blueprint/run.js "<theorem>" [--out-dir=<dir>] [--max-rounds=<n>] [--max-tactics=<n>] [--concurrency=<n>] [--recipe=loop|bestofn|swiss|swiss+repulsion|bfs|mcgs] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]');
+        console.error('usage: node blueprint/run.js "<theorem>" [--out-dir=<dir>] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--statement-file=<path>] [--recipe=loop|bestofn|swiss|swiss+repulsion|bfs|mcgs] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]');
         process.exit(2);
     }
     const outDir = argValue(args, '--out-dir=');
     const maxRounds = Number(argValue(args, '--max-rounds=') ?? 200);
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? 8);
+    const maxGoals = Number(argValue(args, '--max-goals=') ?? 100);
     const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
     const repoDir = argValue(args, '--repo-dir=');
     const recipe = argValue(args, '--recipe=') ?? null;
     const useSwiss = args.includes('--use-swiss');
     const swissN = Number(argValue(args, '--swiss-n=') ?? 8);
     const repulsion = args.includes('--repulsion');
+    // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
+    // chain); 60s is a warm-worker budget only. Default 240s covers the cold case with margin.
+    const checkTimeoutMs = Number(argValue(args, '--check-timeout=') ?? 240_000);
 
-    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: 60_000 });
+    // The repl pool must survive the COLD mathlib import of the target's statement (the
+    // autoformalizer harness uses 180s for the same reason); 60s is a warm-worker budget only.
+    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: checkTimeoutMs });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
@@ -152,12 +165,23 @@ async function main() {
     console.log(`[blueprint] model: ${llmConfig.provider}/${llmConfig.model} (KANFORGE_LLM_MODEL)`);
 
     try {
+        // Warm the pool with the target's imports BEFORE refining: the cold mathlib import is
+        // paid once here, and every lemma session continues from the warm env (the same
+        // statement-mode chaining the autoformalizer uses) — no re-import per lemma.
+        if (pool.warm) {
+            console.log(`[blueprint] warming pool with target imports (cold mathlib import — one-time)`);
+            try {
+                await pool.warm(theorem, { timeoutMs: checkTimeoutMs });
+            } catch (err) {
+                console.warn(`[blueprint] warm failed (continuing cold): ${err?.message ?? err}`);
+            }
+        }
         const r = await runBlueprintTheorem({
             backend: pool,
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion },
             maxRounds,
             repoDir,
             provenance

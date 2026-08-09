@@ -7,7 +7,8 @@ import {
     staticValidateStatement,
     parseFormalizationJson,
     assembleStatement,
-    parseProbeJson
+    parseProbeJson,
+    Autoformalizer
 } from '../agent/roles/autoformalizer.js';
 
 test('staticValidateStatement accepts a well-formed sorry-stub', () => {
@@ -52,4 +53,27 @@ test('parseProbeJson requires exactly the expected number of examples', () => {
     assert.strictEqual(r.examples.length, 2);
     const bad = parseProbeJson('{"examples": ["example a : 1 = 1 := by rfl"]}', 2);
     assert.strictEqual(bad.ok, false);
+});
+
+// Shape classification (§0.2) through the entry builder: the `:= by sorry` suffix and binder
+// colons must not count as a shape-classifying equality.
+const AF = new Autoformalizer({ llm: {}, backend: {} });
+
+test('shapeOf: universal/infinity claims classify as universal-claim, not closed-form', () => {
+    const s = 'import Mathlib.Algebra.Group.Even\n\ntheorem t : Set.Infinite { n : Nat | Even n ∧ ∀ p a b : Nat, Nat.Prime p → n ≠ p + 2 ^ a + 2 ^ b } := by sorry';
+    const e = AF._entry(s, 'prose', { attempts: 1 });
+    assert.strictEqual(e.justification.shape, 'universal-claim');
+});
+
+test('shapeOf: closed-form claims with propositional equality classify as closed-form', () => {
+    const s = 'theorem t (n : Nat) : n * 2 = n + n := by sorry';
+    const e = AF._entry(s, 'prose', { attempts: 1 });
+    assert.strictEqual(e.justification.shape, 'closed-form');
+});
+
+test('shapeOf: witness-discovery (∃) and equivalence (↔) classify correctly', () => {
+    const w = AF._entry('theorem t : ∃ n : Nat, n > 5 := by sorry', 'p', { attempts: 1 });
+    assert.strictEqual(w.justification.shape, 'witness-discovery');
+    const eq = AF._entry('theorem t : True ↔ False := by sorry', 'p', { attempts: 1 });
+    assert.strictEqual(eq.justification.shape, 'equivalence');
 });

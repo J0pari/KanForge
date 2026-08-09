@@ -9,6 +9,8 @@
 // module resolver ensures the import itself is valid.
 
 import { resolveModule } from '../../lean/moduleResolver.js';
+import { loadSymbolIndex, querySymbolIndex, SYMBOL_INDEX_CACHE_NAME } from '../../lean/symbolIndex.js';
+import path from 'node:path';
 
 // Unicode math type symbols → ASCII Lean type names (only in type positions; these symbols do
 // not appear as identifiers elsewhere, so global replacement is safe).
@@ -76,56 +78,65 @@ export function normalizeFormalization(imports, theorem) {
     return { ok: true, imports: resolvedImports, theorem: theoremText, statement };
 }
 
-// Missing-symbol → mathlib module suggestions, grounded in the pinned mathlib's real module
-// names (v4.33.0-rc1). Used by the autoformalizer's repair stage: when a typecheck fails with
-// "environment does not contain X" / "Unknown constant X" / "Unknown identifier X", the
-// suggested module is appended to the repair hint so the next proposal imports it.
-// Missing-symbol → mathlib module suggestions, grounded in the pinned mathlib's real module
-// names (v4.33.0-rc1). Used by the autoformalizer's repair stage: when a typecheck fails with
-// "environment does not contain X" / "Unknown constant X" / "Unknown identifier X", the
-// suggested module is appended to the repair hint so the next proposal imports it.
-// Some "missing symbols" are actually obsolete NOTATION: `s.sum f` dot-notation does not exist
-// in modern mathlib — the big-operator notation `∑ x ∈ s, f x` does. The hint carries a
-// notationFix so the repair can say exactly what to rewrite.
+// Missing-symbol → mathlib module suggestions. The primary path is the DERIVED symbol index
+// (lean/symbolIndex.js, built from the pinned mathlib source — architecture.md §0.1 item 6):
+// any constant/identifier the kernel rejects is looked up mechanically. The curated table below
+// keeps ONLY what the index cannot derive: notation fixes (a module version changed the
+// notation, e.g. `s.sum f` → `∑ x ∈ s, f x`) and non-constant type symbols (`ℕ`).
 export const SYMBOL_MODULES = {
     'Finset.sum': { modules: ['Mathlib.Algebra.BigOperators.Ring.Finset'], notationFix: 'use the big-operator notation `∑ x ∈ s, f x` instead of `s.sum f`' },
-    'Finset': { modules: ['Mathlib.Data.Finset.Basic', 'Mathlib.Algebra.BigOperators.Ring.Finset'] },
     'Finset.card': { modules: ['Mathlib.Data.Finset.Card'], notationFix: 'use `s.card` (valid) — or `Finset.card s`' },
-    'Nat.Prime': { modules: ['Mathlib.Data.Nat.Prime.Defs'] },
-    'Nat.factorial': { modules: ['Mathlib.Data.Nat.Factorial.Basic'] },
-    'Int': { modules: ['Mathlib.Data.Int.Basic'] },
-    'Real': { modules: ['Mathlib.Data.Real.Basic'] },
-    'Complex': { modules: ['Mathlib.Data.Complex.Basic'] },
-    'ℕ': { modules: ['Mathlib.Data.Nat.Basic'] },
-    'List': { modules: ['Mathlib.Data.List.Basic'] },
-    'Set': { modules: ['Mathlib.Data.Set.Basic'] },
-    'Finset.powerset': { modules: ['Mathlib.Data.Finset.Powerset'] },
-    'Cardinal': { modules: ['Mathlib.SetTheory.Cardinal.Basic'] },
-    'IsAPOfLength': { modules: ['Mathlib.Combinatorics.Additive.AP.Basic'] },
-    'InGeneralPosition': { modules: ['Mathlib.Combinatorics.PlanarGraph', 'Mathlib.Geometry.Euclidean.Basic'] },
-    '^': { modules: ['Mathlib.Data.Nat.Pow'] },
-    'pow': { modules: ['Mathlib.Data.Nat.Pow'] },
-    'NPow': { modules: ['Mathlib.Data.Nat.Pow'] }
+    'ℕ': { modules: ['Mathlib.Data.Nat.Basic'] }
 };
 
+// Lazy default index: loaded once from the lean project cache. A missing cache degrades to the
+// curated table (and the build script bench/buildSymbolIndex.js produces the cache).
+let _defaultIndex = undefined;
+export function defaultSymbolIndex() {
+    if (_defaultIndex !== undefined) return _defaultIndex;
+    try {
+        const env = globalThis.process?.env;
+        const project = env?.KANFORGE_LEAN_PROJECT;
+        _defaultIndex = project ? loadSymbolIndex(path.join(project, SYMBOL_INDEX_CACHE_NAME)) : null;
+    } catch {
+        _defaultIndex = null;
+    }
+    return _defaultIndex;
+}
+
 // Given a Lean error message, return { symbol, modules, notationFix? } for the first recognized
-// missing symbol, or null. Modules are resolved to real module names via the module resolver.
-export function suggestImportsForError(message) {
+// missing symbol, or null. Curated notation fixes take precedence when they exist (they point to
+// the light module AND carry the rewrite — strictly more actionable than the derived module);
+// otherwise the derived index resolves any mathlib symbol mechanically. Modules are resolved to
+// real module names via the module resolver.
+export function suggestImportsForError(message, { index } = {}) {
     const msg = String(message ?? '');
-    // Prefer the LONGEST backticked token that appears in the map (e.g. `Finset.sum` over `sum`).
+    // Prefer the LONGEST backticked token (e.g. `Finset.sum` over `sum`).
     const tokens = [...msg.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)`/g)].map(m => m[1]);
-    let symbol = null;
+    // Explicit `index: null` disables the derived index; the default (undefined) loads the
+    // cached index from the lean project.
+    const activeIndex = index === undefined ? defaultSymbolIndex() : index;
+
     for (const t of tokens) {
-        if (SYMBOL_MODULES[t]) { symbol = t; break; }
+        const curated = SYMBOL_MODULES[t];
+        if (curated) {
+            const resolved = curated.modules.map(resolveModule).filter(Boolean);
+            if (resolved.length) return { symbol: t, modules: resolved, notationFix: curated.notationFix ?? null, derived: 0 };
+        }
+        const hit = activeIndex ? querySymbolIndex(activeIndex, t) : null;
+        if (hit) {
+            const resolved = [hit.module].map(resolveModule).filter(Boolean);
+            if (resolved.length) return { symbol: hit.symbol, modules: resolved, notationFix: null, derived: hit.tier };
+        }
     }
-    if (!symbol) {
-        // No exact map hit: use the most-qualified token as a weak signal.
+    if (!activeIndex) {
+        // No index: fall back to the curated table's qualified-token heuristic.
         const qualified = tokens.filter(t => t.includes('.')).sort((a, b) => b.length - a.length)[0];
-        symbol = SYMBOL_MODULES[qualified] ? qualified : null;
+        const entry = SYMBOL_MODULES[qualified];
+        if (entry) {
+            const resolved = entry.modules.map(resolveModule).filter(Boolean);
+            if (resolved.length) return { symbol: qualified, modules: resolved, notationFix: entry.notationFix ?? null, derived: 0 };
+        }
     }
-    if (!symbol) return null;
-    const entry = SYMBOL_MODULES[symbol];
-    const resolved = entry.modules.map(resolveModule).filter(Boolean);
-    if (!resolved.length) return null;
-    return { symbol, modules: resolved, notationFix: entry.notationFix ?? null };
+    return null;
 }

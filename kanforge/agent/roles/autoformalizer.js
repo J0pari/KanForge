@@ -13,10 +13,12 @@
 import { hashStatement, makePin } from '../../lean/pin.js';
 import { swissRank, parseJudgeVerdict } from '../../search/swiss.js';
 import { normalizeFormalization, suggestImportsForError, SYMBOL_MODULES } from './normalize.js';
+import { LOGICAL_OPS } from '../../search/tacticMenu.js';
 
-const SHAPE_EQUIV = /(↔|≃|≅|⇔)/;
-const SHAPE_EXISTS = /∃/;
-const SHAPE_EQ = /=/;
+// LOGICAL_OPS is the canonical operator set (search/tacticMenu.js): → ↔ ∨ ∧ ¬ ∀ ∃.
+// The shape classifier treats ↔ (and its relation variants ≃ ≅ ⇔) as the equivalence signal,
+// ∃ as witness-discovery, and a stripped propositional `=` as closed-form; default universal.
+const SHAPE_SUPPLEMENT = /[≃≅⇔]/;
 
 // --- static validation (zero kernel cost) ---
 
@@ -97,6 +99,7 @@ function buildFormalizationPrompt(prose, instances, repair = null) {
         : '';
     const repairText = repair
         ? `\n\nYour previous attempt was rejected:\n- stage: ${repair.stage}\n- reason: ${repair.reason}`
+          + (repair.candidate ? `\n\nYour previous theorem text (verbatim, this is what failed):\n\`\`\`\n${repair.candidate}\n\`\`\`` : '')
           + (repair.suggestModules?.length ? `\n- Add these imports (the symbol is missing from the current environment): ${repair.suggestModules.join(', ')}` : '')
           + (repair.notationFix ? `\n- Rewrite: ${repair.notationFix}` : '')
           + '\nFix ONLY what the reason identifies and return the corrected JSON.'
@@ -166,12 +169,23 @@ export class Autoformalizer {
     // checkTimeoutMs: the kernel check on a COLD worker imports mathlib; warm via backend
     // warmupStatement (intake harness builds the pool with the target's imports) so the paid
     // cost is at most once. The timeout must cover that first import.
-    constructor({ llm, backend, maxAttempts = 2, checkTimeoutMs = 180_000 } = {}) {
+    constructor({ llm, backend, maxAttempts = 2, checkTimeoutMs = 180_000, onAttempt = null } = {}) {
         if (!llm || !backend) throw new Error('Autoformalizer requires a real llm client and a real backend');
         this.llm = llm;
         this.backend = backend;
         this.maxAttempts = maxAttempts;
         this.checkTimeoutMs = checkTimeoutMs;
+        this.onAttempt = onAttempt; // per-attempt observability: ({ attempt, stage, reason, candidate, suggestModules })
+    }
+
+    _attempt(attempt, last) {
+        this.onAttempt?.({
+            attempt,
+            stage: last?.stage ?? null,
+            reason: last?.reason ?? null,
+            candidate: last?.candidate ?? null,
+            suggestModules: last?.suggestModules ?? []
+        });
     }
 
     // formalize(prose, { instances, source }) → { ok, statement, shortlistEntry, error? }
@@ -183,6 +197,7 @@ export class Autoformalizer {
             const proposed = await this._propose(prose, instances, last);
             if (!proposed.ok) {
                 last = { stage: 'parse', reason: proposed.error };
+                this._attempt(attempt, last);
                 continue;
             }
             // Normalize the candidate: resolve imports to modules that exist in the pinned
@@ -196,21 +211,31 @@ export class Autoformalizer {
             const normalized = normalizeFormalization(proposedImports, proposed.theorem);
             if (!normalized.imports.length && proposedImports.length > 0) {
                 last = { stage: 'imports', reason: `no proposed import resolved: ${proposedImports.join(', ')}; propose modules that exist in mathlib` };
+                this._attempt(attempt, last);
                 continue;
             }
             const statement = normalized.statement;
             const staticCheck = staticValidateStatement(statement);
             if (!staticCheck.ok) {
                 last = { stage: 'structure', reason: staticCheck.reason };
+                this._attempt(attempt, last);
                 continue;
             }
             // Warm the pool with the candidate's imports BEFORE the check: the cold mathlib
             // import is paid once here, and statement + probe checks continue the SAME
             // statement-mode session (useWarmEnv) — no re-import per check.
-            if (this.backend.warm) {
-                await this.backend.warm(statement, { timeoutMs: this.checkTimeoutMs });
+            let verdict;
+            try {
+                if (this.backend.warm) {
+                    await this.backend.warm(statement, { timeoutMs: this.checkTimeoutMs });
+                }
+                verdict = await this._verifyStatement(statement);
+            } catch (err) {
+                // A thrown check/warm error (e.g. repl timeout with kind: 'timeout') is a repair
+                // signal, never a crash: surface it so the light-import fallback below can
+                // suggest lighter modules for the next attempt.
+                verdict = { ok: false, error: `${err?.kind === 'timeout' ? 'timeout' : 'check error'}: ${err?.message ?? String(err)}` };
             }
-            const verdict = await this._verifyStatement(statement);
             if (!verdict.ok) {
                 // If the failure is a missing symbol ("environment does not contain X") OR a
                 // timeout on a heavy import, suggest the light module(s) that provide the
@@ -228,8 +253,9 @@ export class Autoformalizer {
                     }
                 }
                 last = suggest
-                    ? { stage: 'typecheck', reason: verdict.error, suggestModules: suggest.modules, notationFix: suggest.notationFix ?? null }
-                    : { stage: 'typecheck', reason: verdict.error };
+                    ? { stage: 'typecheck', reason: verdict.error, candidate: statement, suggestModules: suggest.modules, notationFix: suggest.notationFix ?? null }
+                    : { stage: 'typecheck', reason: verdict.error, candidate: statement };
+                this._attempt(attempt, last);
                 continue;
             }
             const probes = await this._verifyProbes(statement, instances);
@@ -237,9 +263,11 @@ export class Autoformalizer {
                 // Per §0.1: a probe failure is a formalization failure WITH evidence, never
                 // silently corrected — but a fixable probe-set is retried once (targeted).
                 last = { stage: 'probe', reason: probes.error };
+                this._attempt(attempt, last);
                 if (attempt < this.maxAttempts) continue;
                 return { ok: false, error: probes.error, probes: probes.results ?? [], shortlistEntry: null };
             }
+            this._attempt(attempt, { stage: 'verified', reason: 'kernel typecheck + probes' });
             return {
                 ok: true,
                 statement,
@@ -268,10 +296,10 @@ export class Autoformalizer {
         const checkTarget = chainSafe ? stripImports(statement) : statement;
         const check = await this.backend.check(checkTarget, { timeoutMs: this.checkTimeoutMs, useWarmEnv: chainSafe });
         if (check.status !== 'verified') {
-            // Surface the FIRST error line only — targeted repair signal, not a dump.
-            const msg = check.error?.message ?? check.error ?? 'unknown error';
-            const firstLine = String(msg).split(/\r?\n/).find(l => l.trim()) ?? msg;
-            return { ok: false, error: firstLine.slice(0, 300) };
+            // Surface the FULL kernel error, not a truncated first line: the location-bearing
+            // second line (caret/span) is what the repair pass needs to fix the candidate.
+            const msg = String(check.error?.message ?? check.error ?? 'unknown error');
+            return { ok: false, error: msg.slice(0, 1500) };
         }
         return { ok: true };
     }
@@ -325,10 +353,21 @@ export class Autoformalizer {
     }
 
     _shapeOf(statement) {
-        const s = statement ?? '';
-        if (SHAPE_EQUIV.test(s)) return 'equivalence';
-        if (SHAPE_EXISTS.test(s)) return 'witness-discovery';
-        if (SHAPE_EQ.test(s)) return 'closed-form';
+        // Strip the declaration suffix (`:= by sorry`) and binder colons: a shape-classifying
+        // `=` is a propositional equality, not syntax.
+        const s = String(statement ?? '').replace(/:=\s*by\s+sorry\s*$/i, '').replace(/:\s*[A-Za-z_][A-Za-z0-9_.]*/g, '');
+        // LOGICAL_OPS (search/tacticMenu.js) is the canonical logical-operator vocabulary; the
+        // shape priorities follow architecture.md §0.2: equivalence → witness-discovery →
+        // closed-form → universal. ↔ and its relation variants (≃≅⇔) are the equivalence signal;
+        // ∃ is witness-discovery; a stripped propositional `=` is closed-form.
+        for (const op of LOGICAL_OPS) {
+            if (s.includes(op)) {
+                if (op === '↔') return 'equivalence';
+                if (op === '∃') return 'witness-discovery';
+            }
+        }
+        if (SHAPE_SUPPLEMENT.test(s)) return 'equivalence';
+        if (s.includes('=')) return 'closed-form';
         return 'universal-claim';
     }
 

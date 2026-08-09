@@ -640,6 +640,17 @@ a measured effect; retrieval never bypasses kernel verification.
   repl's statement-mode env chaining (`backend.warm`/`useWarmEnv`) paying imports once. Validated
   on 7 distinct open problems across number theory, geometry, combinatorics (harness:
   `bench/validateFormalization.js` single, `bench/validateBatch.js` random-N).
+- **Missing-symbol repair is derived, not curated (architecture.md §0.1 item 6).** The repair
+  stage's "which module declares `X`" knowledge comes from `lean/symbolIndex.js` — an index of
+  every top-level mathlib declaration (full dotted name, namespace tracking, `protected`/
+  `private` prefixes) to its defining module, built once per pin by `bench/buildSymbolIndex.js`
+  and cached. Query tiers: exact full name → last-segment with module-basename preference →
+  module-basename fallback for generated declarations (`to_additive` names like `Even` have no
+  source line; `Algebra/Group/Even.lean` resolves them by mathlib's file-naming convention).
+  The curated table in `normalize.js` keeps only what the index cannot derive: notation fixes
+  and non-constant type symbols. Domain presets (corpus tag → starter imports) are a cold-start
+  optimization only — a follow-up keyed on the corpus's 35 existing tags, never a correctness
+  dependency.
 - **Deliverables in order:** (1) the intake gate (§7.0) + shortlist generator (formalizability
   verdict + substrate cost + shape per candidate); (2) the probe harness that turns asserted
   instances into kernel-checked `example`s; (3) the consensus step reusing `search/swiss.js`

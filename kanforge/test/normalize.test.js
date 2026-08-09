@@ -48,3 +48,51 @@ test('suggestImportsForError maps a missing symbol to its providing module', () 
     assert.ok(r.notationFix.includes('∑'));
     assert.strictEqual(suggestImportsForError('no symbols here'), null);
 });
+
+// Synthetic derived index (the real one is built by bench/buildSymbolIndex.js from the pinned
+// mathlib source): tests the query tiers mechanically, exactly as the autoformalizer uses them.
+const SYNTHETIC_INDEX = {
+    decls: new Map([
+        ['Set.Infinite', 'Mathlib.Data.Finite.Defs'],
+        ['Set.Finite', 'Mathlib.Data.Set.Finite.Defs'],
+        ['Nat.Prime', 'Mathlib.Data.Nat.Prime.Defs'],
+        ['Multiset', 'Mathlib.Data.Multiset.Basic']
+    ]),
+    moduleBasenames: new Map([
+        ['Even', 'Mathlib.Algebra.Group.Even'],
+        ['Odd', 'Mathlib.Algebra.Group.Even']
+    ])
+};
+
+test('suggestImportsForError resolves via the derived index (tier 1: exact full name)', () => {
+    const r = suggestImportsForError('Unknown constant `Set.Infinite`', { index: SYNTHETIC_INDEX });
+    assert.ok(r && r.symbol === 'Set.Infinite');
+    assert.ok(r.modules.includes('Mathlib.Data.Finite.Defs'));
+    assert.strictEqual(r.derived, 1);
+    const prime = suggestImportsForError('unknown identifier `Nat.Prime`', { index: SYNTHETIC_INDEX });
+    assert.ok(prime && prime.modules.includes('Mathlib.Data.Nat.Prime.Defs'));
+});
+
+test('suggestImportsForError resolves via the derived index (tier 2: basename convention)', () => {
+    // `Even` is to_additive-generated — no declaration line exists in any source file; only the
+    // module-basename convention resolves it (unqualified query → basename tier).
+    const r = suggestImportsForError("Hint: The identifier `Even` is unknown", { index: SYNTHETIC_INDEX });
+    assert.ok(r && r.symbol === 'Even');
+    assert.ok(r.modules.includes('Mathlib.Algebra.Group.Even'));
+    assert.strictEqual(r.derived, 2);
+});
+
+test('suggestImportsForError: curated notation fix wins over the derived module', () => {
+    // Finset.sum has a curated entry (light module + rewrite) — strictly more actionable.
+    const r = suggestImportsForError('Invalid field `sum` on `Finset.sum`', { index: SYNTHETIC_INDEX });
+    assert.strictEqual(r.symbol, 'Finset.sum');
+    assert.ok(r.notationFix.includes('∑'));
+    assert.strictEqual(r.derived, 0);
+});
+
+test('suggestImportsForError without an index degrades to the curated table only', () => {
+    const r = suggestImportsForError('Unknown constant `Set.Infinite`');
+    assert.strictEqual(r, null); // no index, no curated entry for Set.Infinite → null
+    const sum = suggestImportsForError('Unknown constant `Finset.sum`');
+    assert.ok(sum && sum.modules.includes('Mathlib.Algebra.BigOperators.Ring.Finset'));
+});

@@ -69,7 +69,7 @@ const MODULE_CARD_META = {
 };
 
 // Operators that are logical connectives (matter for propositional goals).
-const LOGICAL_OPS = new Set(['→', '↔', '∨', '∧', '¬', '∀', '∃']);
+export const LOGICAL_OPS = new Set(['→', '↔', '∨', '∧', '¬', '∀', '∃']);
 // Arithmetic markers; presence anywhere disqualifies "propositional" (tauto cannot handle them).
 const ARITH_RE = /[+\-*\/\^<≤>≥=≠!]/;
 
