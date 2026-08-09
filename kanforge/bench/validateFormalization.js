@@ -4,8 +4,11 @@ import { loadEnv } from '../env.js';
 import { loadLLMConfig, createLLM } from '../agent/llm.js';
 import { createBackend } from '../lean/backend.js';
 import { Autoformalizer } from '../agent/roles/autoformalizer.js';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
+
+const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 const ENV = loadEnv();
 const args = process.argv.slice(2);
@@ -32,7 +35,7 @@ if (r.ok) {
     console.log(r.statement);
     console.log('entry:', JSON.stringify({ hash: r.shortlistEntry.statementHash.slice(0, 12), shape: r.shortlistEntry.justification.shape, attempts: r.shortlistEntry.attempts, probes: r.shortlistEntry.probes }, null, 1));
     // persist a shortlist entry
-    const dir = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', 'corpus', 'shortlist');
+    const dir = path.join(PACKAGE_ROOT, '..', 'corpus', 'shortlist');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${source}.json`);
     fs.writeFileSync(file, JSON.stringify(r.shortlistEntry, null, 2));

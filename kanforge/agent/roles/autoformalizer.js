@@ -11,6 +11,7 @@
 // statement + probe checks reuse the same warm worker (import cost paid at most once).
 
 import { hashStatement } from '../../lean/pin.js';
+import { normalizeFormalization } from './normalize.js';
 
 const SHAPE_EQUIV = /(↔|≃|≅|⇔)/;
 const SHAPE_EXISTS = /∃/;
@@ -180,7 +181,14 @@ export class Autoformalizer {
                 last = { stage: 'parse', reason: proposed.error };
                 continue;
             }
-            const statement = assembleStatement(proposed.imports, proposed.theorem);
+            // Normalize the candidate: resolve imports to modules that exist in the pinned
+            // mathlib, and normalize the theorem text (unicode/LaTeX/ASCII → canonical Lean).
+            const normalized = normalizeFormalization(proposed.imports, proposed.theorem);
+            if (!normalized.imports.length && (proposed.imports?.length ?? 0) > 0) {
+                last = { stage: 'imports', reason: `no proposed import resolved: ${proposed.imports.join(', ')}` };
+                continue;
+            }
+            const statement = normalized.statement;
             const staticCheck = staticValidateStatement(statement);
             if (!staticCheck.ok) {
                 last = { stage: 'structure', reason: staticCheck.reason };
@@ -225,12 +233,13 @@ export class Autoformalizer {
 
     async _verifyStatement(statement) {
         // Continue the statement-mode session established by warm() when chain-safe (the imports
-        // are already in the repl env, so the check is fast). Statements with top-level ∃/∀
-        // ascription are NOT chain-safe (repl "expected token" quirk) — check fresh on the warm
-        // worker instead (still fast: the process has the modules). Imports are stripped because
-        // the env already has them (Lean: imports only at file start).
-        const bodyOnly = stripImports(statement);
-        const check = await this.backend.check(bodyOnly, { timeoutMs: this.checkTimeoutMs, useWarmEnv: isChainSafe(bodyOnly) });
+        // are already in the repl env, so the check is fast; import lines are stripped because the
+        // env already has them). Statements with top-level ∃/∀ ascription are NOT chain-safe (repl
+        // "expected token" quirk) — check fresh WITH the imports on the warm worker instead (still
+        // fast: the process has the modules; only the env chain is unsafe).
+        const chainSafe = isChainSafe(statement);
+        const checkTarget = chainSafe ? stripImports(statement) : statement;
+        const check = await this.backend.check(checkTarget, { timeoutMs: this.checkTimeoutMs, useWarmEnv: chainSafe });
         if (check.status !== 'verified') {
             // Surface the FIRST error line only — targeted repair signal, not a dump.
             const msg = check.error?.message ?? check.error ?? 'unknown error';
@@ -250,10 +259,12 @@ export class Autoformalizer {
             if (!parsed.ok) return { ok: false, error: parsed.error };
             const results = [];
             for (let i = 0; i < instances.length; i++) {
-                const example = stripImports(parsed.examples[i]);
+                const full = parsed.examples[i];
+                const chainSafe = isChainSafe(full);
+                const example = chainSafe ? stripImports(full) : full;
                 let verified = false, error = null;
                 try {
-                    const check = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: isChainSafe(example) });
+                    const check = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: chainSafe });
                     verified = check.status === 'verified';
                     error = check.status === 'verified' ? null : (check.error?.message ?? 'unverified');
                 } catch (err) {
