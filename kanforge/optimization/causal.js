@@ -1,11 +1,15 @@
-// Causal analysis over the traced event stream (architecture.md §6).
+// Causal TELEMETRY / trace analysis over the traced event stream (architecture.md §6).
 //
 // Consumes the events emitted by agent/loop.js (id/t/parent/lemmaId/...). The parent chain is
-// the per-lemma causal DAG; array order (emit order) is the causal order within a lemma.
+// the per-lemma causal ORDER; array order (emit order) is the causal order within a lemma. This
+// module computes SEQUENCE STATISTICS over that ordered stream — it is trace infrastructure, NOT
+// causal inference. A pattern `A → B → FAIL` correlates with failure; it does not establish that
+// A or B caused it (confounders: goal shape, family, hypotheses, imports, premises, depth, LLM
+// sampling, toolchain). Intervention-based causal questions are future work (build_order.md §5.6).
 //
 // API (architecture.md §6):
-//   getTransitionMatrix()  — action→action Markov probabilities
-//   getFailurePredictors() — action sequences reliably preceding FAIL (negative rules)
+//   getTransitionMatrix()  — action→action Markov probabilities (sequence statistics, not causes)
+//   getFailurePredictors() — action windows correlated with FAIL (negative rules)
 //   getBottlenecks()       — time sinks (event types / lemmas)
 //   getAnomalies()         — pathological runs (guardrail trips, repair loops)
 //   getCriticalPath()      — longest dependent chain in a development

@@ -163,7 +163,7 @@ export class TacticLoop {
                         }
                         if (isGoalSolved(swissResult.result)) {
                             solved = true;
-                            this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic }, lemmaId);
+                            this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: swissResult.tactic, via: 'swiss' }, lemmaId);
                         } else {
                             solved = true;
                         }
@@ -176,13 +176,14 @@ export class TacticLoop {
                     if (signal?.aborted) break;
 
                     this.llmCalls++;
-                    const tactic = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
+                    const proposed = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
+                    const tactic = proposed?.tactic;
                     if (!tactic) {
                         this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
                         continue;
                     }
 
-                    this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic }, lemmaId);
+                    this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
 
                     this.tacticCalls++;
                     const result = await this.backend.applyTactic(goal, tactic);
@@ -201,7 +202,7 @@ export class TacticLoop {
 
                     if (isGoalSolved(result)) {
                         solved = true;
-                        this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
+                        this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal' }, lemmaId);
                         break;
                     }
 
@@ -217,10 +218,11 @@ export class TacticLoop {
                     this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
 
                     const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
-                    const repairedTactic = await this._proposeTacticFromPrompt(repairPrompt);
+                    const repaired = await this._proposeTacticFromPrompt(repairPrompt);
+                    const repairedTactic = repaired?.tactic;
 
                     if (repairedTactic) {
-                        this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                        this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, llmMs: repaired.llmMs, promptTokens: repaired.promptTokens, completionTokens: repaired.completionTokens }, lemmaId);
 
                         this.tacticCalls++;
                         const repairResult = await this.backend.applyTactic(goal, repairedTactic);
@@ -235,7 +237,7 @@ export class TacticLoop {
                             lastResult = repairResult;
 
                             if (isGoalSolved(repairResult)) {
-                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
                             }
                         } else {
                             this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
@@ -367,16 +369,23 @@ export class TacticLoop {
     }
 
     async _proposeTacticFromPrompt(prompt) {
+        const t0 = Date.now();
         try {
             const response = await this.llm.complete(prompt);
+            const llmMs = Date.now() - t0;
             let tactic = response.text?.trim();
             if (tactic) {
                 tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
                 tactic = tactic.replace(/^`|`$/g, '').trim();
             }
-            return tactic || null;
+            return {
+                tactic: tactic || null,
+                llmMs,
+                promptTokens: response.usage?.promptTokens ?? null,
+                completionTokens: response.usage?.completionTokens ?? null
+            };
         } catch (err) {
-            return null;
+            return { tactic: null, llmMs: Date.now() - t0, promptTokens: null, completionTokens: null };
         }
     }
 
@@ -405,6 +414,7 @@ export class TacticLoop {
     }
 
     async proveAll() {
+        this._runStart = Date.now();
         const scheduler = new Scheduler(this.graph, {
             check: async (id, signal) => this._proveLemma(id, this.graph.nodes.get(id).computation.value, signal),
             concurrency: this.concurrency,
@@ -459,13 +469,16 @@ export class TacticLoop {
             }
         }
 
-        // KPI summary (build_order.md P1.1): surface success rate + cost per run so the bench
-        // and digest layers can report them without re-deriving from the event stream.
+        // KPI summary (build_order.md §5.6, architecture.md §6.1): surface the full metrics
+        // catalog so the bench and digest layers can report quantitatively, not just functionally.
+        const wallMs = Date.now() - (this._runStart ?? Date.now());
+        const metrics = computeMetrics(this.store.events);
+        metrics.secondsPerTheorem = (metrics.verifiedLemmas > 0 ? wallMs / 1000 / metrics.verifiedLemmas : null);
         outcome.metrics = {
-            ...computeMetrics(this.store.events),
+            ...metrics,
             llmCalls: this.llmCalls,
             tacticCalls: this.tacticCalls,
-            guardrailTrips: this.store.events.filter(e => e.type === 'guardrail_trip').length
+            wallMs
         };
 
         return outcome;

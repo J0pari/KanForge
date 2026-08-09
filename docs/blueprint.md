@@ -76,8 +76,8 @@ section only argues the shape.
 | `core/guardrails.js` | invariant spec + checks | correctness invariants checked continuously |
 | `optimization/bus.js` | central event bus | every stage emits a traced event here; entry point of the causal DAG |
 | `optimization/store.js` | bounded event store, causal parent links | full causal trace of the agent |
-| `optimization/causal.js` | transition matrix, failure predictors, bottlenecks, anomalies, critical path | the RL feature layer and the "why is it failing" answers |
-| `optimization/metrics.js` | KPI calculator (wired into the loop's per-run outcome) | agent KPIs: pass@1/k (lemma-level), tactics/lemma, tactics/goal, tactic success rate, reuse, guardrail trips |
+| `optimization/causal.js` | causal TELEMETRY / trace analysis: Markov transitions, failure correlations, timing, critical path | the trace layer + failure hypotheses — NOT causal inference (§6); feeds search biasing and the "why is it failing" answers |
+| `optimization/metrics.js` | KPI calculator (wired into the loop's per-run outcome) | the quantitative evaluation catalog (§6.1): search efficiency/quality, planning, learning, economic KPIs |
 | `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors — not yet built |
 | `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards — not yet built |
 | `growth/commit.js` | commit-per-lemma to a scratch repo | content-addressed library growth; statement hash in the message |
@@ -188,10 +188,11 @@ Detailed contracts: `architecture.md`. This is the shape.
 - **`blueprint/skeleton.js` + `refine.js`** — the skeleton → refine pair (built, P4; live-kernel
   tested): stub statements are kernel-typechecked so the DAG is kernel-valid even before proving;
   refine fills the lowest unproved stub bottom-up and re-splits stuck stubs (never edits statements).
-- **`optimization/*`** — `causal.js` produces the transition matrix, failure predictors,
-  bottlenecks, critical path. These are the RL features and the "why is it failing" answers.
-  `metrics.js` KPIs are attached to every loop outcome.
-- **`search/*`** — best-of-N baseline, BFS, MCGS with transposition merging, repulsion,
+- **`optimization/*`** — `causal.js` is causal *telemetry*: Markov transitions, failure
+  correlations, timing, critical path — the trace layer + failure hypotheses, NOT causal inference
+  (confounders everywhere; see `architecture.md` §6). `metrics.js` KPIs (the §6.1 catalog) attach
+  to every loop outcome.
+- **`search/*`** — best-of-N baseline, BFS, UCB-guided graph search (MCGS), repulsion,
   premise retrieval, goal-shape tactic menu.
 - **`growth/commit.js`** — commit-per-lemma to a scratch repo with statement hash in the message;
   the lemma store is content-addressed. Wired into `blueprint/run.js`'s DoD tail.

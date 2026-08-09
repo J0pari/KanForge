@@ -189,10 +189,17 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 ## Phase 5 — Search intelligence
 **Est. 2 weeks.**
 
-### 5.1 BFS + MCGS with transposition merging
-- `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; transposition merging is built into the e-graph structure — alpha-equivalent or definitionally-equal goals are already merged into equivalence classes with shared statistics (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10), so every search variant inherits the merge, not just MCGS.
+### 5.1 BFS + UCB-guided graph search (MCGS) with transposition merging
+- `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; `mcgs.js` is
+  UCB-guided graph search over the open classes — selection / expansion / backprop only, **not**
+  textbook MCTS (no cheap rollout; the "simulation" is an LLM + kernel call — `architecture.md` §5,
+  §5.6). Transposition merging is built into the e-graph structure — alpha-equivalent or
+  definitionally-equal goals are already merged into equivalence classes with shared statistics
+  (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10),
+  so every search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
-  reported. Compare, then decide.
+  reported. Compare, then decide. (§5.6 sharpens this to a held-out, cost-normalized comparison;
+  a "can solve something" anecdote is not acceptance.)
 - **Status:** the comparison apparatus ships in `bench/ablation.js` (recipes: `bestofn`, `swiss`,
   `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`; shared LLM-call budget;
   per-recipe + per-problem cost/pass tables written to `bench/ablation/`). The P0.1 Mathlib repl
@@ -398,6 +405,47 @@ code and no doc claim about dead code may remain.
 - **Acceptance:** every non-test JS file imports only live or explicitly-deferred modules; the full
   non-live suite passes; a fresh `git grep` for the removed names returns only docs that say
   "removed as dead code".
+
+### 5.6 Quantitative evaluation + honest search/causal claims
+Two review findings are recorded here as acceptance work, not rhetoric.
+- **MCGS is UCB-guided graph search, not textbook MCTS** (`architecture.md` §5). The code has
+  selection / expansion / backprop but no cheap rollout phase — the "simulation" is an expensive
+  LLM + kernel call — so the UCB value is a heuristic whose statistical meaning must be validated
+  empirically. **The experiment that settles it:** on held-out theorem families (not the in-sample
+  smoke set), does MCGS outperform simpler best-first / beam / BFS strategies *once LLM-call and
+  kernel-verification cost are normalized*? Success is a measured pass@k-vs-cost table showing a
+  strict Pareto gain on held-out families — not "MCGS can solve something". The comparison
+  apparatus already exists (`bench/ablation.js`); the missing piece is a held-out split of the
+  step/mathlib tiers + the normalized-cost table (§5.1/§5.4 conventions).
+- **`causal.js` is causal telemetry, not causal inference** (`architecture.md` §6). Keep the
+  nomenclature honest in every new doc/comment: Markov transitions, failure *correlations*, timing,
+  critical path. Do not claim a pattern `A → B → FAIL` *causes* failure — the confounders (goal
+  shape, family, hypotheses, imports, premises, depth, LLM sampling, toolchain) are unobserved.
+  The intervention-based questions (holding goal shape constant, does tactic X change the
+  probability of eventual proof vs tactic Y) are future work requiring controls, and are tracked
+  here so nobody mistakes correlation mining for it.
+- **Metrics catalog (`optimization/metrics.js`, `architecture.md` §6.1).** Extend `computeMetrics`
+  to the full catalog — search efficiency (`kernelChecksPerSolved`, `llmCallsPerSolved`,
+  `uniqueStatesExplored`, `duplicateStatesAvoided`), search quality (`firstSuccessRank`,
+  `branchingFactor`, `meanDepth`, `deadEndRate`, `transpositionHitRate`), planning quality
+  (`blueprintLemmasPerTheorem`, `resplitsPerTheorem`, `unusedHelperLemmas`, `dependencyDepth`),
+  learning quality (`predictorPrecision`, `predictorRecall`, `falseRejectionRate`,
+  `performanceBeforeAfterPredictor`, `heldOutImprovement`), economic quality
+  (`secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`). Emit `null`
+  (with a documented reason) for any metric the current event stream cannot produce, rather than
+  fabricating a number. **Instrumentation backlog** (loop must emit to un-null these):
+  - per-proposal LLM latency and token counts (`tactic_proposed`);
+  - per-goal attempt rank of the solving tactic (`goal_solved` carries `attempt`), for
+    `firstSuccessRank`;
+  - e-graph transposition hits / dead-end goal classes, for `transpositionHitRate` and
+    `deadEndRate`;
+  - blueprint-level counts (lemmas / resplits / unused helpers / dependency depth) surfaced by
+    `blueprint/refine.js` into the digest, for planning quality;
+  - predictor pre-filter outcomes (rejected-then-verified, allowed-then-failed) for learning quality.
+- **Acceptance:** the held-out MCGS-vs-baseline cost table is produced and either shows a strict
+  Pareto gain or is recorded as "no measured advantage, keep best-first"; `computeMetrics` emits
+  the full catalog with no fabricated values; no doc/comment claims causal inference where only
+  telemetry exists.
 
 ---
 

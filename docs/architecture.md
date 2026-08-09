@@ -194,8 +194,8 @@ kanforge/
   optimization/
     bus.js                   # central event bus
     store.js                 # bounded event store (causal parent links)
-    causal.js                # causal analysis (transition matrix, predictors)
-    metrics.js               # KPI calculator (wired into the loop's per-run outcome)
+    causal.js                # causal TELEMETRY / trace analysis (Markov transitions, failure correlations, timing, critical path) — NOT causal inference (see §6)
+    metrics.js               # KPI calculator (wired into the loop's per-run outcome; catalog in §6.1)
     patterns.js              # degeneracy / reward-hacking monitors — not yet built
     exporter.js              # telemetry export — not yet built
     reward.js                # reward function (initial defaults, §6)
@@ -509,7 +509,18 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
 
 - `bestofn.js`: for a single goal class, sample k tactic proposals, apply each, take first that succeeds. Pre-filter stage (Wave2: cost-model idea, CPU-side): reject known-failing patterns (causal predictors), premise-lock violations, and near-duplicate patches before verification.
 - `bfs.js`: best-first over goal classes by progress (open-goal spectrum decrease). A state is the set of unsolved goal classes; a tactic application transitions to a new state with simpler subgoal classes.
-- `mcgs.js`: Monte Carlo Graph Search over the e-graph; **transposition merging** is built into the e-graph structure — alpha-equivalent / definitionally-equal goals are already merged into equivalence classes with shared statistics. Node identity is normalized so *every* search variant inherits the merge, not just MCGS.
+- `mcgs.js`: **UCB-guided graph search over the open goal equivalence classes.** Selection descends
+  from the root by UCB (`value/visits + exploration·√(ln(parentVisits)/visits)`) over per-class
+  stats; expansion applies ONE tactic via the backend (the LLM proposes, the kernel disposes);
+  backpropagation updates the selected class and ALL its parents (transpositions share statistics).
+  This is deliberately **not textbook MCTS**: there is no cheap random rollout — the "simulation"
+  is an expensive LLM + kernel call — so the phases are selection / expansion / backprop only, and
+  the UCB values are a *heuristic* whose statistical meaning must be validated empirically, not
+  assumed. **Open empirical question (see `build_order.md` §5.6):** does MCGS outperform simpler
+  best-first / beam / BFS strategies on held-out theorem families once LLM-call and
+  kernel-verification cost are normalized? Transposition merging is built into the e-graph
+  structure — alpha-equivalent / definitionally-equal goals share one class — and node identity is
+  normalized so *every* search variant inherits the merge, not just MCGS.
 - `repulsion.js`: log-ratio diversity penalty among concurrent tactic samples. `RepulsionSampler`
   is the actionable form — it refuses to re-propose already-tried tactics (exact-duplicate penalty)
   and echoes the tried list into the prompt so the generator steers away; `MCGS`/`BestFirstSearch`
@@ -519,8 +530,9 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
 - `bench/ablation.js`: strategy-ablation harness that runs the smoke set through every recipe
   (`bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`) under a
   shared LLM-call budget and reports pass rate AND cost per recipe. It is the measurement apparatus
-  for the §5 acceptance criteria — "MCGS ≥ best-of-N at equal budget; compare, then decide" — and is
-  what turns "swiss is the best choice" into a measured claim.
+  for the §5 acceptance criteria — "compare, then decide" — and is what turns "swiss is the best
+  choice" or "MCGS beats best-of-N" into a *measured* claim at normalized LLM + kernel cost, not a
+  solved-any-problem anecdote.
 
 ---
 
@@ -537,11 +549,49 @@ Reward (`reward.js`) — **initial defaults, to be tuned in P6**, not settled va
 -1.0  guardrail trip
 ```
 
-`causal.js` feeds RL and search:
-- `getTransitionMatrix()` — action→action Markov probabilities
-- `getFailurePredictors()` — sequences reliably preceding FAIL (negative rules)
+`causal.js` is **causal telemetry / trace infrastructure, not causal inference.** The name is
+intentional about what it does NOT claim: the parent chain supplies a *causal ordering* (per-lemma
+emit order), but not causal *identification*. What it computes is sequence statistics over that
+ordered stream — a Markov transition matrix, failure *correlations* (contiguous tactic-head windows
+ending in FAIL), timing aggregation, and event-chain analysis:
+- `getTransitionMatrix()` — action→action Markov probabilities (sequence statistics, not causes)
+- `getFailurePredictors()` — tactic-head windows *correlated* with FAIL (negative rules; see §5.3)
 - `getBottlenecks()`, `getAnomalies()` — time sinks / pathological runs
 - `getCriticalPath()` — longest dependent chain in a development
+
+The confounders are everywhere and known: goal shape, theorem family, available hypotheses,
+imported tactics, premise retrieval, previous tactics, proof depth, LLM sampling, toolchain
+behavior. A pattern `A → B → FAIL` does not establish that A or B *caused* the failure. The
+engineering value of this module is exactly as a **trace layer**: it turns the event stream into
+features and failure hypotheses. The *causal* questions are future, intervention-based work
+(`build_order.md` §5.6): holding goal shape constant, does choosing tactic X materially change the
+probability of eventual proof versus tactic Y? That requires randomized or counterfactual controls,
+not correlation mining.
+
+### 6.1 Evaluation metrics (`optimization/metrics.js`)
+
+`computeMetrics(events)` turns the loop's event stream into a KPI bundle attached to every run
+outcome. The current surface is deliberately smaller than the event stream it consumes; the catalog
+below is what a *quantitative* evaluation needs (vs. today's functional "it solved / it didn't").
+Each metric is grouped by the property it measures; a metric is emitted as `null` when the events
+in hand cannot produce it (it needs instrumentation the loop does not yet emit — listed in
+`build_order.md` §5.6):
+
+- **Search efficiency** — cost to reach a solved theorem:
+  `kernelChecksPerSolved`, `llmCallsPerSolved`, `uniqueStatesExplored`, `duplicateStatesAvoided`
+- **Search quality** — the search's own behavior:
+  `firstSuccessRank` (avg proposal rank of the solving tactic), `branchingFactor`,
+  `meanDepth`, `deadEndRate`, `transpositionHitRate`
+- **Planning quality** — blueprint-level (skeleton/refine), not tactic-level:
+  `blueprintLemmasPerTheorem`, `resplitsPerTheorem`, `unusedHelperLemmas`, `dependencyDepth`
+- **Learning quality** — the failure-predictor pre-filter (§5.3):
+  `predictorPrecision`, `predictorRecall`, `falseRejectionRate`, `performanceBeforeAfterPredictor`,
+  `heldOutImprovement`
+- **Economic quality** — wall / compute cost:
+  `secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`
+
+The metrics module's contract: pure function of the event stream; never calls the backend or LLM;
+every emitted value is derivable from events (or `null` with a documented reason).
 
 `grpo.js`: GRPO over episode batches, policy model only; `patterns.js` monitors reward hacking /
 loop degeneracy (error clusters, same-failure cycles). `ttrl.js`: test-time RL for hard goals.

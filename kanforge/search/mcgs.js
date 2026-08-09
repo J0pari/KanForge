@@ -1,9 +1,12 @@
-// Monte Carlo Graph Search over the goal e-graph (architecture.md §5).
-// Transposition merging is built into the e-graph: alpha-equivalent goals share one class
-// with shared stats, so every rollout updates one value estimate per equivalence class, not
-// per path. Selection descends from the root by UCB over class stats; expansion applies ONE
-// tactic via the backend; backpropagation walks ALL parents (a class can be reached by
-// several transpositions).
+// UCB-guided graph search over the goal e-graph (architecture.md §5, build_order.md §5.6).
+// NOT textbook MCTS: there is no cheap rollout phase — the "simulation" is an expensive LLM +
+// kernel call — so the loop is selection / expansion / backprop only, and the UCB value is a
+// heuristic whose statistical meaning is validated empirically (does it beat best-first/BFS at
+// normalized LLM+kernel cost on held-out families?), not assumed.
+// Transposition merging is built into the e-graph: alpha-equivalent goals share one class with
+// shared stats, so every backprop updates one value estimate per equivalence class and walks ALL
+// parents. Selection descends from the root by UCB over class stats; expansion applies ONE tactic
+// via the backend.
 
 import { buildTacticPrompt } from '../agent/prompts.js';
 import { sanitizeTacticText } from '../agent/llm.js';
