@@ -605,6 +605,18 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   choice" or "MCGS beats best-of-N" into a *measured* claim at normalized LLM + kernel cost, not a
   solved-any-problem anecdote.
 
+**Integration contract (what is in the live path).** The live loop (`agent/loop.js`, the only
+goal-selection path the open-problem pipeline consumes) uses the default single-tactic strategy,
+with `swiss` (`useSwiss: true`) and `premises` (`premises: [...]`) as opt-in per-goal
+augmentations. The remaining strategies — `bestofn`, `bfs`, `mcgs`, `repulsion`, `tacticMenu` —
+are **not in the live loop**; they are reachable only through the ablation harness
+(`bench/ablation.js`) as recipes and factorial-graph components. The §5 acceptance ("compare,
+then decide") is precisely the gate for wiring a strategy into the loop: a strategy enters the
+live path only when it shows a measured advantage over the default at normalized cost
+(`build_order.md` §5.1/§5.6). Until then, the ablation harness is where every strategy lives and
+is exercised; the loop is not the only consumer of the search modules, but it is the only one the
+open-problem workflow uses.
+
 ### 5.7 Benchmark discipline (fixed corpus, ablation graph, provenance)
 
 The ablation harness is the project's central experiment. Its rules make every claim reproducible

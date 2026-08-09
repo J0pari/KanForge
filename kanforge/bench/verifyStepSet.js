@@ -202,17 +202,25 @@ async function main() {
         process.exit(2);
     }
     const outDir = outArg ? outArg.split('=')[1] : path.join(__dirname, 'ablation', `verifyStep_${Date.now()}`);
+    const backendArg = process.argv.find(a => a.startsWith('--backend='));
+    const backendType = backendArg ? backendArg.split('=')[1] : 'repl';
+    if (backendType !== 'repl' && backendType !== 'cli') {
+        console.error('unknown backend; known: repl, cli');
+        process.exit(2);
+    }
 
     const pool = createBackend({
-        type: 'repl',
+        type: backendType,
         replBin: ENV.KANFORGE_REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         leanProject: ENV.KANFORGE_LEAN_PROJECT,
+        leanBin: ENV.KANFORGE_LEAN_BIN,
         concurrency: 2,
         timeoutMs: 60_000,
         // Fresh repl processes take ~60s to elaborate their first command; warm each worker so
-        // the first check/extractGoals isn't charged against the 60s request timeout.
-        warmupStatement: 'example : True := by trivial'
+        // the first check/extractGoals isn't charged against the 60s request timeout. (The CLI
+        // backend is stateless per invocation — no warmup needed or supported.)
+        warmupStatement: backendType === 'repl' ? 'example : True := by trivial' : null
     });
     try {
         const report = await verifyStepSet(pool, problems, {

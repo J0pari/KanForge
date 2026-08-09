@@ -202,13 +202,14 @@ kanforge/
 │   ├── writeup.js      # Markdown/HTML proof writeups
 │   ├── auditPack.js    # Per-lemma audit pack
 │   └── development.js  # Whole-development digest (writeup + audit + hash chain)
-├── search/             # Standalone search baselines
-│   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B)
-│   ├── bestofn.js      # Naive best-of-n baseline
-│   ├── bfs.js          # Breadth-first search
-│   ├── mcgs.js         # Multi-goal coverage search
-│   ├── premises.js     # BM25 premise retriever (premise-locked search)
-│   └── repulsion.js    # Goedel diversity penalty
+├── search/             # Search strategies — ablation-recipes + live-loop augmentations
+│   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B) — wired into the loop (opt-in)
+│   ├── bestofn.js      # Naive best-of-n baseline — ablation recipe
+│   ├── bfs.js          # Best-first search — ablation recipe
+│   ├── mcgs.js         # UCB-guided graph search — ablation recipe
+│   ├── premises.js     # BM25 premise retriever (premise-locked) — wired into the loop (opt-in)
+│   ├── tacticMenu.js   # Goal-shape-keyed tactic capability menu — ablation component
+│   └── repulsion.js    # Goedel diversity penalty — ablation recipe modifier
 ├── bench/              # Benchmarking
 │   ├── run.js          # Smoke test runner
 │   ├── smoke.js        # 23-problem smoke set (tiers 1–5)
@@ -314,7 +315,12 @@ captured per lemma into the retrieval index + development digest as the transfor
   (`premises`/`premiseLocked`/`premiseTopK` options). The LeanDojo-style *learned* retriever needs
   the Mathlib-enabled repl build (P0.1) for a real Mathlib corpus — a placeholder corpus can be
   exercised today.
-- **Search baselines not wired in**: `bestofn`, `bfs`, `mcgs`, `repulsion` are standalone; the live loop does not consume them yet. (`swiss` is wired, opt-in via `useSwiss`.)
+- **Search strategies in the live path**: the loop consumes the default single-tactic strategy,
+  with `swiss` (`useSwiss: true`) and `premises` as opt-in augmentations. `bestofn`, `bfs`, `mcgs`,
+  `repulsion`, and `tacticMenu` are not in the loop — they are exercised by the ablation harness
+  (`bench/ablation.js`) as recipes and factorial-graph components. Per `build_order.md` §5.1's
+  "compare, then decide", a strategy enters the live path only when it shows a measured advantage
+  at normalized cost; that wiring is gated on the §5.6 held-out comparison.
 - **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalEGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
@@ -345,7 +351,8 @@ captured per lemma into the retrieval index + development digest as the transfor
 - [x] **Search ablation harness** — `bench/ablation.js`: smoke set × every recipe (bestofn, swiss,
       ±repulsion, bfs, mcgs) under a shared budget, with per-recipe/per-problem comparison tables
       (pass rate + Wilson CI + LLM/kernel cost). This is the "compare, then decide" machinery that settles
-      swiss-vs-mcgs empirically; the live-loop goal-selection wiring is gated on its first real run.
+      swiss-vs-mcgs empirically; wiring a strategy into the live loop is gated on the §5.6
+      held-out, cost-normalized comparison (architecture.md §5 integration contract).
 - [x] **Ablation graph + benchmark discipline** — `bench/ablation.js --ablate=<comps>` runs the
       full factorial over component toggles with main effects + pairwise interactions
       (build_order.md §5.8); every report carries a full provenance block (toolchain, model,
