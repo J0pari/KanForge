@@ -295,7 +295,7 @@ captured per lemma into the retrieval index + development digest as the transfor
 
 2. **Kernel verification**: Every tactic application is checked by the Lean kernel. No trusted LLM output.
 
-3. **Transposition merging**: Equivalent goals (alpha-equivalent or definitionally equal) share statistics in the e-graph, avoiding redundant search.
+3. **Transposition merging**: Equivalent goals (alpha-equivalent or definitionally equal) share statistics in the e-graph, avoiding redundant search. Class identity is collision-safe: the canonical serialized goal key is the equality authority, hashed with SHA-256 as a lookup index — a collision never merges unrelated proof states.
 
 4. **Causal telemetry**: Every event has a parent link, enabling reconstruction of the proof search trajectory.
 

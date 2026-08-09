@@ -110,10 +110,27 @@ test('compilePredictors rejects the final element of a known-failing window', ()
     assert.strictEqual(matcher.rejects('simp', []), false);
     // different head -> allow.
     assert.strictEqual(matcher.rejects('omega', ['intro']), false);
-    // single-element predictor rejects anywhere.
-    const single = compilePredictors([{ pattern: ['tauto'] }]);
+    // single-element predictor rejects anywhere (gated: support/confidence present).
+    const single = compilePredictors([{ pattern: ['tauto'], confidence: 0.8, support: 5 }]);
     assert.strictEqual(single.rejects('tauto', []), true);
     assert.strictEqual(single.rejects('omega', []), false);
+});
+
+test('predictor safety gate: low support or overfit confidence is INERT (never rejects)', () => {
+    // support < 2 → inert.
+    const lowSupport = compilePredictors([{ pattern: ['ring'], confidence: 0.5, support: 1 }]);
+    assert.strictEqual(lowSupport.count, 0);
+    assert.strictEqual(lowSupport.inert, 1);
+    assert.strictEqual(lowSupport.rejects('ring', []), false);
+    // confidence > 0.95 (the overfit case the §5.3 measured run produced) → inert.
+    const overfit = compilePredictors([{ pattern: ['ring_nf'], confidence: 1.0, support: 3 }]);
+    assert.strictEqual(overfit.count, 0);
+    assert.strictEqual(overfit.inert, 1);
+    assert.strictEqual(overfit.rejects('ring_nf', []), false);
+    // gated pattern (support ≥ 2, confidence ≤ 0.95) rejects.
+    const gated = compilePredictors([{ pattern: ['intro', 'simp'], confidence: 0.9, support: 3 }]);
+    assert.strictEqual(gated.count, 1);
+    assert.strictEqual(gated.rejects('simp', ['intro']), true);
 });
 
 test('bottlenecks rank time sinks by event type and lemma', () => {

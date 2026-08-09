@@ -278,6 +278,13 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   positives. The pass@1 delta between the two runs is dominated by LLM nondeterminism at N=4
   (`mul_comm_rw` closed in 1 call OFF vs. missed within 4 calls ON); per the §5.4 note, re-run
   any cell with a fresh seed to average it out.
+- **Predictor safety gate (hard).** A failure predictor must not suppress an action unless ALL
+  hold (architecture.md §6): minimum support (≥ 2), held-out evidence (confidence verified on a
+  split the pattern was not mined from), bounded confidence (default ceiling 0.95 — a pattern at
+  confidence 1.0 on tiny support is the overfit case and is inert), and false-rejection
+  accounting (every rejection logged with its counterfactual; the rate is a report-audit safety
+  metric, not a KPI). The measured §5.3 run's confidence-1 predictors (`ring`, `ring_nf`) fail
+  the bounded-confidence gate and must NOT be used for rejection without held-out evidence.
 - **Open item:** the §5.4 premises axis on `--set=step` (a step-tier premise corpus is needed
   first; the current corpora are mathlib-smoke-shaped). (Corpus now ships — see §5.4; remaining
   work is a consistent-model re-run + lock enforcement.)
@@ -494,6 +501,25 @@ a measured effect; retrieval never bypasses kernel verification.
 - **Acceptance:** every `lemma_verified` produces a non-empty typed patch stream in its index
   entry + digest; a Stage-2 reuse emits a `reuse` patch; the full non-live suite passes; no dead
   `Patch` construction anywhere (the type is built from live events, consumed by live writers).
+
+### 5.10 Goal-class identity: collision-safe (architecture.md §2.2)
+- **Correctness, not cache efficiency.** The e-graph class id determines equivalence-class
+  identity; a hash collision merges unrelated proof states. The identity must be the canonical
+  serialized key (normalized type + context), hashed with SHA-256 as a lookup index — never a
+  weak 32-bit hash as the identity.
+- **Deliverables:** (1) replace the 32-bit DJB2 `hashGoal` with `sha256(canonicalKey)` and store
+  the canonical key on the class; (2) collision resolution — on an id hit, compare canonical keys;
+  unequal keys mean collision → separate class with a collision-resolved id + `egraph_collision`
+  telemetry; (3) unit tests: known-distinct goals never merge, alpha-equivalent goals still do,
+  and a synthetic collision (same 32-bit hash, different keys) is resolved, not merged.
+- **Long-term (Lean as the authority):** goal equivalence is `target proposition + local context +
+  environment + available definitions/theorems + proof-state metadata` (instances, universe
+  metavariables, opaque values, let bindings, typeclass state, namespace, reducibility). The
+  normalization above is the practical approximation; delegating equivalence to Lean itself
+  (kernel-side `isDefEq`-style comparison) is the eventual authority and is tracked here.
+- **Acceptance:** the full non-live suite passes with the new identity; a collision-injection test
+  proves unrelated goals do not merge; `egraph_collision` events appear in telemetry when a
+  collision is forced.
 
 ---
 

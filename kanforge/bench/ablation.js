@@ -369,7 +369,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
     });
     const report = {
         generatedAt: new Date().toISOString(),
-        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsProvenance, provenance },
+        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsInert: predictors?.inert ?? null, predictorsProvenance, provenance },
         perRecipe: recipes.map(r => {
             const { problems: _p, ...s } = byRecipe[r];
             return s;

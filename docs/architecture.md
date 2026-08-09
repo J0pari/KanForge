@@ -295,7 +295,27 @@ Node (Level 2 — goal equivalence class within a lemma's e-graph):
 }
 ```
 
-The `id` is computed from a **normalized** goal (alpha-equivalent renaming of bound variables, definitional equality reduction). Multiple concrete goals that are alpha-equivalent or definitionally-equal map to the same equivalence class. The `goals` array tracks all concrete goals in the class (for debugging and extraction). The `stats` are shared across all goals in the class, enabling transposition merging.
+The `id` is computed from a **normalized** goal (alpha-equivalent renaming of bound variables,
+definitional equality reduction). Multiple concrete goals that are alpha-equivalent or
+definitionally-equal map to the same equivalence class. The `goals` array tracks all concrete
+goals in the class (for debugging and extraction). The `stats` are shared across all goals in the
+class, enabling transposition merging.
+
+**Class identity is collision-safe (correctness, not just cache efficiency).** The class id is
+`sha256(normalizedGoalType + normalizedContext)` — the canonical serialized key is the identity,
+and the hash is a lookup index over it, never the identity itself. Because the id determines
+equivalence-class identity, a collision would merge unrelated proof states and corrupt the search
+graph; therefore:
+
+- The **canonical key** (normalized type + normalized context, deterministically serialized) is
+  stored on the class and is the equality authority.
+- The id is the **SHA-256** of that canonical key (64 hex chars). A weak 32-bit hash is not
+  acceptable for identity — it is only a pre-filter, and any pre-filter hit must be confirmed by
+  comparing the canonical keys before merging classes.
+- On a key mismatch under the same id (hash collision), the class is **not merged**; the new goal
+  is inserted under its own canonical key with a collision-resolved id, and the collision is
+  recorded as telemetry (count of `egraph_collision` events).
+- Equivalence is decided by canonical-key equality, not by hash equality.
 
 The `state` axis is proof-semantic; the scheduler adds a parallel lifecycle axis
 (`DIRTY/QUEUED/BUILDING/VERIFIED/FAILED/CACHED`, §2.6). Statement + interface pins together
@@ -651,6 +671,29 @@ features and failure hypotheses. The *causal* questions are future, intervention
 (`build_order.md` §5.6): holding goal shape constant, does choosing tactic X materially change the
 probability of eventual proof versus tactic Y? That requires randomized or counterfactual controls,
 not correlation mining.
+
+**Predictor use is safety-gated, not an optimization KPI.** A failure predictor that the search
+layer uses to reject actions before kernel verification has a dangerous feedback loop: observed
+failure → predictor → reject future attempt → future success becomes impossible. This is
+unacceptable when the predictor is mined from tiny samples. A predictor may suppress an action
+ONLY when ALL of the following hold (hard gate, enforced by `compilePredictors`):
+
+- **Minimum support** — the pattern must be observed at least `minSupport` times (default 2, never
+  configurable below 2 for the reject path).
+- **Held-out evidence** — the pattern's confidence must be verified on data the pattern was not
+  mined from (a held-out split of the event stream), not just the mining set; a pattern with
+  training-set confidence only is a hypothesis, not a gate.
+- **Bounded confidence** — the pattern's FAIL confidence must be above `minConfidence` AND below a
+  ceiling (default 0.95): a pattern that *always* precedes FAIL on tiny support is exactly the
+  overfit case, and near-1.0 confidence on small samples is rejected rather than trusted.
+- **False-rejection accounting** — `falseRejectionRate` is a hard safety metric: every rejected
+  action is recorded as a rejection event with its counterfactual (would the kernel have
+  accepted it?), and the rate is reported per run; a run whose false-rejection rate exceeds the
+  safety threshold fails the report audit, not just a KPI.
+
+A predictor with no held-out evidence, or whose support is below the gate, is treated as inert
+(no rejection). The telemetry layer may still mine and report such patterns — they are
+hypotheses — but the search layer never suppresses on them.
 
 ### 6.1 Evaluation metrics (`optimization/metrics.js`)
 

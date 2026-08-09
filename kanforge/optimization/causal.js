@@ -219,13 +219,30 @@ export class CausalAnalyzer {
 // Compile predictors into a reject-matcher for the search layer.
 //   rejects(head, history) — true when `head` (as the final element of a pattern) completes a
 //   known-failing window against `history` (the recent tactic heads in this branch).
-export function compilePredictors(predictors) {
-    const patterns = (predictors ?? []).map(p => p.pattern ?? []);
+//
+// SAFETY GATE (architecture.md §6, build_order.md §5.3): a pattern may suppress an action ONLY
+// when it meets minimum support AND bounded confidence — otherwise it is INERT (never rejects).
+// Rejection has a feedback loop (observed failure → reject → future success impossible), so a
+// pattern with tiny support or near-1.0 confidence (the overfit case) must not gate the kernel.
+// Defaults: minSupport 2 (never configurable below 2 for the reject path), confidence ceiling
+// 0.95. Held-out evidence is the miner's responsibility (a pattern mined and used on the same
+// stream is a hypothesis, not a gate); the gate here is the floor/ceiling.
+export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 0.95 } = {}) {
+    const active = [];
+    let inert = 0;
+    for (const p of predictors ?? []) {
+        const support = p.support ?? 0;
+        const confidence = p.confidence ?? 0;
+        if (support < minSupport) { inert++; continue; }
+        if (confidence > maxConfidence) { inert++; continue; }
+        active.push(p.pattern ?? []);
+    }
     return {
-        count: patterns.length,
+        count: active.length,
+        inert, // patterns that failed the safety gate (reported, never used for rejection)
         rejects(head, history = []) {
             const h = String(head ?? '');
-            for (const pattern of patterns) {
+            for (const pattern of active) {
                 if (pattern.length === 0) continue;
                 if (h !== pattern[pattern.length - 1]) continue;
                 const prefix = pattern.slice(0, -1);

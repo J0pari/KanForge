@@ -218,7 +218,7 @@ test('trainer audit recomputes predictor support/fails from the event stream', (
     const analyzer = new CausalAnalyzer(events);
     const predictors = analyzer.getFailurePredictors({ window: 1, minSupport: 2, minConfidence: 0.5 });
     const report = {
-        config: { window: 1, minSupport: 2, minConfidence: 0.5, problemCount: 2, solved: 0, failed: 2 },
+        config: { window: 1, minSupport: 2, minConfidence: 0.5, maxConfidence: 1.0, problemCount: 2, solved: 0, failed: 2 },
         predictors,
         transitionMatrix: analyzer.getTransitionMatrix().matrix
     };
@@ -232,6 +232,17 @@ test('trainer audit recomputes predictor support/fails from the event stream', (
     const audit2 = auditTrainerReport(report, { events, problems, lemmaIds, analyzer });
     assert.strictEqual(audit2.allOk, false);
     assert.ok(audit2.violations.some(v => v.check === 'predictor_recompute' && v.field === 'support'));
+
+    // Safety gate (architecture.md §6): confidence 1.0 on tiny support is the overfit case —
+    // the audit flags it when the report claims maxConfidence 0.95.
+    const reportOverfit = {
+        config: { window: 1, minSupport: 2, minConfidence: 0.5, maxConfidence: 0.95, problemCount: 2, solved: 0, failed: 2 },
+        predictors,
+        transitionMatrix: analyzer.getTransitionMatrix().matrix
+    };
+    const audit3 = auditTrainerReport(reportOverfit, { events, problems, lemmaIds, analyzer });
+    assert.strictEqual(audit3.allOk, false);
+    assert.ok(audit3.violations.some(v => v.check === 'predictor_ceiling'));
 });
 
 test('trainer audit flags dangling causal parents', () => {

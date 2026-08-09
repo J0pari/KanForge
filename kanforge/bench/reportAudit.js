@@ -236,13 +236,19 @@ export function auditTrainerReport(report, { events = [], problems = [], lemmaId
             const expectedConf = rc.support ? rc.fails / rc.support : 0;
             if (Math.abs(expectedConf - p.confidence) > 1e-9) bad('predictor_recompute', { pattern: p.pattern, field: 'confidence', reported: p.confidence, recomputed: expectedConf });
         }
-        // And no reported predictor may have drifted above the configured confidence floor.
+        // Safety gate (architecture.md §6): a reported predictor must be within [minConfidence,
+        // maxConfidence]. Below the floor or above the ceiling (the overfit case) it is INERT —
+        // it must not be used for rejection — and the report must say so.
         for (const p of report.predictors) {
             if (p.confidence < (cfg.minConfidence ?? 0) - 1e-9) bad('predictor_floor', { pattern: p.pattern, confidence: p.confidence, minConfidence: cfg.minConfidence });
+            if (p.confidence > (cfg.maxConfidence ?? 0.95) + 1e-9) bad('predictor_ceiling', { pattern: p.pattern, confidence: p.confidence, maxConfidence: cfg.maxConfidence });
+            if ((p.support ?? 0) < (cfg.minSupport ?? 2)) bad('predictor_support', { pattern: p.pattern, support: p.support, minSupport: cfg.minSupport });
         }
     }
     ok('predictor_recompute', !violations.some(v => v.check === 'predictor_recompute'), {});
     ok('predictor_floor', !violations.some(v => v.check === 'predictor_floor'), {});
+    ok('predictor_ceiling', !violations.some(v => v.check === 'predictor_ceiling'), {});
+    ok('predictor_support', !violations.some(v => v.check === 'predictor_support'), {});
 
     // Transition matrix rows must sum to ~1.
     const matrix = report.transitionMatrix ?? {};

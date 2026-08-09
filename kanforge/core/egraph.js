@@ -4,12 +4,22 @@
 // equivalent goals share a single equivalence class with shared statistics. This is what makes
 // search efficient — all search variants automatically benefit from transposition merging.
 //
+// Class identity is COLLISION-SAFE (architecture.md §2.2, build_order.md §5.10): the id is
+// sha256(canonicalKey), where canonicalKey is the deterministically-serialized normalized goal.
+// The canonical key is the equality authority, stored on the class; the hash is a lookup index
+// over it, never the identity itself. On an id hit the canonical keys are compared — unequal keys
+// mean a hash collision, and the goals are NOT merged (separate class, collision-resolved id,
+// egraph_collision telemetry). A weak 32-bit hash as identity would merge unrelated proof states.
+//
 // Each equivalence class contains:
-// - id: hash of normalized goal (alpha-equivalent, definitionally-equal goals map to same id)
+// - id: sha256 of canonical key (alpha-equivalent goals map to same id)
+// - canonicalKey: the serialized normalized goal — the equality authority
 // - goals: array of concrete goals in the class (for debugging/extraction)
 // - tactics: tactics applied to this class, producing subgoal classes
 // - stats: shared visit counts, success rates, value estimates
 // - parents: parent equivalence classes (multiple paths can reach same goal)
+
+import crypto from 'node:crypto';
 
 export class GoalEGraph {
     constructor() {
@@ -46,34 +56,47 @@ export class GoalEGraph {
         };
     }
 
-    hashGoal(normalizedGoal) {
+    // Deterministic serialization of the normalized goal → the canonical key (equality authority).
+    canonicalKey(normalizedGoal) {
         const { type, context = [] } = normalizedGoal;
         const contextStr = context.map(c => `${c.name}:${c.type}`).join(',');
-        const goalStr = `${type}|${contextStr}`;
-        
-        let hash = 0;
-        for (let i = 0; i < goalStr.length; i++) {
-            const char = goalStr.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        return `goal_${Math.abs(hash).toString(16)}`;
+        return `${type}|${contextStr}`;
+    }
+
+    // SHA-256 of the canonical key — a lookup index over the key, not the identity itself.
+    hashGoal(normalizedGoal) {
+        return `goal_${crypto.createHash('sha256').update(this.canonicalKey(normalizedGoal)).digest('hex').slice(0, 16)}`;
+    }
+
+    // Collision-resolved id: when two DIFFERENT canonical keys land on the same id, the second is
+    // re-keyed deterministically so both classes coexist without merging.
+    collisionId(key) {
+        return `goal_${crypto.createHash('sha256').update(`collision:${key}`).digest('hex').slice(0, 16)}`;
     }
 
     addGoal(goal, parentId = null) {
         const normalized = this.normalizeGoal(goal);
+        const key = this.canonicalKey(normalized);
         const id = this.hashGoal(normalized);
-        
+
         if (this.classes.has(id)) {
             const existingClass = this.classes.get(id);
-            existingClass.goals.push(goal);
-            if (parentId && !existingClass.parents.includes(parentId)) {
-                existingClass.parents.push(parentId);
+            if (existingClass.canonicalKey === key) {
+                // Same canonical goal → same equivalence class (transposition merge).
+                existingClass.goals.push(goal);
+                if (parentId && !existingClass.parents.includes(parentId)) {
+                    existingClass.parents.push(parentId);
+                }
+                return id;
             }
-            return id;
+            // Hash collision: different canonical keys under the same id. Do NOT merge. The new
+            // goal gets its own class under a collision-resolved id.
+            this.collisions = (this.collisions ?? 0) + 1;
+            return this._addCollisionClass(goal, normalized, key, parentId);
         } else {
             this.classes.set(id, {
                 id,
+                canonicalKey: key,
                 goals: [goal],
                 tactics: [],
                 stats: { visits: 0, successes: 0, value: 0.0 },
@@ -82,6 +105,29 @@ export class GoalEGraph {
             });
             return id;
         }
+    }
+
+    _addCollisionClass(goal, normalized, key, parentId) {
+        // Ensure the collision-resolved id is itself free (a second collision on the same pair
+        // would land on the same resolved id; append a counter until free).
+        let cid = this.collisionId(key);
+        let n = 2;
+        while (this.classes.has(cid) && this.classes.get(cid).canonicalKey !== key) {
+            cid = `goal_${crypto.createHash('sha256').update(`collision${n}:${key}`).digest('hex').slice(0, 16)}`;
+            n++;
+        }
+        if (!this.classes.has(cid)) {
+            this.classes.set(cid, {
+                id: cid,
+                canonicalKey: key,
+                goals: [goal],
+                tactics: [],
+                stats: { visits: 0, successes: 0, value: 0.0 },
+                parents: parentId ? [parentId] : [],
+                state: 'OPEN'
+            });
+        }
+        return cid;
     }
 
     setRoot(goal) {
@@ -112,13 +158,15 @@ export class GoalEGraph {
         const newFrontier = [];
 
         for (const g of subgoals) {
-            const id = this.hashGoal(this.normalizeGoal(g));
+            // Collision-safe: addGoal resolves the canonical key (a hash collision produces a
+            // distinct class, never a wrong merge). The frontier membership check uses the
+            // returned id so carried-over vs child is decided on real identity.
+            const id = this.addGoal(g);
             if (frontierIds.has(id)) {
-                this.classes.get(id)?.goals.push(g);
                 carriedOver.push(id);
                 newFrontier.push(id);
             } else {
-                const childId = this.addGoal(g, goalClassId);
+                const childId = id;
                 created.push(g);
                 subgoalClasses.push(childId);
                 newFrontier.push(childId);
