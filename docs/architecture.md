@@ -286,16 +286,15 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
 | Blueprint Run | Checkpoint | `RunCheckpoint.load()` + resume — skip already-proved lemmas, continue hash chain | `[BUILT]` `core/checkpoint.js` + `blueprint/run.js` |
 | Loop | Feedback | `this.predictors.rejects(tacticHead(tactic), history)` per proposal — causal predictor pre-filter before kernel call | `[BUILT]` `agent/loop.js` → `optimization/causal.js` |
 
-**Interconnections that exist but are NOT the intended path:**
+**Interconnections that exist but are NOT the intended path (resolved):**
 
-| From | To | What happens | What should happen |
-|---|---|---|---|
-| Loop | E-Graph | Applies tactic directly via `egraph.applyTactic()` | Should go through patch algebra: `Patch({op:'applyTactic', tactic, goalClass})` → egraph applies → patch recorded as the mutation record. Currently Patch objects are created post-hoc from events (`patchFromEvent`) — the patch is a trace, not the interface. |
-| Blueprint Skeleton | Backend | `_tryCheck(stub)` — fast chained check then fresh validation | The skeleton now double-validates stubs: fast warm-env check first, then a fresh-env check with the full statement (same rigor as `extractGoals`). A stub that typechecks in warm but not fresh (e.g., name collision with mathlib) is rejected at skeleton time. The chained env works for all statements on repl v4.33.0-rc1 (`isChainSafe` removed — ∀/∃ are chain-safe). `[FIXED]` |
-| Refine Loop | Skeleton re-split | Calls `skeleton.generate(stub)` on failure | When re-split produces no new children, the refine now marks the lemma `stalled` and continues to other ready lemmas (dependency-order selection: a lemma is only attempted when all its deps are proved). Previously one stalled lemma broke the entire refine loop. `[FIXED]` |
-| Refine Loop | Lemma re-split | Re-split children use the SAME stub statement the original skeleton produced | If the original skeleton's stub check was defective (e.g., name collision with mathlib — "has already been declared"), the lemma can never typecheck in a fresh session, and every round fails at `extractGoals`. The skeleton's stub checks must use the SAME env rigor as the loop (fresh session, not warm-only). |
-| Loop | Loop | One lemma attempt, then `fail()` on any error | The loop now surfaces `extractGoals` errors in `lemma_failed` events (not swallowed by `fail()`); KERNEL_REJECTED logs the verification error and assembled source head so refine rounds have diagnostic context. `[FIXED]` |
-| Loop | Commit | `verifyProof(source)` — the assembled full source | If `extractGoals` works on a leased session but the composed proof script has ordering/scope errors (e.g., bullets misaligned, variables shadowed), `verifyProof` fails ≡ `KERNEL_REJECTED`. The loop currently doesn't validate the composed source structure before commit — it trusts the extract+straighten path. |
+| From | To | What happens | Resolution |
+| Loop | E-Graph | Was: applied tactic directly via `egraph.applyTactic()` | Now: `Patch({op:'tactic', node, replacement, meta:{newGoals}})` → `egraph.applyPatch(patch)` — the patch is created BEFORE the egraph mutation. `[FIXED]` |
+| Loop | Commit | Was: `verifyProof` rejected assembled proofs without diagnostic | Now: pre-flight `check(source)` validates the assembled script before full kernel verify — surfacing composition errors (bullet alignment, unclosed goals) with the assembled source head. `[FIXED]` |
+| Blueprint Skeleton | Backend | Was: stubs checked only in warm env, failed in fresh sessions | Now: double-validation (warm fast check → fresh-env check with full imports) — stubs that typecheck in warm but not fresh are rejected at skeleton time. `[FIXED]` |
+| Refine Loop | Skeleton re-split | Was: one stalled lemma broke the entire refine | Now: stalled lemmas survive; dependency-order selection only schedules ready lemmas; idle count breaks after 3 empty rounds. `[FIXED]` |
+| Refine Loop | Lemma re-split | Was: re-split stub checks could be defective | Same fix as skeleton stub-check — fresh-env validation catches name collisions before the loop's extractGoals. `[FIXED]` |
+| Loop | Loop | Was: `fail()` swallowed extractGoals errors | Now: extractGoals errors surfaced in `lemma_failed` events; KERNEL_REJECTED logs verification error + assembled source head. `[FIXED]` |
 
 **Interconnections MISSING entirely:**
 
@@ -307,7 +306,7 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
 | Dependency DAG | Scheduler | The scheduler dispatches independent work based on build states (§7). Currently `core/scheduler.js` dispatches all lemmas without checking build-state invalidation — there's no incremental rebuild. |
 | Blueprint | Domain Presets | Corpus tags (35 distinct) → starter import modules per domain. Cold-start optimization for the repair loop (fewer round-trips); documented, not implemented. |
 
-The current test suite (275 tests) covers the components above in isolation — mock backend, mock LLM, synthetic events. The `[BUILT]` contracts are exercised by the live-path tests (`*.live.test.js`, `validateFormalization.js`). The `[STUBBED]` interconnections that the blueprint run exposed have been addressed (refine dependency-order loop, skeleton double-validation, extractGoals error surfacing). The remaining `[MISSING]` interconnections are the Research doc's compiler framing that the current code doesn't yet realize: patch algebra as active mutation interface, synchronized AST/e-graph representations, incremental DAG invalidation, scheduler build-state dispatch, and domain presets.
+The current test suite (275 tests) covers the components above in isolation — mock backend, mock LLM, synthetic events. The `[BUILT]` contracts are exercised by the live-path tests (`*.live.test.js`, `validateFormalization.js`). All `[STUBBED]` interconnections have been resolved — the patch algebra is now the active mutation interface (`egraph.applyPatch`), the pre-flight check validates assembled proofs before kernel verify, the skeleton double-validates stubs, the refiner uses dependency-order scheduling with stall survival, and extractGoals errors are surfaced. The remaining `[MISSING]` interconnections are the Research doc's compiler framing that the current code doesn't yet realize: synchronized AST/e-graph representations, incremental DAG invalidation, scheduler build-state dispatch, and domain presets.
 
 
 ---

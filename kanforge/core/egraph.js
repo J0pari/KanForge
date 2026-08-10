@@ -195,6 +195,16 @@ export class GoalEGraph {
         return tacticRecord;
     }
 
+    // The patch algebra interface (architecture.md §0.3, Research doc §4): a `tactic` patch
+    // carries the goal class, the tactic text, and the subgoal results from the kernel call.
+    // applyPatch is the single mutation entry point — the egraph never sees raw (classId, tactic,
+    // subgoals) tuples directly; the Patch is the typed record.
+    applyPatch(patch) {
+        if (patch.op !== 'tactic') throw new Error(`egraph.applyPatch: unsupported op '${patch.op}'`);
+        const subgoals = patch.meta?.newGoals ?? [];
+        return this.applyTactic(patch.node, patch.replacement, subgoals);
+    }
+
     markFailed(goalClassId) {
         const goalClass = this.classes.get(goalClassId);
         if (goalClass) {

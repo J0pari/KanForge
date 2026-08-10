@@ -37,6 +37,10 @@ export class MockBackend {
         return { status: 'verified' };
     }
 
+    async check(statement, _opts) {
+        return { status: 'verified', goals: [] };
+    }
+
     endLemma(key) {
         this.ended.push(key);
     }

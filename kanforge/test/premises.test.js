@@ -110,6 +110,9 @@ function lockBackend(tactics) {
         async verifyProof(source, key) {
             return { status: 'verified' };
         },
+        async check(statement, _opts) {
+            return { status: 'verified', goals: [] };
+        },
         endLemma() {},
         pin() { return {}; }
     };

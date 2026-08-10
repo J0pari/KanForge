@@ -28,6 +28,7 @@ import { isGoalSolved, isLemmaProved } from './solve.js';
 import { GoalEGraph } from '../core/egraph.js';
 import { straighten, buildProofSource } from '../core/state.js';
 import { Guardrails } from '../core/guardrails.js';
+import { Patch } from '../core/patch.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
 import { computeMetrics } from '../optimization/metrics.js';
@@ -243,7 +244,8 @@ export class TacticLoop {
                                 continue;
                             }
 
-                            const record = egraph.applyTactic(currentGoalClass.id, tactic, result.newGoals);
+                            const patch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: tactic, scope: 'goal', meta: { attempt, newGoals: result.newGoals } });
+                            const record = egraph.applyPatch(patch);
                             this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -265,7 +267,8 @@ export class TacticLoop {
                         this.tacticCalls += pick.tacticCalls ?? 0;
 
                         if (pick.ok) {
-                            const record = egraph.applyTactic(currentGoalClass.id, pick.tactic, pick.result.newGoals);
+                            const dpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: pick.tactic, scope: 'goal', meta: { via: pick.via, newGoals: pick.result.newGoals } });
+                            const record = egraph.applyPatch(dpatch);
                             this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -298,7 +301,8 @@ export class TacticLoop {
                             const repairResult = await this.backend.applyTactic(goal, repairedTactic);
 
                             if (repairResult.status === 'ok') {
-                                const record = egraph.applyTactic(currentGoalClass.id, repairedTactic, repairResult.newGoals);
+                                const rpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: repairedTactic, scope: 'goal', meta: { via: 'repair', newGoals: repairResult.newGoals } });
+                                const record = egraph.applyPatch(rpatch);
                                 this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
                                 for (const subgoal of record.created) {
                                     this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -355,6 +359,17 @@ export class TacticLoop {
             }
             const { script: proofScript } = straighten(proofTree);
             const source = buildProofSource(statement, proofScript);
+
+            // Pre-flight check: the assembled source must be syntactically and type-level
+            // valid before the full kernel verify. Catches bullet misalignment, unclosed
+            // goals, and variable shadowing — compose errors that straighten missed.
+            const preflight = await this.backend.check(source, { useWarmEnv: false });
+            if (preflight.status !== 'verified') {
+                const perr = preflight.error?.message ?? 'pre-flight check failed';
+                console.log(`[loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(perr).slice(0, 300)}`);
+                console.log(`[loop] assembled source:\n${source.slice(0, 600)}`);
+                fail(`proof composition invalid: ${perr.slice(0, 200)}`, { sourceHead: source.slice(0, 400), preflightError: perr });
+            }
             const verification = await this.backend.verifyProof(source, lemmaId);
 
             // Premise-lock gate (build_order.md §5.2): when locked, the proof may only
