@@ -87,19 +87,17 @@ export class BlueprintRefiner {
             console.log(`[refine] round ${guard}/${this.maxRounds} lemma ${next.id.slice(0, 10)}… proved=${round.proved} resplit=${round.resplit} added=${round.added} error=${round.error ?? '(none)'}`);
             rounds.push({ id: next.id, ok: round.proved, resplit: round.resplit, added: round.added, error: round.error ?? null });
             const madeProgress = round.proved || working.lemmas.length > before;
+            // Checkpoint after every round — progress or not. A stalled lemma (no progress,
+            // no new children) must still persist the round history + hash chain, or a crash
+            // mid-run loses the stalls that the resume logic needs to skip.
+            this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain });
             if (!madeProgress) {
-                // This lemma can't be proved and can't be decomposed further — stall it so
-                // other ready lemmas get attempted. A re-split that produced zero new children
-                // (resplit=true, added=0) is also a dead end.
                 next.stalled = true;
                 continue;
             }
             if (round.proved || round.added > 0) {
                 for (const l of working.lemmas) delete l.stalled;
             }
-
-            // Checkpoint after each round.
-            this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain });
         }
 
         const proved = working.lemmas.filter(l => l.proof).map(l => l.id);

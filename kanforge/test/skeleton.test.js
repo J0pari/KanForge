@@ -177,3 +177,10 @@ test('normalizeStub appends the by-sorry stub form once and rewrites lemma → t
     // Lean 4 has no `lemma` command; it is normalized to `theorem` so stubs typecheck.
     assert.strictEqual(normalizeStub('lemma a : True'), 'theorem a : True := by sorry');
 });
+
+test('normalizeStub strips a bare trailing := (empty body) without double-stubbing', () => {
+    // The LLM's re-split sometimes emits `theorem t : P := ` (empty body). normalizeStub must
+    // strip it and append exactly one `:= by sorry` — not produce `:=  := by sorry`.
+    assert.strictEqual(normalizeStub('theorem t (N : Nat) : 0 < 2 ^ N := '), 'theorem t (N : Nat) : 0 < 2 ^ N := by sorry');
+    assert.strictEqual(normalizeStub('lemma t (N : Nat) : 0 < 2 ^ N := '), 'theorem t (N : Nat) : 0 < 2 ^ N := by sorry');
+});

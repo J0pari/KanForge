@@ -198,6 +198,8 @@ export class TacticLoop {
                     const currentGoalClass = openGoals[0];
                     const goal = egraph.currentGoal(currentGoalClass.id);
                     this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
+                    const ctx = (goal.context ?? []).map(c => `${c.name}: ${c.type}`).join('; ');
+                    console.log(`[loop] goal_selected ${currentGoalClass.id.slice(0,10)}… ⊢ ${goal.type.slice(0, 120)}${ctx ? ` | ctx: ${ctx.slice(0, 200)}` : ''}`);
 
                     let solved = false;
                     let lastResult = null;
@@ -224,6 +226,7 @@ export class TacticLoop {
                             }
 
                             this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
+                            console.log(`[loop] goal ${currentGoalClass.id.slice(0,10)}… (${goal.type.slice(0,90)}) attempt ${attempt}/${maxAttempts}: "${tactic}"`);
 
                             // Feedback interconnection (architecture.md §0.3): a causal predictor
                             // that knows a tactic head leads to kernel rejection can veto it before
@@ -240,6 +243,7 @@ export class TacticLoop {
                             lastResult = result;
 
                             if (result.status === 'error') {
+                                console.log(`[loop]   tactic failed: ${String(result.error?.message ?? 'no message').slice(0, 150)}`);
                                 this._emit({ type: 'tactic_failed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' }, lemmaId);
                                 continue;
                             }
@@ -295,6 +299,7 @@ export class TacticLoop {
                         const repairedTactic = repaired?.tactic;
 
                         if (repairedTactic) {
+                            console.log(`[loop]   repair attempt: "${repairedTactic}"`);
                             this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, llmMs: repaired.llmMs, promptTokens: repaired.promptTokens, completionTokens: repaired.completionTokens }, lemmaId);
 
                             this.tacticCalls++;
@@ -314,11 +319,13 @@ export class TacticLoop {
                                     this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
                                 }
                             } else {
+                                console.log(`[loop]   repair failed: ${String(repairResult.error?.message ?? 'no message').slice(0, 150)}`);
                                 this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
                             }
                         }
 
                         if (!solved) {
+                            console.log(`[loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${this.maxTacticsPerGoal} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
                             egraph.markFailed(currentGoalClass.id);
                             fail(`could not solve goal class ${currentGoalClass.id} after ${this.maxTacticsPerGoal} attempts + repair`);
                         }

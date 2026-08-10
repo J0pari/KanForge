@@ -64,11 +64,19 @@ export function parseDecomposition(text) {
 
 export function normalizeStub(statement) {
     let s = String(statement).trim();
-    s = s.replace(/\s*:=\s*by\s+sorry\s*$/s, '').trim();
+    // Strip ANY trailing body: `:= by sorry`, `:= by ...`, or a bare `:= ` (the LLM's re-split
+    // sometimes emits an empty body). The stub is then normalized and re-stubbed uniformly.
+    s = s.replace(/\s*:=\s*(?:by\s+.*?)?\s*$/s, '').trim();
     // Lean 4 has no `lemma` command (only `theorem`/`example`); normalize so the emitted
     // stub actually typechecks under the kernel.
     s = s.replace(/^lemma\s+/, 'theorem ');
     return `${s} := by sorry`;
+}
+
+// Extract the `import ...` lines from a statement so stubs can be self-contained.
+export function extractImports(statement) {
+    const lines = String(statement ?? '').split(/\r?\n/);
+    return lines.filter(l => /^\s*import\s+\S/.test(l)).join('\n');
 }
 
 export class SkeletonGenerator {
@@ -100,9 +108,14 @@ export class SkeletonGenerator {
             return { ok: false, error: `theorem does not typecheck: ${rootCheck.error?.message ?? rootCheck.error ?? 'unknown error'}`, blueprint: null };
         }
 
+        // Stubs from the LLM decomposition lack imports — they rely on the warm env for
+        // symbols, but extractGoals (the loop's leased session) opens a fresh env (env: null).
+        // Prepend the theorem's imports to every stub so they are self-contained.
+        const imports = extractImports(theoremStatement);
+
         let lastErrors = [];
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-            const outcome = await this._attempt(rootStatement);
+            const outcome = await this._attempt(rootStatement, imports);
             if (outcome.ok) {
                 if (this.outDir) this._write(outcome.blueprint);
                 return outcome;
@@ -112,7 +125,7 @@ export class SkeletonGenerator {
         return { ok: false, error: `decomposition failed after ${this.maxRetries + 1} attempts`, errors: lastErrors, blueprint: null };
     }
 
-    async _attempt(rootStatement) {
+    async _attempt(rootStatement, imports = []) {
         const warnings = [];
         let response;
         try {
@@ -135,7 +148,10 @@ export class SkeletonGenerator {
         const nameToId = new Map();
 
         for (const cand of decomposition.lemmas) {
-            const stub = normalizeStub(cand.statement);
+            // Prepend the theorem's imports so the stub is self-contained — extractGoals
+            // opens a fresh env (env: null) and needs the imports to resolve symbols.
+            const withImports = imports.length ? imports + '\n\n' + cand.statement : cand.statement;
+            const stub = normalizeStub(withImports);
             const id = hashStatement(stub);
             if (id === rootId) {
                 nameToId.set(cand.name, rootId); // LLM restated the theorem — alias it

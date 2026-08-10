@@ -31,6 +31,19 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     const lemmaStore = new LemmaStore({ dir: path.join(workDir, 'lemma-store') });
     const dataset = new TrainingDataset({ dir: path.join(workDir, 'training-dataset') });
 
+    // Incremental event log: every loop event (goal_selected, tactic_proposed, tactic_failed,
+    // etc.) is appended to events.jsonl as it happens, so a crashed run leaves the full
+    // proposal/outcome trail on disk for diagnosis. This is the loop's telemetry made
+    // inspectable — the event store holds it in memory, the file persists it.
+    const eventLogFile = path.join(workDir, 'events.jsonl');
+    fs.mkdirSync(workDir, { recursive: true });
+    const userOnEvent = loopOptions.onEvent ?? null;
+    loopOptions.onEvent = e => {
+        fs.appendFileSync(eventLogFile, JSON.stringify(e) + '\n');
+        userOnEvent?.(e);
+    };
+    console.log(`[blueprint] event log -> ${eventLogFile}`);
+
     // Resume: if a previous run wrote a checkpoint (the skeleton passed), reload the blueprint
     // and skip the skeleton call. The refiner auto-loads from the checkpoint on refine().
     let generated;
@@ -42,6 +55,17 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
             generated = { ok: true, blueprint: { theorem, lemmas: resumeData.lemmas.map(l => ({ id: l.id, statement: l.statement, deps: l.deps ?? [], pinnedHash: l.pinnedHash ?? l.id })) }, warnings: [] };
             console.log(`[blueprint] resuming from checkpoint: ${resumeData.rounds?.length ?? 0} rounds, ${resumeData.lemmas.length} lemmas`);
         }
+    }
+    if (!generated && fs.existsSync(path.join(workDir, 'blueprint.json'))) {
+        // Skeleton completed previously but no checkpoint was written (crash before refine
+        // round 1). Resume from the persisted blueprint — no re-skeleton.
+        try {
+            const saved = JSON.parse(fs.readFileSync(path.join(workDir, 'blueprint.json'), 'utf8'));
+            if (saved.lemmas?.length) {
+                generated = { ok: true, blueprint: saved, warnings: [] };
+                console.log(`[blueprint] resuming from blueprint.json: ${saved.lemmas.length} lemmas (no checkpoint — refine resumes fresh)`);
+            }
+        } catch { /* corrupt blueprint.json — fall through to fresh skeleton */ }
     }
     if (!generated) {
         const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir });
