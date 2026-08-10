@@ -5,12 +5,16 @@ import assert from 'node:assert';
 import { BlueprintRefiner } from '../blueprint/refine.js';
 import { checkDrift } from '../blueprint/drift.js';
 import { hashStatement } from '../lean/pin.js';
+import { STUB_TACTIC_IMPORTS } from '../blueprint/skeleton.js';
 
 const THM = 'theorem thm : P := by sorry';
 const H1 = 'theorem h1 : P := by sorry';
 const H2 = 'theorem h2 : P := by sorry';
 const HARD = 'theorem hard_helper : P := by sorry';
 const EASY = 'theorem easy_child : P := by sorry';
+
+// Re-split children are emitted with the standard tactic imports prepended.
+const stubOf = s => STUB_TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + s;
 
 const idOf = s => hashStatement(s);
 
@@ -100,7 +104,7 @@ test('re-splits a stuck stub into children, never editing existing statements', 
     assert.ok(res.unproved.includes(idOf(THM)));
 
     // child was added and proved
-    const child = res.refined.lemmas.find(l => l.statement === EASY);
+    const child = res.refined.lemmas.find(l => l.statement === stubOf(EASY));
     assert.ok(child, 'easy_child should have been added');
     assert.ok(child.proof, 'easy_child should have been proved');
 
@@ -111,7 +115,7 @@ test('re-splits a stuck stub into children, never editing existing statements', 
 
     // hard stub's deps now point at its child
     const hard = res.refined.lemmas.find(l => l.statement === HARD);
-    assert.deepStrictEqual(hard.deps, [idOf(EASY)]);
+    assert.deepStrictEqual(hard.deps, [idOf(stubOf(EASY))]);
 
     // terminated by no-progress, not by the round cap
     assert.strictEqual(res.maxRoundsReached, false);

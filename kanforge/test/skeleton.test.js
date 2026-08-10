@@ -5,13 +5,17 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SkeletonGenerator, normalizeStub } from '../blueprint/skeleton.js';
+import { SkeletonGenerator, normalizeStub, STUB_TACTIC_IMPORTS } from '../blueprint/skeleton.js';
+import { stripImports } from '../agent/roles/autoformalizer.js';
 import { validateBlueprint } from '../blueprint/dag.js';
 import { hashStatement } from '../lean/pin.js';
 
 const THM = 'theorem add_comm_thm (a b : Nat) : a + b = b + a := by sorry';
 const H1 = 'theorem add_comm (a b : Nat) : a + b = b + a := by sorry';
 const H2 = 'theorem zero_comm : 0 + 0 = 0 := by sorry';
+
+// Stubs are emitted with the standard tactic imports prepended — hash statements accordingly.
+const stubOf = s => STUB_TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + normalizeStub(s);
 
 class ScriptedLLM {
     constructor(responses) {
@@ -63,7 +67,7 @@ test('generate produces a valid, pinned, acyclic blueprint', async () => {
     assert.strictEqual(blueprint.lemmas.length, 3);
     const root = blueprint.lemmas.find(l => l.statement === normalizeStub(THM));
     assert.ok(root);
-    assert.deepStrictEqual([...root.deps].sort(), [hashStatement(H1), hashStatement(H2)].sort());
+    assert.deepStrictEqual([...root.deps].sort(), [hashStatement(stubOf(H1)), hashStatement(stubOf(H2))].sort());
     for (const l of blueprint.lemmas) {
         assert.strictEqual(l.id, hashStatement(l.statement));
         assert.strictEqual(l.pinnedHash, l.id);
@@ -89,7 +93,9 @@ test('non-typechecking helper is dropped with a warning, blueprint stays valid',
         ],
         rootDeps: ['good']
     })]);
-    const brokenStmt = normalizeStub('lemma broken : does not parse');
+    // _tryCheck validates in the warm env (stripped imports) — the mock's bad set must hold
+    // the STRIPPED statement form.
+    const brokenStmt = stripImports(stubOf('lemma broken : does not parse'));
     const backend = new MockCheckBackend({ bad: [brokenStmt] });
     const gen = new SkeletonGenerator({ llm, backend });
     const result = await gen.generate(THM);
@@ -112,8 +118,8 @@ test('unknown dependency is dropped with a warning, DAG stays acyclic', async ()
     const result = await gen.generate(THM);
     assert.strictEqual(result.ok, true);
     const root = result.blueprint.lemmas.find(l => l.statement === normalizeStub(THM));
-    assert.deepStrictEqual(root.deps, [hashStatement(H1)]);
-    const helper = result.blueprint.lemmas.find(l => l.statement === H1);
+    assert.deepStrictEqual(root.deps, [hashStatement(stubOf(H1))]);
+    const helper = result.blueprint.lemmas.find(l => l.statement === stubOf(H1));
     assert.deepStrictEqual(helper.deps, []);
     assert.ok(result.warnings.some(w => w.includes('ghost')));
 });

@@ -8,7 +8,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hashStatement } from '../lean/pin.js';
 import { stripImports } from '../agent/roles/autoformalizer.js';
+import { resolveModule } from '../lean/moduleResolver.js';
 import { validateBlueprint } from './dag.js';
+
+// Standard tactic-library imports every stub needs: the loop's LLM correctly reaches for
+// norm_num/ring/positivity/linarith/abel/tauto, but a stub importing only the theorem's
+// data modules gets "unknown tactic" for all of them. These are the capability baseline —
+// curated against the pinned mathlib (each module resolved above).
+export const STUB_TACTIC_IMPORTS = [
+    'Mathlib.Tactic.NormNum',
+    'Mathlib.Tactic.Ring',
+    'Mathlib.Tactic.Positivity',
+    'Mathlib.Tactic.Linarith',
+    'Mathlib.Tactic.Abel',
+    'Mathlib.Tactic.Tauto'
+].map(resolveModule).filter(Boolean);
 
 export function buildSkeletonPrompt(theoremStatement) {
     return [
@@ -68,8 +82,9 @@ export function normalizeStub(statement) {
     // sometimes emits an empty body). The stub is then normalized and re-stubbed uniformly.
     s = s.replace(/\s*:=\s*(?:by\s+.*?)?\s*$/s, '').trim();
     // Lean 4 has no `lemma` command (only `theorem`/`example`); normalize so the emitted
-    // stub actually typechecks under the kernel.
-    s = s.replace(/^lemma\s+/, 'theorem ');
+    // stub actually typechecks under the kernel. `m` flag: the lemma may follow prepended
+    // import lines, so it is not at string position 0.
+    s = s.replace(/^\s*lemma\s+/m, 'theorem ');
     return `${s} := by sorry`;
 }
 
@@ -110,8 +125,11 @@ export class SkeletonGenerator {
 
         // Stubs from the LLM decomposition lack imports — they rely on the warm env for
         // symbols, but extractGoals (the loop's leased session) opens a fresh env (env: null).
-        // Prepend the theorem's imports to every stub so they are self-contained.
-        const imports = extractImports(theoremStatement);
+        // Prepend the theorem's imports AND the standard tactic-library imports to every stub
+        // so they are self-contained and the loop's tactic proposals actually resolve.
+        const theoremImports = extractImports(theoremStatement).split('\n').map(l => l.replace(/^\s*import\s+/, '').trim()).filter(Boolean);
+        const allImports = [...new Set([...theoremImports, ...STUB_TACTIC_IMPORTS])];
+        const imports = allImports.map(m => `import ${m}`).join('\n');
 
         let lastErrors = [];
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
