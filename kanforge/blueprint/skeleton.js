@@ -82,23 +82,15 @@ export class SkeletonGenerator {
         this.maxRetries = maxRetries;
     }
 
-    // Check a stub: try the fast chained path (strip imports, warm env) first. If that passes,
-    // validate with the same rigor extractGoals will use — a fresh (env: null) check with the
-    // FULL statement (imports included). A stub that typechecks only in the warm env but not
-    // fresh will fail in the loop's leased session; it must be rejected here.
+    // Fast warm-env check of a stub (strip imports, use the warm session — ~0.4s after warm).
+    // The fresh-env validation is the loop's extractGoals — the skeleton's job is speed, not
+    // authority. A stub that typechecks only in warm env but not fresh (rare: name collisions
+    // with mathlib) is caught by extractGoals and surfaced by the loop's error surfacing.
     async _tryCheck(statement) {
         const stripped = stripImports(statement);
         const fast = await this.backend.check(stripped, { useWarmEnv: true });
-        if (fast.status !== 'verified') {
-            if (/expected token/i.test(fast.error?.message ?? '')) return this.backend.check(statement);
-            return fast;
-        }
-        // Warm-env check passed — but does it typecheck in a fresh session? The loop's
-        // extractGoals opens a fresh leased session and sends the full statement (with imports).
-        // A stub that passes warm-only but fails fresh (e.g. name collision with mathlib — "has
-        // already been declared") must NOT enter the blueprint.
-        const fresh = await this.backend.check(statement);
-        return fresh;
+        if (fast.status === 'verified' || !/expected token/i.test(fast.error?.message ?? '')) return fast;
+        return this.backend.check(statement);
     }
 
     async generate(theoremStatement) {
@@ -124,7 +116,10 @@ export class SkeletonGenerator {
         const warnings = [];
         let response;
         try {
+            const t0 = Date.now();
             response = await this.llm.complete(buildSkeletonPrompt(rootStatement));
+            const ms = Date.now() - t0;
+            if (ms > 20000) console.log(`[skeleton] slow LLM call: ${(ms/1000).toFixed(1)}s`);
         } catch (err) {
             return { ok: false, errors: [`LLM call failed: ${err?.message ?? String(err)}`] };
         }

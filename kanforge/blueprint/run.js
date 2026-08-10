@@ -185,10 +185,22 @@ async function main() {
         // statement-mode chaining the autoformalizer uses) — no re-import per lemma.
         if (pool.warm) {
             console.log(`[blueprint] warming pool with target imports (cold mathlib import — one-time)`);
-            try {
-                await pool.warm(theorem, { timeoutMs: checkTimeoutMs });
-            } catch (err) {
-                console.warn(`[blueprint] warm failed (continuing cold): ${err?.message ?? err}`);
+            const warmStart = Date.now();
+            let warmOk = false;
+            // The cold import of module chains is nondeterministic: fresh .olean loads can be
+            // 35s or >180s depending on OS file cache. Retry with escalating timeout so a
+            // transient slow start doesn't force every subsequent check to pay cold-import.
+            for (const timeout of [checkTimeoutMs, checkTimeoutMs * 2]) {
+                try {
+                    await pool.warm(theorem, { timeoutMs: timeout });
+                    warmOk = true;
+                    break;
+                } catch (err) {
+                    console.warn(`[blueprint] warm attempt at ${timeout/1000}s failed after ${((Date.now()-warmStart)/1000).toFixed(1)}s: ${err?.message ?? err}`);
+                }
+            }
+            if (warmOk) {
+                console.log(`[blueprint] warm completed in ${((Date.now()-warmStart)/1000).toFixed(1)}s`);
             }
         }
         const r = await runBlueprintTheorem({

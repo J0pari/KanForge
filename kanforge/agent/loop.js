@@ -556,6 +556,7 @@ export class TacticLoop {
         try {
             const response = await this.llm.complete(prompt);
             const llmMs = Date.now() - t0;
+            if (llmMs > 20000) console.log(`[loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
             let tactic = response.text?.trim();
             if (tactic) {
                 tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();

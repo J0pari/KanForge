@@ -141,6 +141,15 @@ export class ReplWorker {
         this.child = child;
         this.pid = child.pid ?? null;
 
+        child.on('error', err => {
+            this._dead = true;
+            this._rl?.close();
+            const pending = this._pending;
+            this._pending = null;
+            if (pending) pending.reject(Object.assign(new Error(`repl worker spawn error: ${err.message}`), { kind: 'spawn-error' }));
+            onExit?.(this, { code: null, signal: null });
+        });
+
         this._rl = readline.createInterface({ input: child.stdout });
         this._rl.on('line', line => {
             if (!line.trim()) {
@@ -332,14 +341,24 @@ export class BackendRepl {
         waiter.resolve(free);
     }
 
-    _acquire() {
+    _acquire(timeoutMs) {
         if (this._draining) return Promise.reject(new Error('backend draining'));
         const free = this._workers.find(w => !w.busy && w.isAlive());
         if (free) {
-            free.busy = true; // reserve at handout
+            free.busy = true;
             return Promise.resolve(free);
         }
-        return new Promise((resolve, reject) => this._waiters.push({ resolve, reject }));
+        console.log(`[repl-pool] _acquire blocked: ${this._workers.length} workers (${this._workers.filter(w=>w.isAlive()).length} alive), ${this._waiters.length} waiters`);
+        const guard = timeoutMs ?? 60_000;
+        return new Promise((resolve, reject) => {
+            const waiter = { resolve, reject };
+            this._waiters.push(waiter);
+            setTimeout(() => {
+                const idx = this._waiters.indexOf(waiter);
+                if (idx !== -1) this._waiters.splice(idx, 1);
+                reject(Object.assign(new Error(`no repl worker available after ${guard}ms`), { kind: 'acquire-timeout' }));
+            }, guard);
+        });
     }
 
     // One request on one worker with kill-on-hang (§3.1). Shared by stateless checks and
@@ -347,6 +366,8 @@ export class BackendRepl {
     // just fail the request (the session is broken, but the worker stays alive for other sessions).
     async _requestOnWorker(worker, payload, { timeoutMs, lease = false } = {}) {
         let timer;
+        const reqStart = Date.now();
+        const desc = payload.cmd ? 'check' : (payload.tactic ? 'tactic' : 'inspect');
         try {
             return await new Promise((resolve, reject) => {
                 worker.request(payload, { lease }).then(resolve, reject);
@@ -364,6 +385,8 @@ export class BackendRepl {
             });
         } finally {
             clearTimeout(timer);
+            const ms = Date.now() - reqStart;
+            if (ms > 5000) console.log(`[repl-pool] ${desc} request completed in ${(ms/1000).toFixed(1)}s`);
         }
     }
 
