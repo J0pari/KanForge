@@ -566,7 +566,14 @@ export class TacticLoop {
             if (llmMs > 20000) console.log(`[loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
             let tactic = response.text?.trim();
             if (tactic) {
-                tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+                // Extract the first Lean code-fence block (the LLM sometimes wraps output in
+                // markdown with explanations — the first ``` lean ... ``` is the tactic text).
+                const fence = tactic.match(/```\s*(?:lean4?|lean\s*4)?\s*[\r\n]*([\s\S]*?)```/i);
+                if (fence) {
+                    tactic = fence[1].trim();
+                } else {
+                    tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+                }
                 tactic = tactic.replace(/^`|`$/g, '').trim();
             }
             return {

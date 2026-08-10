@@ -186,7 +186,7 @@ async function main() {
 
     // The repl pool must survive the COLD mathlib import of the target's statement (the
     // autoformalizer harness uses 180s for the same reason); 60s is a warm-worker budget only.
-    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: checkTimeoutMs });
+    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: checkTimeoutMs, workerPerProblem: false });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
