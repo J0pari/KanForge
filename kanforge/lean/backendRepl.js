@@ -488,12 +488,18 @@ export class BackendRepl {
             const messages = resp?.messages ?? [];
             const { errors } = parseLeanMessages(messages);
             if (errors.length) {
+                const msg = typeof errors[0] === 'string' ? errors[0] : JSON.stringify(errors[0]);
+                console.log(`[repl-pool] extractGoals parse error: ${msg}`);
                 worker.busy = false;
                 this._wakeWaiters();
-                return [];
+                throw Object.assign(new Error(`extractGoals parse error: ${msg}`), { kind: 'parse-error', messages: errors });
             }
             this._sessions.set(key, { worker });
-            return (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
+            const goals = (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
+            if (goals.length === 0 && (resp?.sorries?.length ?? 0) === 0) {
+                console.log(`[repl-pool] extractGoals returned 0 sorries for src: ${src.slice(0, 100)}`);
+            }
+            return goals;
         } catch (err) {
             if (worker.isAlive() && !worker._retired) {
                 worker.busy = false;
