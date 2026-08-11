@@ -20,6 +20,8 @@ export function buildSkeletonPrompt(theoremStatement) {
                 '- Every lemma statement must be a valid standalone Lean statement of the form `lemma <name> : <proposition> := by sorry`.\n' +
                 '- `deps` lists the NAMES of other helper lemmas this one needs; never list a lemma you did not define.\n' +
                 '- `rootDeps` lists the helper-lemma names the theorem itself needs (omit for none).\n' +
+                '- Use UNIQUE lemma names — do NOT reuse names already in mathlib (e.g. `pow_two_pos`, `prime_eq_two_of_even`, `set_infinite_iff_forall_exists_ge`).\n' +
+                '- Prefer descriptive compound names like `twopow_even` or `not_sum_of_prime_and_two_pows`.\n' +
                 '- Return ONLY a JSON object, no prose, no markdown fences.\n' +
                 'Format: {"lemmas":[{"name":"...","statement":"lemma ... := by sorry","deps":["..."]}],"rootDeps":["..."]}'
         },
