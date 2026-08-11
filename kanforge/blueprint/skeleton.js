@@ -112,13 +112,6 @@ export class SkeletonGenerator {
         if (rootCheck.status !== 'verified') {
             return { ok: false, error: `theorem does not typecheck: ${rootCheck.error?.message ?? rootCheck.error ?? 'unknown error'}`, blueprint: null };
         }
-        // Validate the FULL statement (with imports) in a fresh env — the loop's extractGoals
-        // opens a fresh session per lemma, so the import set must be valid in that context.
-        // A single fresh check validates the import profile for all stubs that share it.
-        const freshRoot = await this.backend.check(theoremStatement);
-        if (freshRoot.status !== 'verified') {
-            return { ok: false, error: `theorem does not typecheck (fresh): ${freshRoot.error?.message ?? freshRoot.error ?? 'unknown error'}`, blueprint: null };
-        }
 
         // Stubs from the LLM decomposition lack imports — they rely on the warm env for
         // symbols, but extractGoals (the loop's leased session) opens a fresh env (env: null).
