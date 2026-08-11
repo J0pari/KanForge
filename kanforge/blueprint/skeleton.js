@@ -102,12 +102,7 @@ export class SkeletonGenerator {
     async _tryCheck(statement) {
         const stripped = stripImports(statement);
         const fast = await this.backend.check(stripped, { useWarmEnv: true });
-        if (fast.status !== 'verified') {
-            if (/expected token/i.test(fast.error?.message ?? '')) return this.backend.check(statement);
-            return fast;
-        }
-        // Warm-env check passed — validate in a fresh env so stubs that rely on warm-only
-        // symbols are rejected BEFORE the loop's extractGoals (which opens a fresh session).
+        if (fast.status === 'verified' || !/expected token/i.test(fast.error?.message ?? '')) return fast;
         return this.backend.check(statement);
     }
 
@@ -116,6 +111,13 @@ export class SkeletonGenerator {
         const rootCheck = await this._tryCheck(rootStatement);
         if (rootCheck.status !== 'verified') {
             return { ok: false, error: `theorem does not typecheck: ${rootCheck.error?.message ?? rootCheck.error ?? 'unknown error'}`, blueprint: null };
+        }
+        // Validate the FULL statement (with imports) in a fresh env — the loop's extractGoals
+        // opens a fresh session per lemma, so the import set must be valid in that context.
+        // A single fresh check validates the import profile for all stubs that share it.
+        const freshRoot = await this.backend.check(theoremStatement);
+        if (freshRoot.status !== 'verified') {
+            return { ok: false, error: `theorem does not typecheck (fresh): ${freshRoot.error?.message ?? freshRoot.error ?? 'unknown error'}`, blueprint: null };
         }
 
         // Stubs from the LLM decomposition lack imports — they rely on the warm env for
