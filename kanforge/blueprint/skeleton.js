@@ -10,19 +10,7 @@ import { hashStatement } from '../lean/pin.js';
 import { stripImports } from '../agent/roles/autoformalizer.js';
 import { resolveModule } from '../lean/moduleResolver.js';
 import { validateBlueprint } from './dag.js';
-
-// Standard tactic-library imports every stub needs: the loop's LLM correctly reaches for
-// norm_num/ring/positivity/linarith/abel/tauto, but a stub importing only the theorem's
-// data modules gets "unknown tactic" for all of them. These are the capability baseline —
-// curated against the pinned mathlib (each module resolved above).
-export const STUB_TACTIC_IMPORTS = [
-    'Mathlib.Tactic.NormNum',
-    'Mathlib.Tactic.Ring',
-    'Mathlib.Tactic.Positivity',
-    'Mathlib.Tactic.Linarith',
-    'Mathlib.Tactic.Abel',
-    'Mathlib.Tactic.Tauto'
-].map(resolveModule).filter(Boolean);
+import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 
 export function buildSkeletonPrompt(theoremStatement) {
     return [
@@ -128,7 +116,7 @@ export class SkeletonGenerator {
         // Prepend the theorem's imports AND the standard tactic-library imports to every stub
         // so they are self-contained and the loop's tactic proposals actually resolve.
         const theoremImports = extractImports(theoremStatement).split('\n').map(l => l.replace(/^\s*import\s+/, '').trim()).filter(Boolean);
-        const allImports = [...new Set([...theoremImports, ...STUB_TACTIC_IMPORTS])];
+        const allImports = [...new Set([...theoremImports, ...STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean)])];
         const imports = allImports.map(m => `import ${m}`).join('\n');
 
         let lastErrors = [];

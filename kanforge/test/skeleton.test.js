@@ -5,17 +5,20 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SkeletonGenerator, normalizeStub, STUB_TACTIC_IMPORTS } from '../blueprint/skeleton.js';
+import { SkeletonGenerator, normalizeStub } from '../blueprint/skeleton.js';
+import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 import { stripImports } from '../agent/roles/autoformalizer.js';
 import { validateBlueprint } from '../blueprint/dag.js';
 import { hashStatement } from '../lean/pin.js';
+import { resolveModule } from '../lean/moduleResolver.js';
 
 const THM = 'theorem add_comm_thm (a b : Nat) : a + b = b + a := by sorry';
 const H1 = 'theorem add_comm (a b : Nat) : a + b = b + a := by sorry';
 const H2 = 'theorem zero_comm : 0 + 0 = 0 := by sorry';
 
-// Stubs are emitted with the standard tactic imports prepended — hash statements accordingly.
-const stubOf = s => STUB_TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + normalizeStub(s);
+// Stubs are emitted with the canonical tactic imports prepended — hash statements accordingly.
+const TACTIC_IMPORTS = STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean);
+const stubOf = s => TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + normalizeStub(s);
 
 class ScriptedLLM {
     constructor(responses) {

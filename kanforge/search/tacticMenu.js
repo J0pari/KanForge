@@ -56,6 +56,25 @@ export const MODULE_TACTICS = {
     'Mathlib.Data.Real.Basic': []
 };
 
+// Canonical tactic-library imports every stub needs (architecture.md §0.3 capability baseline).
+// These are the non-core, module-provided tactics that the loop's LLM reaches for — ring,
+// norm_num, linarith, positivity, tauto, field_simp, abel. Core tactics (omega, rw, simp,
+// intro, exact, apply, constructor, etc.) are available in ANY repl session without import.
+// The set is derived from MODULE_TACTICS' non-empty-module keys + abel (missing from
+// MODULE_TACTICS in v4.33.0-rc1 — add it here since the loop's LLM proposes `abel`).
+// Domain-agnostic: the arithmetic/algebraic closers work across number theory, combinatorics,
+// geometry, and analysis. Domain-specific theorem libraries (SimpleGraph, MeasureTheory, etc.)
+// are NOT included — those come from the corpus entry's own import profile.
+export const STUB_TACTIC_MODULES = [
+    'Mathlib.Tactic.Ring',
+    'Mathlib.Tactic.Linarith',
+    'Mathlib.Tactic.NormNum',
+    'Mathlib.Tactic.Positivity',
+    'Mathlib.Tactic.FieldSimp',
+    'Mathlib.Tactic.Tauto',
+    'Mathlib.Tactic.Abel'
+];
+
 const MODULE_CARD_META = {
     tauto: { when: 'propositional tautology (∧ ∨ → ¬, no arithmetic)', compose: 'closes outright, no intro needed' },
     ring: { when: 'polynomial identity over a ring', compose: 'closes outright' },
