@@ -377,13 +377,35 @@ export class TacticLoop {
                         }
 
                         if (!solved) {
-                            console.log(`[loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${this.maxTacticsPerGoal} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
+                            console.log(`[loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${maxAttempts} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
                             egraph.markFailed(currentGoalClass.id);
-                            fail(`could not solve goal class ${currentGoalClass.id} after ${this.maxTacticsPerGoal} attempts + repair`);
                         }
                     }
 
                     goalCount += lastResult?.newGoals?.length ?? 0;
+                }
+            }
+
+            // All per-goal attempts exhausted without solving the root. Try one lemma-level
+            // repair: ask the LLM for a complete proof of the full statement. If the kernel
+            // accepts a multi-line proof, skip the rest of the commit path and mark solved.
+            if (!egraph.isRootSolved()) {
+                console.log(`[loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
+                const resp = await this._proposeTacticFromPrompt(buildLemmarepairPrompt(statement));
+                const proof = resp?.tactic;
+                if (proof && isMultiLineProof(proof)) {
+                    const fullSource = buildProofSource(statement, `by\n${proof}`);
+                    const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
+                    if (lemmaCheck.status === 'verified') {
+                        console.log(`[loop] lemma-level repair ACCEPTED`);
+                        const rootClass = egraph.classes.get(egraph.rootId);
+                        if (rootClass) {
+                            rootClass.state = 'SOLVED';
+                            rootClass._directProof = `by\n${proof}`;
+                        }
+                    } else {
+                        console.log(`[loop] lemma-level repair rejected: ${lemmaCheck.error?.message?.slice(0,120) ?? 'unknown'}`);
+                    }
                 }
             }
 
@@ -815,4 +837,13 @@ function isMultiLineProof(tactic) {
     const s = String(tactic ?? '').trim();
     const lines = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     return lines.length >= 2 && lines.some(l => /^\s*(intro|rcases|exact|rw|apply|have|refine|by_contra|induction|cases|constructor|simp|omega|ring|linarith|norm_num|positivity|nlinarith|field_simp|abel|tauto|decide|native_decide|use|obtain|calc|·|\.$)/.test(l));
+}
+
+// Lemma-level repair prompt: give the LLM the full statement (with imports) and ask for a
+// complete proof. Used after per-goal search exhausts its budget — one restoration attempt.
+function buildLemmarepairPrompt(statement) {
+    return [
+        { role: 'system', content: 'You are a Lean 4 proof expert. Given a theorem statement, produce a complete proof script. Return ONLY the proof (the text between `:= by` and the end), no markdown, no explanation. Use the tactics: intro, rcases, rw, exact, apply, have, omega, ring, norm_num, positivity, simp, linarith, nlinarith, field_simp, abel, tauto, constructor, cases, induction, refine, use, obtain, calc, native_decide, decide. One tactic per line.' },
+        { role: 'user', content: `Prove this theorem:\n\n${statement}` }
+    ];
 }
