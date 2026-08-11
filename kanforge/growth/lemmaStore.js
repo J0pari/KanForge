@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lexicalNormalize } from '../core/egraph.js';
 
 const DATA_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'runs');
 
@@ -19,6 +20,24 @@ function writeJsonAtomic(file, data) {
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
     fs.renameSync(tmp, file);
+}
+
+// Extract the proposition (conclusion) from a lemma statement: everything after the LAST `:`
+// that is before `:=`. E.g. `theorem t (a b : Nat) : a + b = b + a := by sorry` → `a + b = b + a`.
+export function extractConclusion(statement) {
+    const s = String(statement ?? '').trim();
+    // Strip trailing body and any import lines to find the theorem line.
+    const body = s.replace(/:=\s*by\s+.*$/s, '').trim();
+    const lines = body.split(/\r?\n/);
+    // The last non-import line contains the proposition after `:`.
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line || /^\s*import\s+/.test(line)) continue;
+        const colon = line.lastIndexOf(':');
+        if (colon === -1) continue;
+        return line.slice(colon + 1).trim();
+    }
+    return null;
 }
 
 // Extract `import Foo.Bar` lines from a statement; used as an index column.
@@ -143,6 +162,24 @@ export class LemmaStore {
         }
         scored.sort((a, b) => b.score - a.score);
         return scored.slice(0, limit).map(s => s.entry);
+    }
+
+    // Exact-match retrieval on the normalized conclusion (the proposition after `:` in the
+    // lemma statement). Normalizes both the query goal type and every stored lemma's conclusion
+    // through the same normalizer. Returns { statementHash, proofScript, statement } or null.
+    // Used by the loop to skip LLM proposals when a previously-proven lemma already closes the
+    // goal — one `exact` or `apply` replaces the entire search.
+    findByGoal(goalType) {
+        const norm = lexicalNormalize(goalType);
+        for (const [hash, entry] of this.store) {
+            const stmt = entry?.statement ?? '';
+            const conclusion = extractConclusion(stmt);
+            if (!conclusion) continue;
+            if (lexicalNormalize(conclusion) === norm) {
+                return { statementHash: hash, proofScript: entry.proofScript, statement: stmt };
+            }
+        }
+        return null;
     }
 
     _load() {

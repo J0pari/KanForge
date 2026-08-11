@@ -21,11 +21,35 @@
 
 import crypto from 'node:crypto';
 
+// Lexical mathematical normalizer: operates on the GOAL TYPE string. Applies simple algebraic
+// identity simplifications (0+x→x, x*1→x). Pure JS — zero latency, works in tests. When
+// injected into GoalEGraph, mathematically-equivalent goals share one e-class.
+export function lexicalNormalize(type) {
+    let s = String(type ?? '').trim().replace(/\s+/g, ' ').trim();
+    s = s.replace(/\b0\s*\+\s*/g, '').replace(/\s*\+\s*\b0\b/g, '');
+    s = s.replace(/\s*-\s*\b0\b/g, '');
+    s = s.replace(/\b1\s*\*\s*/g, '').replace(/\s*\*\s*\b1\b/g, '');
+    return s.replace(/\s+/g, ' ').trim();
+}
+
 export class GoalEGraph {
-    constructor() {
-        this.classes = new Map(); // id -> equivalence class
+    // normalizer: optional `(goalType: string) => string` — applied before canonical-key
+    // computation so mathematically-equivalent goals merge into one e-class. Cached per raw
+    // input for zero repeat cost.
+    constructor({ normalizer = null } = {}) {
+        this.classes = new Map();
         this.rootId = null;
-        this.frontier = []; // ordered open class ids (repl proof-state order, head first)
+        this.frontier = [];
+        this._normalizer = normalizer;
+        this._normCache = new Map(); // rawType → normalizedType
+    }
+
+    _normalizeType(type) {
+        if (!this._normalizer) return type;
+        if (this._normCache.has(type)) return this._normCache.get(type);
+        const norm = this._normalizer(type) ?? type;
+        this._normCache.set(type, norm);
+        return norm;
     }
 
     normalizeGoal(goal) {
@@ -45,10 +69,13 @@ export class GoalEGraph {
             type: varType
         }));
         
+        // Apply the mathematical normalizer to the type AFTER alpha-renaming, so identities
+        // like 0+n → n merge with equivalent forms regardless of bound-variable names.
         let normalizedType = type;
         for (const [original, canonical] of varMap) {
             normalizedType = normalizedType.replace(new RegExp(`\\b${original}\\b`, 'g'), canonical);
         }
+        normalizedType = this._normalizeType(normalizedType);
         
         return {
             type: normalizedType,
@@ -332,8 +359,8 @@ export class GoalEGraph {
         };
     }
 
-    static deserialize(data) {
-        const egraph = new GoalEGraph();
+    static deserialize(data, { normalizer = null } = {}) {
+        const egraph = new GoalEGraph({ normalizer });
         egraph.rootId = data.rootId;
         egraph.frontier = data.frontier ?? [];
         egraph.classes = new Map(data.classes);

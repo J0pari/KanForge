@@ -55,7 +55,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { GoalEGraph } from '../core/egraph.js';
+import { GoalEGraph, lexicalNormalize } from '../core/egraph.js';
 import { bestOfN } from '../search/bestofn.js';
 import { bestOfNWithSwiss, swissRank, buildPairwiseJudge } from '../search/swiss.js';
 import { RepulsionSampler } from '../search/repulsion.js';
@@ -107,7 +107,7 @@ function countingBackend(backend) {
 }
 
 function openRootEGraph(rootGoals) {
-    const egraph = new GoalEGraph();
+    const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
     egraph.addGoal(rootGoals[0]);
     egraph.setRoot(rootGoals[0]);
     return egraph;

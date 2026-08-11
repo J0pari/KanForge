@@ -25,7 +25,7 @@ import { PullGraph } from '../core/pullgraph.js';
 import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 import { hashChainEntry, verifyHashChain } from '../core/hasher.js';
 import { isGoalSolved, isLemmaProved } from './solve.js';
-import { GoalEGraph } from '../core/egraph.js';
+import { GoalEGraph, lexicalNormalize } from '../core/egraph.js';
 import { straighten, buildProofSource } from '../core/state.js';
 import { Guardrails } from '../core/guardrails.js';
 import { Patch } from '../core/patch.js';
@@ -55,7 +55,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -80,6 +80,7 @@ export class TacticLoop {
         this.grpo = grpo === true;
         this.ttrlPolicy = this.ttrl ? new TestTimePolicy() : null;
         this.grpoHarness = this.grpo ? new GRPOHarness() : null;
+        this.lemmaStore = lemmaStore ?? null;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -150,7 +151,7 @@ export class TacticLoop {
 
         try {
             // Level 2: Goal e-graph. extractGoals opens the backend proof session.
-            const egraph = new GoalEGraph();
+            const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
             let rootGoals;
             try {
                 rootGoals = await this.backend.extractGoals(statement);
@@ -218,7 +219,13 @@ export class TacticLoop {
                             if (signal?.aborted) break;
 
                             this.llmCalls++;
-                            const proposed = await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id);
+                            // Lemma-store lookup: if a previously-proven lemma's conclusion
+                            // matches the current goal type (after lexical normalization),
+                            // skip the LLM entirely and use `exact <lemma>`.
+                            const stored = this.lemmaStore?.findByGoal(goal.type);
+                            const proposed = stored
+                                ? { tactic: `exact ${extractLemmaName(stored.statement)}`, llmMs: 0, promptTokens: 0, completionTokens: 0 }
+                                : (this.llmCalls++, await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id));
                             const tactic = proposed?.tactic;
                             if (!tactic) {
                                 this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
@@ -558,7 +565,7 @@ export class TacticLoop {
         return counted;
     }
 
-    async _proposeTacticFromPrompt(prompt) {
+        async _proposeTacticFromPrompt(prompt) {
         const t0 = Date.now();
         try {
             const response = await this.llm.complete(prompt);
@@ -738,8 +745,13 @@ export class TacticLoop {
             lemmas: this.graph.nodes.size,
             llmCalls: this.llmCalls,
             tacticCalls: this.tacticCalls,
-            events: this.store.events.length,
-            backend: this.backend.getInfos?.() ?? null
+            hashChainLength: this.hashChain.length
         };
     }
+}
+
+// Extract the lemma/theorem name from a stored lemma statement for `exact <name>`.
+function extractLemmaName(statement) {
+    const m = String(statement ?? '').match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/);
+    return m ? m[1] : 't';
 }
