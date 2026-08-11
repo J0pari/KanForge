@@ -331,29 +331,6 @@ export class TacticLoop {
                                 console.log(`[loop]   multi-line repair check failed: ${check.error?.message?.slice(0,120) ?? 'unknown'}`);
                             }
 
-                            // Multi-line repair: the LLM produced a full proof script (not a single
-                            // tactic). Verify it directly as a complete proof — bypass the per-goal
-                            // front. Single-tactic repairs go through the normal applyTactic path.
-                            if (isMultiLineProof(repairedTactic)) {
-                                const fullSource = buildProofSource(statement, `by\n${repairedTactic}`);
-                                const directCheck = await this.backend.check(fullSource, { useWarmEnv: false });
-                                if (directCheck.status === 'verified') {
-                                    const directVerify = await this.backend.verifyProof(fullSource, lemmaId);
-                                    if (directVerify.status === 'verified') {
-                                        console.log(`[loop]   repair full-proof accepted by kernel`);
-                                        stub.proof = `by\n${repairedTactic}`; // FIXME: stub not in scope here
-                                        // Mark as proved and exit the loop
-                                        solved = true;
-                                        lastResult = { status: 'ok', newGoals: [] };
-                                        // Don't go through egraph; the proof is complete
-                                    } else {
-                                        console.log(`[loop]   repair full-proof rejected by kernel: ${directVerify.error?.message?.slice(0,150) ?? 'unknown'}`);
-                                    }
-                                } else {
-                                    console.log(`[loop]   repair full-proof check failed: ${directCheck.error?.message?.slice(0,150) ?? 'unknown'}`);
-                                }
-                            }
-
                             this.tacticCalls++;
                             const repairResult = await this.backend.applyTactic(goal, repairedTactic);
 

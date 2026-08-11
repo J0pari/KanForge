@@ -102,7 +102,12 @@ export class SkeletonGenerator {
     async _tryCheck(statement) {
         const stripped = stripImports(statement);
         const fast = await this.backend.check(stripped, { useWarmEnv: true });
-        if (fast.status === 'verified' || !/expected token/i.test(fast.error?.message ?? '')) return fast;
+        if (fast.status !== 'verified') {
+            if (/expected token/i.test(fast.error?.message ?? '')) return this.backend.check(statement);
+            return fast;
+        }
+        // Warm-env check passed — validate in a fresh env so stubs that rely on warm-only
+        // symbols are rejected BEFORE the loop's extractGoals (which opens a fresh session).
         return this.backend.check(statement);
     }
 
