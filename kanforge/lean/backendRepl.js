@@ -26,6 +26,13 @@ import fs from 'node:fs';
 import { hashStatement, makePin, NORM_VERSION } from './pin.js';
 import { parseGoalText } from './goalText.js';
 
+// Timestamped log prefix for pool lifecycle diagnostics.
+function ts() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 // The repl binary links against Lean's runtime DLLs (libleanshared.dll & friends), which live
 // in the toolchain bin dir. On Windows they must be on PATH or the exe dies with
 // STATUS_DLL_NOT_FOUND at startup. Resolve that bin dir once and prepend it to the child env.
@@ -361,7 +368,7 @@ export class BackendRepl {
             free.busy = true;
             return Promise.resolve(free);
         }
-        console.log(`[repl-pool] _acquire blocked: ${this._workers.length} workers (${this._workers.filter(w=>w.isAlive()).length} alive), ${this._waiters.length} waiters`);
+        console.log(`[${ts()}] [repl-pool] _acquire blocked: ${this._workers.length} workers (${this._workers.filter(w=>w.isAlive()).length} alive), ${this._waiters.length} waiters`);
         const guard = timeoutMs ?? 60_000;
         return new Promise((resolve, reject) => {
             const waiter = { resolve, reject };
@@ -399,7 +406,7 @@ export class BackendRepl {
         } finally {
             clearTimeout(timer);
             const ms = Date.now() - reqStart;
-            if (ms > 5000) console.log(`[repl-pool] ${desc} request completed in ${(ms/1000).toFixed(1)}s`);
+            if (ms > 5000) console.log(`[${ts()}] [repl-pool] ${desc} request completed in ${(ms/1000).toFixed(1)}s`);
         }
     }
 
@@ -502,7 +509,7 @@ export class BackendRepl {
             const { errors } = parseLeanMessages(messages);
             if (errors.length) {
                 const msg = typeof errors[0] === 'string' ? errors[0] : JSON.stringify(errors[0]);
-                console.log(`[repl-pool] extractGoals parse error: ${msg}`);
+                console.log(`[${ts()}] [repl-pool] extractGoals parse error: ${msg}`);
                 worker.busy = false;
                 this._wakeWaiters();
                 throw Object.assign(new Error(`extractGoals parse error: ${msg}`), { kind: 'parse-error', messages: errors });
@@ -510,7 +517,7 @@ export class BackendRepl {
             this._sessions.set(key, { worker });
             const goals = (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
             if (goals.length === 0 && (resp?.sorries?.length ?? 0) === 0) {
-                console.log(`[repl-pool] extractGoals returned 0 sorries for src: ${src.slice(0, 100)}`);
+                console.log(`[${ts()}] [repl-pool] extractGoals returned 0 sorries for src: ${src.slice(0, 100)}`);
             }
             return goals;
         } catch (err) {

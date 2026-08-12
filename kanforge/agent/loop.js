@@ -200,7 +200,7 @@ export class TacticLoop {
                     const goal = egraph.currentGoal(currentGoalClass.id);
                     this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
                     const ctx = (goal.context ?? []).map(c => `${c.name}: ${c.type}`).join('; ');
-                    console.log(`[loop] goal_selected ${currentGoalClass.id.slice(0,10)}… ⊢ ${goal.type.slice(0, 120)}${ctx ? ` | ctx: ${ctx.slice(0, 200)}` : ''}`);
+                    console.log(`[${ts()}] [loop] goal_selected ${currentGoalClass.id.slice(0,10)}… ⊢ ${goal.type.slice(0, 120)}${ctx ? ` | ctx: ${ctx.slice(0, 200)}` : ''}`);
 
                     let solved = false;
                     let lastResult = null;
@@ -233,7 +233,7 @@ export class TacticLoop {
                             }
 
                             this._emit({ type: 'tactic_proposed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens }, lemmaId);
-                            console.log(`[loop] goal ${currentGoalClass.id.slice(0,10)}… (${goal.type.slice(0,90)}) attempt ${attempt}/${maxAttempts}: "${tactic}"`);
+                            console.log(`[${ts()}] [loop] goal ${currentGoalClass.id.slice(0,10)}… (${goal.type.slice(0,90)}) attempt ${attempt}/${maxAttempts}: "${tactic}"`);
 
                             // Feedback interconnection (architecture.md §0.3): a causal predictor
                             // that knows a tactic head leads to kernel rejection can veto it before
@@ -250,7 +250,7 @@ export class TacticLoop {
                             lastResult = result;
 
                             if (result.status === 'error') {
-                                console.log(`[loop]   tactic failed: ${String(result.error?.message ?? 'no message').slice(0, 150)}`);
+                                console.log(`[${ts()}] [loop]   tactic failed: ${String(result.error?.message ?? 'no message').slice(0, 150)}`);
                                 this._emit({ type: 'tactic_failed', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' }, lemmaId);
                                 continue;
                             }
@@ -306,7 +306,7 @@ export class TacticLoop {
                         const repairedTactic = repaired?.tactic;
 
                         if (repairedTactic) {
-                            console.log(`[loop]   repair attempt: "${String(repairedTactic).slice(0, 120)}"`);
+                            console.log(`[${ts()}] [loop]   repair attempt: "${String(repairedTactic).slice(0, 120)}"`);
                             this._emit({ type: 'repair_proposed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, llmMs: repaired.llmMs, promptTokens: repaired.promptTokens, completionTokens: repaired.completionTokens }, lemmaId);
 
                             // Multi-line repair: the LLM produced a full proof script. Verify it
@@ -328,7 +328,7 @@ export class TacticLoop {
                                     this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: '(multi-line proof verified)' }, lemmaId);
                                     continue;
                                 }
-                                console.log(`[loop]   multi-line repair check failed: ${check.error?.message?.slice(0,120) ?? 'unknown'}`);
+                                console.log(`[${ts()}] [loop]   multi-line repair check failed: ${check.error?.message?.slice(0,120) ?? 'unknown'}`);
                             }
 
                             this.tacticCalls++;
@@ -348,13 +348,13 @@ export class TacticLoop {
                                     this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
                                 }
                             } else {
-                                console.log(`[loop]   repair failed: ${String(repairResult.error?.message ?? 'no message').slice(0, 150)}`);
+                                console.log(`[${ts()}] [loop]   repair failed: ${String(repairResult.error?.message ?? 'no message').slice(0, 150)}`);
                                 this._emit({ type: 'repair_failed', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message }, lemmaId);
                             }
                         }
 
                         if (!solved) {
-                            console.log(`[loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${maxAttempts} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
+                            console.log(`[${ts()}] [loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${maxAttempts} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
                             egraph.markFailed(currentGoalClass.id);
                         }
                     }
@@ -367,21 +367,21 @@ export class TacticLoop {
             // repair: ask the LLM for a complete proof of the full statement. If the kernel
             // accepts a multi-line proof, skip the rest of the commit path and mark solved.
             if (!egraph.isRootSolved()) {
-                console.log(`[loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
+                console.log(`[${ts()}] [loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
                 const resp = await this._proposeTacticFromPrompt(buildLemmarepairPrompt(statement));
                 const proof = resp?.tactic;
                 if (proof && isMultiLineProof(proof)) {
                     const fullSource = buildProofSource(statement, `by\n${proof}`);
                     const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
                     if (lemmaCheck.status === 'verified') {
-                        console.log(`[loop] lemma-level repair ACCEPTED`);
+                        console.log(`[${ts()}] [loop] lemma-level repair ACCEPTED`);
                         const rootClass = egraph.classes.get(egraph.rootId);
                         if (rootClass) {
                             rootClass.state = 'SOLVED';
                             rootClass._directProof = `by\n${proof}`;
                         }
                     } else {
-                        console.log(`[loop] lemma-level repair rejected: ${lemmaCheck.error?.message?.slice(0,120) ?? 'unknown'}`);
+                        console.log(`[${ts()}] [loop] lemma-level repair rejected: ${lemmaCheck.error?.message?.slice(0,120) ?? 'unknown'}`);
                     }
                 }
             }
@@ -432,8 +432,8 @@ export class TacticLoop {
             const preflight = await this.backend.check(source, { useWarmEnv: false });
             if (preflight.status !== 'verified') {
                 const perr = preflight.error?.message ?? 'pre-flight check failed';
-                console.log(`[loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(perr).slice(0, 300)}`);
-                console.log(`[loop] assembled source:\n${source.slice(0, 600)}`);
+                console.log(`[${ts()}] [loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(perr).slice(0, 300)}`);
+                console.log(`[${ts()}] [loop] assembled source:\n${source.slice(0, 600)}`);
                 fail(`proof composition invalid: ${perr.slice(0, 200)}`, { sourceHead: source.slice(0, 400), preflightError: perr });
             }
             const verification = await this.backend.verifyProof(source, lemmaId);
@@ -468,8 +468,8 @@ export class TacticLoop {
                 // diagnose what the kernel rejected — silent KERNEL_REJECTED is unactionable.
                 const verr = verification.error?.message ?? verification.error ?? 'no kernel message';
                 const srcHead = source.slice(0, 400);
-                console.log(`[loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
-                console.log(`[loop] assembled source head:\n${srcHead}`);
+                console.log(`[${ts()}] [loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
+                console.log(`[${ts()}] [loop] assembled source head:\n${srcHead}`);
                 fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`, {
                     kernelError: String(verr),
                     sourceHead: srcHead
@@ -622,7 +622,7 @@ export class TacticLoop {
         try {
             const response = await this.llm.complete(prompt);
             const llmMs = Date.now() - t0;
-            if (llmMs > 20000) console.log(`[loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
+            if (llmMs > 20000) console.log(`[${ts()}] [loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
             let tactic = response.text?.trim();
             if (tactic) {
                 // Extract the first Lean code-fence block (the LLM sometimes wraps output in
@@ -806,6 +806,14 @@ export class TacticLoop {
 function extractLemmaName(statement) {
     const m = String(statement ?? '').match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/);
     return m ? m[1] : 't';
+}
+
+// Timestamped log prefix — the loop's console.log calls need timestamps so a long run's
+// liveness and timing are inspectable from the log alone.
+export function ts() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // True when the LLM response is a multi-line proof block (not a single tactic).
