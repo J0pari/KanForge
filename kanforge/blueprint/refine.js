@@ -85,12 +85,10 @@ export class BlueprintRefiner {
             const round = await this._attempt(next, working);
             guard++;
             console.log(`[refine] round ${guard}/${this.maxRounds} lemma ${next.id.slice(0, 10)}… proved=${round.proved} resplit=${round.resplit} added=${round.added} error=${round.error ?? '(none)'}`);
-            // The loop's leased session (workerPerProblem) retires the warm worker — re-establish
-            // the warm env so the skeleton re-split's fast chained checks find a live env.
-            if (this.backend.warm && working.lemmas.length > 0) {
-                try { await this.backend.warm(working.lemmas[0].statement, { timeoutMs: 120_000 }); } catch {}
-            }
             rounds.push({ id: next.id, ok: round.proved, resplit: round.resplit, added: round.added, error: round.error ?? null });
+            if (round.hashChainEntry) hashChain.push(round.hashChainEntry);
+            // The warm worker survives the loop's endLemma (leased worker is separate — killed
+            // and replaced by workerPerProblem). No re-warm needed — the warm env is intact.
             const madeProgress = round.proved || working.lemmas.length > before;
             // Checkpoint after every round — progress or not. A stalled lemma (no progress,
             // no new children) must still persist the round history + hash chain, or a crash

@@ -287,6 +287,10 @@ export class BackendRepl {
             onIdle: () => this._wakeWaiters()
         });
         this._workers.push(worker);
+        // The first worker is the warm worker: it holds the warm env for fast chained checks
+        // and never handles leased sessions (extractGoals). Loop workers are spawned
+        // subsequently and handle leased sessions; they're killed after each lemma.
+        if (!this._warmWorker) this._warmWorker = worker;
         // Warm the new worker in the background (also covers retire-replacements). The worker
         // stays busy until its warmup response lands, so _acquire never hands it out cold.
         if (this.warmupStatement) {
@@ -320,6 +324,7 @@ export class BackendRepl {
         if (worker.isAlive()) worker.kill();
         const idx = this._workers.indexOf(worker);
         if (idx !== -1) this._workers.splice(idx, 1);
+        if (this._warmWorker === worker) this._warmWorker = null; // replacement becomes warm
         // Any session on this worker is broken; drop it so the next call fails loudly
         // instead of waiting on a dead process.
         for (const [key, session] of this._sessions) {
@@ -341,9 +346,17 @@ export class BackendRepl {
         waiter.resolve(free);
     }
 
-    _acquire(timeoutMs) {
+    _acquire(timeoutMs, { lease = false } = {}) {
         if (this._draining) return Promise.reject(new Error('backend draining'));
-        const free = this._workers.find(w => !w.busy && w.isAlive());
+        // Role separation (architecture.md §0.3): the warm worker (first spawned) serves
+        // non-leased checks (fast chained env). Leased sessions (extractGoals) prefer other
+        // workers — the leased worker is killed after endLemma, so the warm worker survives.
+        const preferWarm = !lease && this._warmWorker && this._warmWorker.isAlive() && !this._warmWorker.busy;
+        const preferLoop = lease && this._workers.some(w => w !== this._warmWorker && w.isAlive() && !w.busy);
+        let free;
+        if (preferWarm) free = this._warmWorker;
+        else if (preferLoop) free = this._workers.find(w => w !== this._warmWorker && !w.busy && w.isAlive());
+        else free = this._workers.find(w => !w.busy && w.isAlive());
         if (free) {
             free.busy = true;
             return Promise.resolve(free);
@@ -391,7 +404,7 @@ export class BackendRepl {
     }
 
     async _checkOnce(statement, timeoutMs, envId = null) {
-        const worker = await this._acquire();
+        const worker = await this._acquire(timeoutMs, { lease: false });
         try {
             // envId: continue the statement-mode session from a prior env (the repl is stateful:
             // `env: null` rebuilds from scratch; `env: n` continues from environment n). This is
@@ -482,7 +495,7 @@ export class BackendRepl {
     async extractGoals(src, opts = {}) {
         const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
         const key = hashStatement(src);
-        const worker = await this._acquire();
+        const worker = await this._acquire(timeoutMs, { lease: true });
         try {
             const resp = await this._requestOnWorker(worker, { cmd: src, env: null }, { timeoutMs, lease: true });
             const messages = resp?.messages ?? [];
