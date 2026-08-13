@@ -50,10 +50,11 @@ export function tokenize(text) {
             i = j;
             continue;
         }
-        // Identifiers (ASCII letters/_/'/. and unicode letters)
-        if (/[A-Za-z_]/.test(c) || /[\p{L}]/u.test(c)) {
+        // Identifiers (ASCII letters/_/'/. and unicode letters). `?` is accepted so rewrite-rule
+        // patterns can carry hole markers (?x) — it never occurs in kernel goal text.
+        if (/[A-Za-z_?]/.test(c) || /[\p{L}]/u.test(c)) {
             let j = i;
-            while (j < s.length && (/[A-Za-z0-9_.']/.test(s[j]) || /[\p{L}]/u.test(s[j]))) j++;
+            while (j < s.length && (/[A-Za-z0-9_.'?]/.test(s[j]) || /[\p{L}]/u.test(s[j]))) j++;
             let name = s.slice(i, j);
             for (const [u, a] of Object.entries(UNICODE_NAMES)) {
                 if (name === u) { name = a; break; }
