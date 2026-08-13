@@ -1,24 +1,21 @@
-// Search-strategy ablation harness (build_order.md §5.1/§5.2).
-// Runs the smoke set through every tactic/search recipe under a SHARED budget and reports the
-// comparison the phase gates demand: "MCGS ≥ best-of-N at equal budget ... compare, then
-// decide" (§5.1) and "ablations logged with/without each" (§5.2). This is what makes "swiss is
-// the best choice" a measured claim instead of an assumption.
+// Search-strategy ablation harness (build_order.md §5.1/§5.2, §5.8).
+// ORTHOGONAL by design (architecture.md §5.8): this is a measurement tool applied TO the live
+// path, never a parallel implementation of it. Each cell is ONE TacticLoop constructed with a
+// toggle configuration (recipe, repulsion, premises, menu, predictors, exemplars) — the same
+// loop the open-problem pipeline runs — and the report is meta-analysis over the rows: pass
+// rate with Wilson CI, per-cell cost, pairwise deltas, and (for --ablate) main effects +
+// pairwise interactions over the component graph. The report's recommendations update the
+// component registry's defaults (runs/defaults.json), which the live path and the GUI consume.
 //
-// Recipes:
-//   bestofn          naive best-of-N per goal (search/bestofn.js)          — ranking baseline
-//   swiss            Swiss-tournament best-of-N per goal (search/swiss.js) — OPC App. B
-//   swiss+repulsion  swiss whose proposals pass a diversity sampler        — Goedel penalty
-//   bfs              best-first goal selection over the e-graph            — search axis
-//   bfs+repulsion    bfs that refuses duplicate tactic re-checks
-//   mcgs             UCB rollouts over the e-graph                         — search axis
-//   mcgs+repulsion   mcgs that refuses duplicate tactic re-checks
+// Recipes (the recipe dropdown of the registry):
+//   bestofn / swiss / swiss+repulsion        per-goal ranking strategies
+//   bfs / mcgs (+repulsion variants)         whole-graph search strategies
 //
-// Cost model: every LLM call (proposal + swiss judge) and every kernel applyTactic is counted
-// per problem per recipe, so the tables report pass rate AND budget, not pass rate alone.
+// Cost model: the loop counts every LLM call and every kernel applyTactic itself (counting
+// proxies inside the loop for delegated recipes); the shared budget is a hard maxLlmCalls stop.
 //
 // Benchmark discipline (§5.7/§5.8): fixed corpus, cost-normalized per cell, Wilson confidence
 // interval on each pass rate (≥2 problems), and a full provenance block in the report config.
-//
 
 // Wilson score interval on a binomial pass rate (architecture.md §5.7). Returns [low, high] or
 // null when the sample is too small to be meaningful (< 2 problems).
@@ -44,35 +41,22 @@ export function wilsonInterval(solved, total, z = 1.96) {
 // (--set=step) is the multi-step goal-directed tier (build_order.md §5.4; bench/stepSmoke.js):
 // 2-4 tactic chains with no trivial closer, verified by bench/verifyStepSet.js against the real
 // kernel before any run.
-//
-// Premise-retrieval axis (§5.2): with --premises=on the proposal prompts are routed through a
-// PremiseAugmentingLLM that retrieves top-k premises from the curated corpus (bench/premisesCorpus.js)
-// and injects them as "Premises (theorems you may use)". --premise-locked=on restricts the
-// generator to those premises. The `no-mul-add` corpus is the lock-enforcement control: locked
-// mode must fail on mul_add_distr even though the model knows Nat.mul_add from training.
 
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { GoalEGraph, lexicalNormalize } from '../core/egraph.js';
-import { bestOfN } from '../search/bestofn.js';
-import { bestOfNWithSwiss, swissRank, buildPairwiseJudge } from '../search/swiss.js';
-import { RepulsionSampler } from '../search/repulsion.js';
-import { BestFirstSearch } from '../search/bfs.js';
-import { MCGS } from '../search/mcgs.js';
+import { TacticLoop } from '../agent/loop.js';
 import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
 import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
 import { STEP_PROBLEMS } from './stepSmoke.js';
-import { PremiseRetriever, PremiseAugmentingLLM } from '../search/premises.js';
+import { PremiseRetriever } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
-import { TacticMenuAugmentingLLM } from '../search/tacticMenu.js';
-import { formatGoalPrompt } from '../agent/prompts.js';
-import { tacticHead, compilePredictors } from '../optimization/causal.js';
+import { compilePredictors } from '../optimization/causal.js';
 import { auditAblationReport } from './reportAudit.js';
+import { saveRecommendedDefaults, loadRecommendedDefaults } from '../config/registry.js';
 
 export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
-export const RANKING_RECIPES = ['bestofn', 'swiss', 'swiss+repulsion'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,177 +64,69 @@ function sha256(text) {
     return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-// Counting adapters: wrap the real clients so every strategy's true cost is observable without
-// changing how the strategies call the interface.
-function countingLLM(llm) {
-    const counted = { ...llm };
-    counted.llmCalls = 0;
-    const complete = llm.complete.bind(llm);
-    counted.complete = async (...args) => {
-        counted.llmCalls++;
-        return complete(...args);
-    };
-    return counted;
-}
-
-function countingBackend(backend) {
-    const counted = { ...backend };
-    counted.tacticCalls = 0;
-    const applyTactic = backend.applyTactic.bind(backend);
-    const extractGoals = backend.extractGoals.bind(backend);
-    counted.applyTactic = async (goal, tactic) => {
-        counted.tacticCalls++;
-        return applyTactic(goal, tactic);
-    };
-    counted.extractGoals = async (statement) => extractGoals(statement);
-    return counted;
-}
-
-function openRootEGraph(rootGoals) {
-    const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
-    egraph.addGoal(rootGoals[0]);
-    egraph.setRoot(rootGoals[0]);
-    return egraph;
-}
-
-// Repulsion-flavoured swiss: candidates are drawn through a RepulsionSampler seeded with every
-// tactic already tried (and failed) anywhere in the lemma, then ranked and applied exactly as
-// bestOfNWithSwiss does.
-async function pickSwissWithRepulsion(goal, backend, llm, sampler, tried, N, predictors = null) {
-    const candidates = [];
-    const seen = new Set();
-    for (let i = 0; i < N; i++) {
-        const t = await sampler.propose(`${formatGoalPrompt(goal)}\n\nPropose tactic:`, { tried: [...tried] });
-        if (t && !seen.has(t)) {
-            seen.add(t);
-            candidates.push(t);
-        }
-    }
-    if (candidates.length === 0) return { ok: false };
-    const judge = buildPairwiseJudge(goal, { llm });
-    const ranking = await swissRank(candidates, judge);
-    let skipped = 0;
-    const history = [];
-    for (const { candidate } of ranking) {
-        if (predictors?.rejects(tacticHead(candidate), history)) {
-            skipped++;
-            continue;
-        }
-        history.push(tacticHead(candidate));
-        const result = await backend.applyTactic(goal, candidate);
-        if (result.status === 'ok') return { ok: true, tactic: candidate, result, skipped };
-    }
-    return { ok: false, tactic: candidates[0], skipped };
-}
-
-// Drive one lemma with a per-goal ranking strategy, mirroring TacticLoop's frontier-order
-// discipline (open goal 0, currentGoal freshest instance) but isolating the strategy and
-// counting its true cost.
-async function driveLemmaByRanking({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null }) {
-    const countedLLM = countingLLM(llm);
-    const countedBackend = countingBackend(backend);
-    const sampler = recipe === 'swiss+repulsion' ? new RepulsionSampler({ llm: countedLLM }) : null;
-    const tried = new Set();
-
-    const rootGoals = await countedBackend.extractGoals(statement);
-    if (!rootGoals?.length) {
-        return { solved: false, error: 'no root goal', llmCalls: 0, tacticCalls: 0, ms: 0 };
-    }
-    const egraph = openRootEGraph(rootGoals);
-    const sessionKey = rootGoals[0].sessionKey;
-
-    const t0 = Date.now();
-    let goalCount = 0;
-    let skipped = 0;
-    while (!egraph.isRootSolved() && goalCount < 100) {
-        if (countedLLM.llmCalls >= maxLlmCalls) break;
-        const open = egraph.getOpenGoals();
-        if (open.length === 0) break;
-        const goalClass = open[0];
-        const goal = egraph.currentGoal(goalClass.id);
-        goalCount++;
-
-        let pick;
-        if (recipe === 'bestofn') {
-            pick = await bestOfN(goal, countedBackend, countedLLM, N, predictors);
-        } else if (recipe === 'swiss') {
-            pick = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors });
-        } else {
-            pick = await pickSwissWithRepulsion(goal, countedBackend, countedLLM, sampler, tried, N, predictors);
-        }
-        skipped += pick.skipped ?? 0;
-
-        if (pick.ok) {
-            egraph.applyTactic(goalClass.id, pick.tactic, pick.result.newGoals);
-        } else {
-            egraph.markFailed(goalClass.id);
-            if (pick.tactic) tried.add(pick.tactic);
-        }
-    }
-
-    backend.endLemma(sessionKey);
-
-    return {
-        solved: egraph.isRootSolved(),
-        error: egraph.isRootSolved() ? null : 'budget exhausted or frontier stuck',
-        llmCalls: countedLLM.llmCalls,
-        tacticCalls: countedBackend.tacticCalls,
-        skipped,
-        ms: Date.now() - t0
-    };
-}
-
-// Drive one lemma with a search-level strategy (bfs / mcgs), which owns goal selection AND
-// per-goal proposals over the e-graph. The rollout/expansion budget approximates the shared
-// llm-call budget so recipes stay comparable.
-async function driveLemmaBySearch({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null }) {
-    const countedLLM = countingLLM(llm);
-    const countedBackend = countingBackend(backend);
+// Recipe name → TacticLoop options (the recipe dropdown maps 1:1 onto the loop's searchRecipe
+// toggle + repulsion flag — no reimplementation of any strategy lives here).
+function recipeOptions(recipe, N, maxLlmCalls) {
+    const searchRecipe = recipe.startsWith('mcgs') ? 'mcgs'
+        : recipe.startsWith('bfs') ? 'bfs'
+        : recipe.startsWith('swiss') ? 'swiss'
+        : 'bestofn';
     const repulsion = recipe.endsWith('repulsion');
-
-    const rootGoals = await countedBackend.extractGoals(statement);
-    if (!rootGoals?.length) {
-        return { solved: false, error: 'no root goal', llmCalls: 0, tacticCalls: 0, ms: 0 };
-    }
-    const egraph = openRootEGraph(rootGoals);
-    const sessionKey = rootGoals[0].sessionKey;
-
-    const t0 = Date.now();
-    const approxBudget = Math.max(1, Math.floor(maxLlmCalls / Math.max(1, N)));
-    let skipped = 0;
-    if (recipe.startsWith('mcgs')) {
-        const searcher = new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion, predictors });
-        await searcher.search(egraph, { rollouts: approxBudget });
-        skipped = searcher.skipped;
-    } else {
-        const searcher = new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: N, repulsion, predictors });
-        await searcher.search(egraph, { maxExpansions: approxBudget });
-        skipped = searcher.skipped;
-    }
-
-    backend.endLemma(sessionKey);
-
     return {
-        solved: egraph.isRootSolved(),
-        error: egraph.isRootSolved() ? null : 'budget exhausted or frontier stuck',
-        llmCalls: countedLLM.llmCalls,
-        tacticCalls: countedBackend.tacticCalls,
-        skipped,
+        searchRecipe,
+        repulsion,
+        swissN: N,
+        maxTacticsPerGoal: N,
+        maxGoalsPerLemma: Math.max(1, Math.floor(maxLlmCalls / Math.max(1, N))),
+        maxLlmCalls
+    };
+}
+
+// Drive ONE (recipe, problem) cell: a real TacticLoop with the cell's toggle configuration.
+// The loop counts its own cost (llmCalls / tacticCalls / predictorSkips) — the row is read
+// straight from the loop, never recomputed by a parallel driver. `overrides` carries the
+// component toggles the graph node configured (menu/exemplars/ttrl/monitor/repair/repulsion).
+async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null, premiseConfig = null, overrides = {} }) {
+    const loop = new TacticLoop({
+        backend,
+        llm,
+        ...recipeOptions(recipe, N, maxLlmCalls),
+        predictors,
+        premises: premiseConfig ? premiseConfig.retriever.corpus : null,
+        premiseLocked: premiseConfig?.locked ?? false,
+        premiseTopK: premiseConfig?.topK ?? 5,
+        menu: overrides.menu ?? false,
+        exemplars: overrides.exemplars ?? false,
+        ttrl: overrides.ttrl ?? false,
+        monitor: overrides.monitor ?? false,
+        repair: overrides.repair ?? true,
+        writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
+        onEvent: () => {}
+    });
+    loop.addLemma(statement);
+    const t0 = Date.now();
+    const outcome = await loop.proveAll();
+    const failed = [...outcome.failures.values()][0];
+    return {
+        solved: outcome.ok,
+        error: outcome.ok ? null : (failed?.message ?? 'loop failed'),
+        llmCalls: loop.llmCalls,
+        tacticCalls: loop.tacticCalls,
+        skipped: loop.predictorSkips,
         ms: Date.now() - t0
     };
 }
 
-export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null } = {}) {
+export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, recipes = RECIPES, N = 8, maxLlmCalls = 400, outDir = null, onRow = null, premises = null, overrides = {}, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null } = {}) {
     if (!backend || !llm) throw new Error('runAblation requires a backend and an llm');
     validateSmokeSet(problems);
     for (const r of recipes) {
         if (!RECIPES.includes(r)) throw new Error(`unknown recipe: ${r}; known recipes: ${RECIPES.join(', ')}`);
     }
 
-    // Premise-retrieval axis (§5.2): wrap the llm so proposal prompts are augmented with
-    // retrieved premises before the strategy sees the response. Judge prompts (swiss) pass
-    // through untouched. The wrapper sits OUTSIDE the drivers' countingLLM, so llmCalls still
-    // counts every real LLM round-trip.
+    // Premise-retrieval axis (§5.2): premiseConfig { retriever, locked, topK, corpusName } is
+    // passed as LOOP OPTIONS (the loop's native retriever) — no prompt-wrapper chain lives in
+    // this harness; the loop is the live path being measured.
     const premiseConfig = premises
         ? { retriever: premises.retriever ?? new PremiseRetriever(premises.corpus ?? []), locked: !!premises.locked, topK: premises.topK ?? 5, corpusName: premises.corpusName ?? null }
         : null;
@@ -258,29 +134,19 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
     const rows = [];
     try {
         for (const recipe of recipes) {
-            const driver = RANKING_RECIPES.includes(recipe) ? driveLemmaByRanking : driveLemmaBySearch;
             for (const p of problems) {
                 const t0 = Date.now();
                 let outcome;
                 try {
-                    // Per-row llm chain: premises OUTERMOST (rebuilds the prompt wholesale),
-                    // menu INNERMOST (appends in place after the premise rebuild), so the two
-                    // augmentation axes compose. The menu is keyed on the current statement's
-                    // imports, so it is rebuilt per problem.
-                    let rowLLM = llm;
-                    if (menu) rowLLM = new TacticMenuAugmentingLLM(rowLLM, { statement: p.statement });
-                    if (premiseConfig) rowLLM = new PremiseAugmentingLLM(rowLLM, premiseConfig.retriever, { premiseLocked: premiseConfig.locked, premiseTopK: premiseConfig.topK });
                     outcome = await withTimeout(
-                        driver({ backend, llm: rowLLM, statement: p.statement, recipe, N, maxLlmCalls, predictors }),
+                        driveCell({ backend, llm, statement: p.statement, recipe, N, maxLlmCalls, predictors, premiseConfig, overrides }),
                         rowTimeoutMs,
                         `${recipe}/${p.id}`
                     );
                 } catch (err) {
                     // A single row must never kill the run: a repl/LLM hiccup on one problem is
-                    // recorded as a failed row and the comparison continues (observed: a repl
-                    // session timeout at row 32/35 crashed the whole ablation, and a wedged
-                    // repl can HANG a row past its timeout, which a bare await would let freeze
-                    // the entire run).
+                    // recorded as a failed row and the comparison continues (a wedged repl can
+                    // HANG a row past its timeout, which a bare await would let freeze the run).
                     outcome = { solved: false, error: `driver crashed: ${err?.message ?? err}`, llmCalls: 0, tacticCalls: 0, ms: Date.now() - t0 };
                 }
                 const row = { recipe, id: p.id, tier: p.tier, ...outcome };
@@ -290,10 +156,10 @@ export async function runAblation({ backend, llm, problems = SMOKE_PROBLEMS, rec
         }
     } finally {
         // Write whatever we have even on an early exit, so a crash never discards the run.
-        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance, provenance }));
+        if (outDir) writeReport(outDir, summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, overrides, rowTimeoutMs, predictors, predictorsProvenance, provenance }));
     }
 
-    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, menu, rowTimeoutMs, predictors, predictorsProvenance, provenance });
+    const report = summarize(rows, { recipes, problems, N, maxLlmCalls, premises: premiseConfig, overrides, rowTimeoutMs, predictors, predictorsProvenance, provenance });
     return report;
 }
 
@@ -334,7 +200,7 @@ function appendRow(outDir, row) {
     }
 }
 
-function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, menu = false, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
+function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, overrides = {}, rowTimeoutMs = 300_000, predictors = null, predictorsProvenance = null, provenance = null }) {    const byRecipe = Object.fromEntries(recipes.map(r => [r, {
         recipe: r,
         solved: 0,
         total: problems.length,
@@ -369,7 +235,7 @@ function summarize(rows, { recipes, problems, N, maxLlmCalls, premises = null, m
     });
     const report = {
         generatedAt: new Date().toISOString(),
-        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, menu, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsInert: predictors?.inert ?? null, predictorsProvenance, provenance },
+        config: { recipes, N, maxLlmCalls, problemCount: problems.length, premises, overrides, rowTimeoutMs, predictors: predictors?.count ?? null, predictorsInert: predictors?.inert ?? null, predictorsProvenance, provenance },
         perRecipe: recipes.map(r => {
             const { problems: _p, ...s } = byRecipe[r];
             return s;
@@ -420,7 +286,8 @@ export function renderMarkdown(report) {
     } else {
         lines.push('- Premises: off');
     }
-    lines.push(`- Tactic menu: ${config.menu ? 'on (import-verified)' : 'off'}`);
+    const ov = config.overrides ?? {};
+    lines.push(`- Components: ${Object.entries(ov).map(([k, v]) => `${k}=${v}`).join(' ') || '(registry defaults)'}`);
     if (config.predictors) lines.push(`- Failure predictors: ${config.predictors} active`);
     lines.push('');
     lines.push('## Pass rate vs. budget');
@@ -617,7 +484,7 @@ async function main() {
                 console.log(`\n[ablate] config ${node.mask} ...`);
                 const report = await runAblation({
                     backend: pool, llm, problems, recipes: node.recipes, N, maxLlmCalls, outDir: nodeOut,
-                    premises: node.premises, menu: node.menu, rowTimeoutMs, predictors: node.predictors, predictorsProvenance,
+                    premises: node.premises, overrides: node.overrides, rowTimeoutMs, predictors: node.predictors, predictorsProvenance,
                     provenance: { ...provenance, componentMask: node.mask },
                     onRow: (row) => {
                         const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}${row.skipped ? ` skipped=${row.skipped}` : ''}`;
@@ -630,11 +497,20 @@ async function main() {
             const graphSummary = summarizeAblationGraph(results, problems, { premiseConfig, predictors });
             writeReport(outDir, graphSummary);
             console.log(renderMarkdown(graphSummary));
+
+            // Evidence → recommended defaults (registry output surface): measured main effects
+            // update runs/defaults.json, which the live path and the GUI consume.
+            const recs = recommendFromGraph(graphSummary);
+            if (Object.keys(recs).length) {
+                const defaultsFile = path.join(__dirname, '..', 'runs', 'defaults.json');
+                saveRecommendedDefaults(defaultsFile, recs, { provenance: { ...provenance, kind: 'ablation-graph' } });
+                console.log(`[ablate] recommended defaults written -> ${defaultsFile}: ${JSON.stringify(recs)}`);
+            }
             return;
         }
 
         const report = await runAblation({
-            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, menu: menuEnabled, rowTimeoutMs, predictors, predictorsProvenance, provenance,
+            backend: pool, llm, problems, recipes, N, maxLlmCalls, outDir, premises: premiseConfig, overrides: { menu: menuEnabled }, rowTimeoutMs, predictors, predictorsProvenance, provenance,
             onRow: (row) => {
                 const line = `${row.recipe} ${row.id} ${row.solved ? 'SOLVED' : 'FAILED'} llm=${row.llmCalls} kernel=${row.tacticCalls} ms=${row.ms}${row.skipped ? ` skipped=${row.skipped}` : ''}`;
                 console.log(`[ablation] ${line}`);
@@ -643,26 +519,62 @@ async function main() {
         });
         console.log(`\nAblation complete: ${recipes.length} recipes x ${problems.length} problems -> ${outDir}`);
         console.log(renderMarkdown(report));
+
+        // Recipe recommendation: the cheapest recipe among those solving ≥ the best-rate-minus-
+        // margin; written to defaults.json alongside any component recommendations.
+        const recipeRec = recommendRecipe(report);
+        if (recipeRec) {
+            const defaultsFile = path.join(__dirname, '..', 'runs', 'defaults.json');
+            const existing = loadRecommendedDefaults(defaultsFile)?.recommendations ?? {};
+            saveRecommendedDefaults(defaultsFile, { ...existing, recipe: recipeRec }, { provenance: { ...provenance, kind: 'ablation-recipe' } });
+            console.log(`[ablation] recommended recipe: ${recipeRec} -> ${defaultsFile}`);
+        }
     } finally {
         await pool.shutdown(3000);
     }
+}
+
+// Measured main effects → toggle recommendations (registry output surface). A component's
+// recommendation flips only when its main effect exceeds the decision threshold; effects near
+// zero leave the recommendation unset (evidence is inconclusive, not a reason to toggle).
+const DECISION_THRESHOLD = 0.05; // <5pp pass-rate change is not actionable
+
+export function recommendFromGraph(summary) {
+    const recs = {};
+    for (const [name, effect] of Object.entries(summary.mainEffects ?? {})) {
+        if (effect === null) continue;
+        if (effect > DECISION_THRESHOLD) recs[name] = true;
+        else if (effect < -DECISION_THRESHOLD) recs[name] = false;
+    }
+    if (summary.mainEffects?.search != null) {
+        // the search axis maps to the recipe dropdown: a positive effect recommends a search
+        // recipe (mcgs), a negative one recommends the per-goal default (loop).
+        recs.recipe = summary.mainEffects.search > DECISION_THRESHOLD ? 'mcgs' : 'loop';
+    }
+    return recs;
+}
+
+export function recommendRecipe(report) {
+    const rows = (report?.perRecipe ?? []).filter(r => r.passRate > 0);
+    if (!rows.length) return null;
+    rows.sort((a, b) => b.passRate - a.passRate
+        || (a.meanLlmCallsPerSolved ?? Infinity) - (b.meanLlmCallsPerSolved ?? Infinity));
+    return rows[0].recipe;
 }
 
 // Ablation graph (§5.7/§5.8): the full factorial over the named component toggles. Each node is
 // a full configuration (a subset of the toggles); edges connect configurations differing in one
 // toggle. The summary reports per-node pass rate (with CI) and per-component MAIN EFFECTS +
 // PAIRWISE INTERACTIONS — the interaction terms are the additivity/commutativity test, because no
-// fixed rung order presumes them.
+// fixed rung order presumes them. Component names come from the registry toggles
+// (config/registry.js) plus the `search` axis (recipe: bestofn vs mcgs).
 //
 // Recognized component names (others are rejected loudly):
-//   menu       — tactic menu on/off (requires nothing extra)
-//   premises   — premise retrieval on/off (requires --premises=on for the 'on' nodes)
-//   predictors — causal failure predictors on/off (requires --predictors=... for the 'on' nodes)
-//   repulsion  — Goedel diversity penalty (applies to search recipes only)
-// A node's recipe is bestofn unless a search axis is requested; `search` toggles the axis
-// between bestofn and mcgs. The base node (all toggles off) is always included.
+//   tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search
+// 'on' nodes that need external config (premises corpus, predictor file) are skipped when that
+// config is absent. The base node (all toggles off) is always included.
 export function buildAblationGraph(comps, { premiseConfig = null, predictors = null } = {}) {
-    const known = ['menu', 'premises', 'predictors', 'repulsion', 'search'];
+    const known = ['tacticMenu', 'premises', 'predictors', 'repulsion', 'exemplars', 'ttrl', 'monitor', 'repair', 'search'];
     const unknown = comps.filter(c => !known.includes(c));
     if (unknown.length) {
         throw new Error(`unknown ablation component(s): ${unknown.join(', ')}; known: ${known.join(', ')}`);
@@ -682,7 +594,13 @@ export function buildAblationGraph(comps, { premiseConfig = null, predictors = n
             mask: maskStr,
             components,
             recipes: [recipeName],
-            menu: !!components.menu,
+            overrides: {
+                menu: !!components.tacticMenu,
+                exemplars: !!components.exemplars,
+                ttrl: !!components.ttrl,
+                monitor: !!components.monitor,
+                repair: !!components.repair
+            },
             premises: components.premises ? premiseConfig : null,
             predictors: components.predictors ? predictors : null
         });

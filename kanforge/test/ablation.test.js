@@ -46,7 +46,9 @@ function mentionsGoalType(text, type) {
     return text.includes(`Goal: ${type}`) || text.includes(`Goal:\n  ${type}`) || text.includes(`Goal:  ${type}`);
 }
 
-// Deterministic backend: a rule table of { type, accept, subgoals } per goal type.
+// Deterministic backend: a rule table of { type, accept, subgoals } per goal type. Implements
+// the FULL backend interface — the ablation drives the real TacticLoop, whose commit gate needs
+// check / verifyProof / pin on top of the tactic surface.
 class ScriptedBackend {
     constructor(roots, rules) {
         this.roots = roots;
@@ -73,6 +75,18 @@ class ScriptedBackend {
             return { status: 'ok', newGoals: subgoals };
         }
         return { status: 'error', newGoals: [], error: { message: `rejected: ${tactic}` } };
+    }
+
+    async check(statement, _opts) {
+        return { status: 'verified', goals: [] };
+    }
+
+    async verifyProof(src, key) {
+        return { status: 'verified' };
+    }
+
+    pin() {
+        return { toolchain: 'mock', normVersion: 1 };
     }
 }
 
@@ -249,17 +263,17 @@ test('runAblation rejects an unknown recipe', async () => {
 test('runAblation releases every proof session after each problem (no worker leak)', async () => {
     const { backend, llm } = makeWorld();
     const report = await runAblation({ backend, llm, problems: PROBLEMS, recipes: ['bestofn', 'swiss', 'mcgs'], N: 4, maxLlmCalls: 100 });
-    // Every problem (per recipe) opened a session and must have released it.
+    // One TacticLoop per (recipe, problem) cell, each releasing its session once. The loop
+    // keys endLemma by lemmaId (statement hash), so 9 releases across 3 distinct lemmas.
     assert.strictEqual(backend.endLemmaCalls.length, 3 * PROBLEMS.length);
-    const keys = backend.endLemmaCalls;
-    assert.strictEqual(new Set(keys).size, keys.length, 'each session key released exactly once');
+    assert.strictEqual(new Set(backend.endLemmaCalls).size, PROBLEMS.length, 'one distinct lemma per problem');
     for (const d of report.detail) {
         if (d.id === 'p_open') assert.strictEqual(d.solved, false);
         else assert.strictEqual(d.solved, true, `${d.recipe}/${d.id} should solve in the mock world`);
     }
 });
 
-test('runAblation survives a driver crash on one problem and still reports all rows', async () => {
+test('runAblation survives a crash on one problem and still reports all rows', async () => {
     const { backend, llm } = makeWorld();
     // Object.create keeps the prototype methods (extractGoals/endLemma) while overriding
     // applyTactic to throw for one goal type — a `{ ...backend }` spread would lose them.
@@ -272,23 +286,23 @@ test('runAblation survives a driver crash on one problem and still reports all r
     assert.strictEqual(report.detail.length, 2 * PROBLEMS.length, 'every row present despite the crash');
     const conj = report.detail.filter(d => d.id === 'p_conj');
     assert.ok(conj.every(d => d.solved === false), 'crashed problem recorded as failed');
-    assert.ok(conj.every(d => /driver crashed/.test(d.error ?? '')));
+    assert.ok(conj.every(d => d.error), 'the failure carries the loop error');
     const lt = report.detail.find(d => d.id === 'p_lt' && d.recipe === 'mcgs');
     assert.strictEqual(lt.solved, true, 'sibling problems still solve after the crash row');
 });
 
-test('runAblation plumbs menu and premises configs into the report', async () => {
+test('runAblation plumbs component overrides into the report', async () => {
     const { backend, llm } = makeWorld();
     const report = await runAblation({
         backend, llm, problems: PROBLEMS, recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 100,
-        menu: true,
+        overrides: { menu: true },
         premises: { retriever: new (await import('../search/premises.js')).PremiseRetriever([]), locked: true, topK: 5, corpusName: 'test' }
     });
-    assert.strictEqual(report.config.menu, true);
+    assert.strictEqual(report.config.overrides.menu, true);
     assert.strictEqual(report.config.premises.locked, true);
     assert.strictEqual(report.config.premises.corpusName, 'test');
     assert.strictEqual(report.detail.length, 2 * PROBLEMS.length);
-    assert.strictEqual(report.perRecipe.find(r => r.recipe === 'bestofn').solved, 2, 'wrappers must not break the mock solve');
+    assert.strictEqual(report.perRecipe.find(r => r.recipe === 'bestofn').solved, 2, 'overrides must not break the mock solve');
 });
 
 test('runAblation row timeout prevents a wedged repl from hanging the run', async () => {
@@ -356,17 +370,17 @@ test('wilsonInterval returns null for fewer than 2 problems and a sane interval 
 });
 
 test('ablation graph enumerates the full factorial and computes main effects + interactions', () => {
-    // Build the graph over menu+premises (no external config needed for the 'on' nodes when the
-    // graph builder is given a premiseConfig). Verify: 2^2 = 4 nodes, base mask '00' first.
+    // Build the graph over tacticMenu+premises (no external config needed for the 'on' nodes
+    // when the graph builder is given a premiseConfig). Verify: 2^2 = 4 nodes, base mask '00'.
     const premiseConfig = { retriever: null, locked: false, topK: 5, corpusName: 'test' };
-    const nodes = buildAblationGraph(['menu', 'premises'], { premiseConfig });
+    const nodes = buildAblationGraph(['tacticMenu', 'premises'], { premiseConfig });
     assert.strictEqual(nodes.length, 4);
-    assert.deepStrictEqual(nodes[0].components, { menu: false, premises: false });
+    assert.deepStrictEqual(nodes[0].components, { tacticMenu: false, premises: false });
     assert.strictEqual(nodes[0].mask, '00');
     assert.strictEqual(nodes[3].mask, '11');
 
-    // Simulate per-node results with a measurable interaction: menu helps only when premises are
-    // on (pass rates: 00=0.2, 10=0.2, 01=0.4, 11=0.8).
+    // Simulate per-node results with a measurable interaction: tacticMenu helps only when
+    // premises are on (pass rates: 00=0.2, 10=0.2, 01=0.4, 11=0.8).
     const rates = { '00': 0.2, '10': 0.2, '01': 0.4, '11': 0.8 };
     const results = nodes.map(n => ({
         mask: n.mask,
@@ -385,15 +399,15 @@ test('ablation graph enumerates the full factorial and computes main effects + i
     const summary = summarizeAblationGraph(results, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }]);
     assert.strictEqual(summary.config.kind, 'ablation-graph');
     assert.strictEqual(summary.nodes.length, 4);
-    // menu main effect = (0.2+0.8)/2 - (0.2+0.4)/2 = 0.2
-    assert.ok(Math.abs(summary.mainEffects.menu - 0.2) < 1e-9);
+    // tacticMenu main effect = (0.2+0.8)/2 - (0.2+0.4)/2 = 0.2
+    assert.ok(Math.abs(summary.mainEffects.tacticMenu - 0.2) < 1e-9);
     // premises main effect = (0.4+0.8)/2 - (0.2+0.2)/2 = 0.4
     assert.ok(Math.abs(summary.mainEffects.premises - 0.4) < 1e-9);
-    // interaction menu x premises = 0.8 - 0.2 - 0.4 + 0.2 = 0.4 (menu helps only with premises on)
-    assert.ok(Math.abs(summary.interactions['menu x premises'] - 0.4) < 1e-9);
+    // interaction tacticMenu x premises = 0.8 - 0.2 - 0.4 + 0.2 = 0.4
+    assert.ok(Math.abs(summary.interactions['tacticMenu x premises'] - 0.4) < 1e-9);
     assert.strictEqual(summary.audit.allOk, true, JSON.stringify(summary.audit.violations));
 });
 
 test('ablation graph rejects unknown components loudly', () => {
-    assert.throws(() => buildAblationGraph(['menu', 'nonsense'], {}), /unknown ablation component/);
+    assert.throws(() => buildAblationGraph(['tacticMenu', 'nonsense'], {}), /unknown ablation component/);
 });

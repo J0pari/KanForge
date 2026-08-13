@@ -21,6 +21,7 @@ import { writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
 import { compilePredictorsFromDataset } from '../optimization/causal.js';
+import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -169,7 +170,13 @@ async function main() {
     const { createBackend } = await import('../lean/backend.js');
     const { loadLLMConfig, createLLM } = await import('../agent/llm.js');
     const { loadEnv } = await import('../env.js');
+    const { applyRecommendations, loadRecommendedDefaults } = await import('../config/registry.js');
     const ENV = loadEnv();
+
+    // Recommended defaults (registry output surface): the ablation graph writes
+    // runs/defaults.json; the live path consumes it. CLI flags always override.
+    const defaultsFile = path.join(PACKAGE_ROOT, '..', 'runs', 'defaults.json');
+    applyRecommendations(loadRecommendedDefaults(defaultsFile));
 
     const args = process.argv.slice(2);
     const problemId = argValue(args, '--problem=');
@@ -191,8 +198,9 @@ async function main() {
     const theoremFile = argValue(args, '--statement-file=');
     const theorem = theoremFile ? fs.readFileSync(theoremFile, 'utf8').trim() : args.find(a => !a.startsWith('--'));
     if (!theorem) {
-        console.error('usage: node blueprint/run.js --problem=<id> --statement-file=<path> [--fresh] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--recipe=...] [--check-timeout=<ms>] | --list');
+        console.error('usage: node blueprint/run.js --problem=<id> --statement-file=<path> [--fresh] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--recipe=...] [--repulsion] [--menu] [--exemplars] [--ttrl] [--monitor] [--no-repair] [--check-timeout=<ms>] | --list');
         console.error('  --problem: resumes runs/<id>/checkpoint.json when it exists (never overwrites); --fresh starts over by archiving the old dir.');
+        console.error('  component toggles default to the registry recommendations in runs/defaults.json (ablation output); flags override.');
         process.exit(2);
     }
     const outDir = argValue(args, '--out-dir=') ?? (problemId ? path.join(PACKAGE_ROOT, '..', 'runs', problemId) : null);
@@ -204,13 +212,18 @@ async function main() {
         }
     }
     const maxRounds = Number(argValue(args, '--max-rounds=') ?? 200);
-    const maxTactics = Number(argValue(args, '--max-tactics=') ?? 8);
-    const maxGoals = Number(argValue(args, '--max-goals=') ?? 100);
+    const maxTactics = Number(argValue(args, '--max-tactics=') ?? Number(reg.effectiveValue('maxTacticsPerGoal')));
+    const maxGoals = Number(argValue(args, '--max-goals=') ?? Number(reg.effectiveValue('maxGoalsPerLemma')));
     const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
-    const recipe = argValue(args, '--recipe=') ?? null;
+    const recipe = argValue(args, '--recipe=') ?? reg.effectiveValue('recipe');
     const useSwiss = args.includes('--use-swiss');
     const swissN = Number(argValue(args, '--swiss-n=') ?? 8);
-    const repulsion = args.includes('--repulsion');
+    const repulsion = args.includes('--repulsion') || reg.effectiveValue('repulsion');
+    const menu = args.includes('--menu') || reg.effectiveValue('tacticMenu');
+    const exemplars = args.includes('--exemplars') || reg.effectiveValue('exemplars');
+    const ttrl = args.includes('--ttrl') || reg.effectiveValue('ttrl');
+    const monitor = args.includes('--monitor') || reg.effectiveValue('monitor');
+    const repair = !args.includes('--no-repair') && reg.effectiveValue('repair');
     // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
     // chain); 60s is a warm-worker budget only. Default 240s covers the cold case with margin.
     const checkTimeoutMs = Number(argValue(args, '--check-timeout=') ?? 240_000);
@@ -263,7 +276,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair },
             maxRounds,
             provenance
         });

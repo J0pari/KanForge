@@ -40,6 +40,7 @@ import { bestOfN } from '../search/bestofn.js';
 import { BestFirstSearch } from '../search/bfs.js';
 import { MCGS } from '../search/mcgs.js';
 import { RepulsionSampler } from '../search/repulsion.js';
+import { TacticMenuAugmentingLLM, splicePrompt } from '../search/tacticMenu.js';
 import { tacticHead } from '../optimization/causal.js';
 import { analyzePatterns } from '../optimization/patterns.js';
 import { exportTelemetry } from '../optimization/exporter.js';
@@ -55,7 +56,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -82,6 +83,13 @@ export class TacticLoop {
         this.grpoHarness = this.grpo ? new GRPOHarness() : null;
         this.lemmaStore = lemmaStore ?? null;
         this.dataset = dataset ?? null;
+        this.menu = menu === true;
+        this.exemplars = exemplars === true;
+        this.exemplarLimit = exemplarLimit;
+        this.maxLlmCalls = maxLlmCalls ?? null; // hard LLM-call budget per lemma (ablation cost-normalization)
+        this.writeAuditPacks = writeAuditPacks !== false; // digest/artifacts are the record for driven runs
+        this.repair = repair !== false; // error-driven repair toggle (registry component)
+        this.predictorSkips = 0; // kernel-budget saved by the predictor pre-filter (per lemma, summed)
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -153,6 +161,10 @@ export class TacticLoop {
         try {
             // Level 2: Goal e-graph. extractGoals opens the backend proof session.
             const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
+            // Per-lemma proposal LLM: the tactic menu wraps the raw llm with this lemma's
+            // statement (import-verified capability menu). Repairs and the lemma-level repair
+            // use the same wrapped client, so all proposal prompts get the same capability info.
+            const proposalLLM = this.menu ? new TacticMenuAugmentingLLM(this.llm, { statement }) : this.llm;
             let rootGoals;
             try {
                 rootGoals = await this.backend.extractGoals(statement);
@@ -197,7 +209,7 @@ export class TacticLoop {
                 // owns goal selection AND proposals over the e-graph; the loop keeps the commit
                 // gate below. Cost is counted via counting proxies so the loop's llmCalls and
                 // tacticCalls stay honest for metrics/audit.
-                const countedLLM = this._countingLLM(this.llm);
+                const countedLLM = this._countingLLM(proposalLLM);
                 const countedBackend = this._countingBackend(this.backend);
                 const searcher = this.searchRecipe === 'mcgs'
                     ? new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
@@ -207,6 +219,7 @@ export class TacticLoop {
                 goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
                 this.llmCalls += countedLLM.llmCalls;
                 this.tacticCalls += countedBackend.tacticCalls;
+                this.predictorSkips += searcher.skipped ?? 0;
                 this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: egraph.isRootSolved(), llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
                 if (!egraph.isRootSolved()) {
                     fail(`search recipe ${this.searchRecipe} exhausted budget ${this.maxGoalsPerLemma} without solving`);
@@ -216,6 +229,10 @@ export class TacticLoop {
                 goalCount = 1;
                 while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
                     if (signal?.aborted) break;
+                    if (this.maxLlmCalls && this.llmCalls >= this.maxLlmCalls) {
+                        this._emit({ type: 'budget_exhausted', lemmaId, budget: this.maxLlmCalls, llmCalls: this.llmCalls }, lemmaId);
+                        break;
+                    }
 
                     // Frontier order: the first open class is the head goal of the current
                     // proof state; its freshest concrete goal carries the live proofState.
@@ -251,7 +268,7 @@ export class TacticLoop {
                             const stored = this.lemmaStore?.findByGoal(goal.type);
                             const proposed = stored
                                 ? { tactic: `exact ${extractLemmaName(stored.statement)}`, llmMs: 0, promptTokens: 0, completionTokens: 0 }
-                                : (this.llmCalls++, await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id));
+                                : (this.llmCalls++, await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id, proposalLLM, predictorHistory));
                             const tactic = proposed?.tactic;
                             if (!tactic) {
                                 this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
@@ -266,6 +283,7 @@ export class TacticLoop {
                             // the expensive call — zero kernel spend on a predicted failure.
                             const head = tacticHead(tactic);
                             if (this.predictors?.rejects(head, predictorHistory)) {
+                                this.predictorSkips++;
                                 this._emit({ type: 'tactic_predicted_failure', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, head }, lemmaId);
                                 continue;
                             }
@@ -299,9 +317,10 @@ export class TacticLoop {
                         }
                     } else {
                         // Per-goal delegated recipes: bestofn / swiss / swiss+repulsion
-                        const pick = await this._pickByRecipe(goal, lemmaId, currentGoalClass.id, triedTactics);
+                        const pick = await this._pickByRecipe(goal, lemmaId, currentGoalClass.id, triedTactics, proposalLLM);
                         this.llmCalls += pick.llmCalls ?? 0;
                         this.tacticCalls += pick.tacticCalls ?? 0;
+                        this.predictorSkips += pick.skipped ?? 0;
 
                         if (pick.ok) {
                             const dpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: pick.tactic, scope: 'goal', meta: { via: pick.via, newGoals: pick.result.newGoals } });
@@ -321,14 +340,14 @@ export class TacticLoop {
                         }
                     }
 
-                    if (!solved) {
+                    if (!solved && this.repair) {
                         // P3.1: Attempt repair before giving up
                         const lastError = lastResult?.error?.message ?? 'unknown error';
                         const errorType = classifyError(lastError);
                         this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
 
                         const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
-                        const repaired = await this._proposeTacticFromPrompt(repairPrompt);
+                        const repaired = await this._proposeTacticFromPrompt(repairPrompt, proposalLLM);
                         const repairedTactic = repaired?.tactic;
 
                         if (repairedTactic) {
@@ -393,9 +412,9 @@ export class TacticLoop {
             // All per-goal attempts exhausted without solving the root. Try one lemma-level
             // repair: ask the LLM for a complete proof of the full statement. If the kernel
             // accepts a multi-line proof, skip the rest of the commit path and mark solved.
-            if (!egraph.isRootSolved()) {
+            if (this.repair && !egraph.isRootSolved()) {
                 console.log(`[${ts()}] [loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
-                const resp = await this._proposeTacticFromPrompt(buildLemmarepairPrompt(statement));
+                const resp = await this._proposeTacticFromPrompt(buildLemmarepairPrompt(statement), proposalLLM);
                 const proof = resp?.tactic;
                 if (proof && isMultiLineProof(proof)) {
                     const fullSource = buildProofSource(statement, `by\n${proof}`);
@@ -551,16 +570,16 @@ export class TacticLoop {
         }
     }
 
-    async _proposeTactic(goal, attempt, lemmaId = null, goalClassId = null) {
-        const prompt = this._buildTacticPrompt(goal, attempt, lemmaId, goalClassId);
-        return this._proposeTacticFromPrompt(prompt);
+    async _proposeTactic(goal, attempt, lemmaId = null, goalClassId = null, proposalLLM = null, history = []) {
+        const prompt = this._buildTacticPrompt(goal, attempt, lemmaId, goalClassId, history);
+        return this._proposeTacticFromPrompt(prompt, proposalLLM);
     }
 
     // Per-goal delegated recipes (architecture.md §5): pick a tactic for the current goal via the
     // named strategy, applying candidates through a counting backend. Returns
     // { ok, tactic, result, via, llmCalls, tacticCalls, lastError }.
-    async _pickByRecipe(goal, lemmaId, goalClassId, triedTactics) {
-        const countedLLM = this._countingLLM(this.llm);
+    async _pickByRecipe(goal, lemmaId, goalClassId, triedTactics, proposalLLM = this.llm) {
+        const countedLLM = this._countingLLM(proposalLLM);
         const countedBackend = this._countingBackend(this.backend);
         const N = this.swissN > 1 ? this.swissN : this.maxTacticsPerGoal;
         // Preference-pair hook (§6.2): every judged pair is a preference record — persisted to
@@ -649,10 +668,10 @@ export class TacticLoop {
         return counted;
     }
 
-        async _proposeTacticFromPrompt(prompt) {
+        async _proposeTacticFromPrompt(prompt, llm = this.llm) {
         const t0 = Date.now();
         try {
-            const response = await this.llm.complete(prompt);
+            const response = await llm.complete(prompt);
             const llmMs = Date.now() - t0;
             if (llmMs > 20000) console.log(`[${ts()}] [loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
             let tactic = response.text?.trim();
@@ -678,19 +697,21 @@ export class TacticLoop {
         }
     }
 
-    _buildTacticPrompt(goal, attempt, lemmaId = null, goalClassId = null) {
+    _buildTacticPrompt(goal, attempt, lemmaId = null, goalClassId = null, history = []) {
+        const hints = this._buildHints(goal, history);
         if (this.retriever) {
             const premises = this.retriever.retrieve(goal, this.premiseTopK);
             for (const p of premises) this._retrievedPremises?.add(p.name);
             this._emit({ type: 'premises_retrieved', lemmaId, goalClassId, count: premises.length, names: premises.map(p => p.name) }, lemmaId);
-            return buildPremisePrompt(goal, premises, { attempt, maxAttempts: this.maxTacticsPerGoal, premiseLocked: this.premiseLocked });
+            const prompt = buildPremisePrompt(goal, premises, { attempt, maxAttempts: this.maxTacticsPerGoal, premiseLocked: this.premiseLocked });
+            return hints ? splicePrompt(prompt, hints) : prompt;
         }
 
         const contextStr = goal.context?.length > 0
             ? `\nContext:\n${goal.context.map(c => `  ${c.name} : ${c.type}`).join('\n')}`
             : '';
 
-        return [
+        const prompt = [
             {
                 role: 'system',
                 content: 'You are a Lean 4 proof assistant. Given a goal, propose ONE tactic to make progress. Reply with ONLY the tactic, no explanation or markdown formatting. Examples: "intro h", "omega", "simp [h]", "apply foo", "cases h".'
@@ -700,6 +721,35 @@ export class TacticLoop {
                 content: `Goal:\n  ${goal.type}${contextStr}\n\nPropose ONE tactic (attempt ${attempt}/${this.maxTacticsPerGoal}):`
             }
         ];
+        return hints ? splicePrompt(prompt, hints) : prompt;
+    }
+
+    // Inference-only guidance block (§6.2): exemplars from the lemma store (ranked by goal-shape
+    // similarity — pointing) and predictor warnings (patterns whose prefix matches the recent
+    // history — steering). Hypercompressed, kernel-grounded, injected before the "Propose"
+    // imperative. Returns null when neither source has anything to say.
+    _buildHints(goal, history = []) {
+        const lines = [];
+        if (this.exemplars && this.lemmaStore) {
+            const similar = this.lemmaStore.findSimilar(goal.type, { limit: this.exemplarLimit });
+            if (similar.length) {
+                lines.push('Similar proven lemmas:');
+                for (const s of similar) {
+                    const shape = (s.normalizedGoalShape ?? 'lemma').slice(0, 70);
+                    const head = s.tacticTrajectory?.[0] ?? null;
+                    lines.push(`- \`${shape}\`${head ? ` — started with \`${head}\`` : ''}`);
+                }
+            }
+        }
+        const warnings = this.predictors?.warnings?.(history) ?? [];
+        if (warnings.length) {
+            if (lines.length) lines.push('');
+            lines.push('Avoid (historically failed):');
+            for (const pattern of warnings) {
+                lines.push(`- after ${pattern.slice(0, -1).join(' → ')}, avoid proposing \`${pattern[pattern.length - 1]}\``);
+            }
+        }
+        return lines.length ? lines.join('\n') : null;
     }
 
     async proveAll() {
@@ -718,8 +768,9 @@ export class TacticLoop {
         this.lastOutcome = outcome;
         this._emit({ type: 'loop_finished', ok: outcome.ok, stopped: outcome.stopped, failures: [...outcome.failures.keys()] });
 
-        // Generate audit packs for verified lemmas
-        if (outcome.ok || outcome.results.size > 0) {
+        // Generate audit packs for verified lemmas (opt-out for driven runs — the development
+        // digest + per-lemma artifacts are the publication record there).
+        if (this.writeAuditPacks && (outcome.ok || outcome.results.size > 0)) {
             const runId = `run_${Date.now()}`;
             const runsDir = path.join(process.cwd(), 'runs', runId);
 
@@ -769,6 +820,7 @@ export class TacticLoop {
             ...metrics,
             llmCalls: this.llmCalls,
             tacticCalls: this.tacticCalls,
+            predictorSkips: this.predictorSkips,
             wallMs,
             model: this.llm?.getModel?.() ?? null,
             provider: this.llm?.getProvider?.() ?? null

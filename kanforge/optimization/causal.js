@@ -251,10 +251,25 @@ export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 
                 if (h !== pattern[pattern.length - 1]) continue;
                 const prefix = pattern.slice(0, -1);
                 if (prefix.length === 0) return true;
-                const tail = history.slice(-prefix.length);
+                const tail = (history ?? []).slice(-prefix.length);
                 if (tail.length === prefix.length && tail.every((x, i) => x === prefix[i])) return true;
             }
             return false;
+        },
+        // Inference-only hint surface (§6.2): patterns whose prefix matches the tail of the
+        // recent history — the final head is what to AVOID proposing next. Rejection saves
+        // kernel budget; the warning steers the LLM so the proposal is never made.
+        warnings(history = []) {
+            const h = (history ?? []).map(tacticHead);
+            const out = [];
+            for (const pattern of active) {
+                if (pattern.length < 2) continue;
+                const prefix = pattern.slice(0, -1);
+                if (h.length < prefix.length) continue;
+                const tail = h.slice(-prefix.length);
+                if (tail.every((x, i) => x === prefix[i])) out.push(pattern);
+            }
+            return out;
         }
     };
 }

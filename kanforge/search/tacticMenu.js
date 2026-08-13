@@ -219,11 +219,12 @@ function shapeSummary(s) {
 
 // Insert a block into the last user message of any prompt shape, before the "Propose ..."
 // imperative (so capability info precedes the instruction). Falls back to appending.
-function withMenu(prompt, menuText) {
+// Shared by the tactic menu and the loop's hint injection (exemplars + predictor warnings).
+export function splicePrompt(prompt, blockText) {
     const splice = content => {
         const marker = content.search(/\n+\s*Propose (ONE )?tactic/);
-        if (marker === -1) return `${content}\n\n${menuText}`;
-        return `${content.slice(0, marker)}\n\n${menuText}${content.slice(marker)}`;
+        if (marker === -1) return `${content}\n\n${blockText}`;
+        return `${content.slice(0, marker)}\n\n${blockText}${content.slice(marker)}`;
     };
     if (typeof prompt === 'string') return splice(prompt);
     if (prompt && typeof prompt === 'object') {
@@ -255,7 +256,7 @@ export class TacticMenuAugmentingLLM {
                 this.menus.set(goalType, tacticMenuFor(this.statement, goalType));
             }
             const menu = this.menus.get(goalType);
-            if (menu) return this.llm.complete(withMenu(prompt, menu), opts);
+            if (menu) return this.llm.complete(splicePrompt(prompt, menu), opts);
         }
         return this.llm.complete(prompt, opts);
     }
