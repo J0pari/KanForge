@@ -7,6 +7,7 @@ import { checkDrift } from '../blueprint/drift.js';
 import { hashStatement } from '../lean/pin.js';
 import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 import { resolveModule } from '../lean/moduleResolver.js';
+import { MATHLIB_PRESENT } from './mathlibEnv.js';
 
 const THM = 'theorem thm : P := by sorry';
 const H1 = 'theorem h1 : P := by sorry';
@@ -15,7 +16,11 @@ const HARD = 'theorem hard_helper : P := by sorry';
 const EASY = 'theorem easy_child : P := by sorry';
 
 // Re-split children are emitted with the canonical tactic imports prepended.
-const TACTIC_IMPORTS = STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean);
+// Hermeticity: with the Mathlib tree absent, fall back to the raw (stable) module names so
+// stub shape tests still run; exact-resolution assertions are gated separately.
+const TACTIC_IMPORTS = MATHLIB_PRESENT
+    ? STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean)
+    : STUB_TACTIC_MODULES;
 const stubOf = s => TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + s;
 
 const idOf = s => hashStatement(s);

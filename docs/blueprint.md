@@ -186,8 +186,9 @@ Detailed contracts: `architecture.md`. This is the shape.
   every checked goal carry a hash; mutation = `WEAKENED` + guardrail trip.
 - **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); memoized per node, `serialize()` is the checkpoint, `invalidate()` triggers transitive re-verification. The scheduler dispatches via a `check(nodeId)` callback; the loop reads
   `nodes.get(id).computation.value` directly. Error boundary per node:
-  `retry → repair → skip (never weaken)`. Node identity is normalized so alpha-equivalent /
-  definitionally-equal goals share an equivalence class (transposition merging; the adopted core of Wave2's
+  `retry → repair → skip (never weaken)`. Node identity is normalized so identically-normalized
+  goals share an equivalence class (goal-state transposition graph; identity semantics per
+  `architecture.md` §2.2 — the adopted core of Wave2's
   e-graph structure — `architecture.md` §2.2, §10).
 - **`core/scheduler.js`** — dependency-ordered dispatch with a 7-state lifecycle (Wave2 §7–8;
   `architecture.md` §2.6).

@@ -133,3 +133,58 @@ The foundational primitives in `kanforge/core/` (`lazy`, `hasher`, `patch`) and 
 telemetry/instrumentation modules (`optimization/*`, `digest/*`, `growth/*`) are re-implementations
 of lazy build-system machinery under KanForge's domain (proofs, not documents); correctness is
 enforced by the unit-test suite, not by trust in the source.
+
+---
+
+## 5. The compression lens (conceptual framing)
+
+**Thesis.** The resource this system manages is *redundant reasoning*. Each architectural layer
+compresses a different kind of redundancy, and the Lean kernel is what makes the compression
+accountable: a compressed representation only counts when it re-expands into a kernel-verified
+artifact. That is the operational form of "formal intelligence ≈ finding small representations
+of large regularities that can be mechanically re-expanded into proofs" — not the slogan
+"LLMs compress text".
+
+**The four compression claims, mapped to mechanisms (all live):**
+
+1. **Search compresses by state equivalence** — the goal-state transposition graph (`core/egraph.js`,
+   `architecture.md` §2.2): different tactic histories that reach the same normalized state share
+   one equivalence class and its statistics. This is quotienting — the question "which differences
+   in the history of thought are irrelevant to the future" — and it is why the identity semantics
+   are syntactic: merging states that are not provably interchangeable would corrupt the quotient.
+2. **Knowledge compresses by reusable lemmas** — the blueprint DAG and the lemma store: a theorem
+   family described through a few reusable lemmas has a much shorter description than the same
+   proofs stated independently (the MDL intuition: `L(model) + L(data | model)`). The store is the
+   dictionary; the kernel re-verification on every reuse is what keeps corrupted entries out of
+   the dictionary.
+3. **Context compresses by task-relevant retrieval** — premise retrieval, the tactic menu, and
+   prompt synthesis discard the irrelevant bulk of the Lean environment and send only what the
+   next decision needs (rate-distortion: bounded distortion, minimal retained information; the
+   information-bottleneck objective `I(X;Z) − β·I(Z;Y)` with X = full formal state, Z = prompt,
+   Y = the next transformation).
+4. **Experience compresses into search priors** — failure predictors and the training dataset
+   turn historical outcomes into rejection rules and preference pairs. A predictor is a
+   compressed history of failures; its known failure mode is over-compression, which the
+   exploration rate (`predictorExploration`, `architecture.md` §6) exists to relieve — a
+   compressor aggressive enough to discard rare successes destroys the information needed to
+   discover new regularities.
+
+**Mathematical grounding (what supports the analogy, and what does not).** Shannon ties
+prediction to coding (`E_P[−log Q] = H(P) + D_KL(P‖Q)`), so "a model is a compressor of its
+distribution" is literal for next-token cross-entropy. Kolmogorov complexity gives the right
+intuition (a large object with a tiny generating rule) but is uncomputable — practical systems
+use its approximations. MDL is the most useful form for proofs (model + residual description
+length). Proof complexity supplies the honest distinction: **proof length, search cost, and the
+description length of the proof-generating strategy are three different quantities** — a short
+proof found through enormous search is not "efficient reasoning". This system measures the cost
+of discovering the compressed explanation (LLM calls, kernel calls, trajectories, reuse, skips),
+not merely whether a proof exists.
+
+**The measurement gap.** The mechanisms exist; the compression itself is not yet measured
+directly. The staged quantities (`architecture.md` §6.1 backlog) are: proof description length
+under a specified encoding, library-relative description length (the residual after reusable
+lemmas are taken as dictionary entries), and the amortized-cost curve — cost to solve problem
+`T_i` as a function of the verified lemma library accumulated from `T_1..T_{i−1}`. A
+systematically falling curve is the claim "knowledge is being compressed into reusable
+mathematics" made measurable. Until instrumented, these metrics are `null` with a documented
+reason — never fabricated.

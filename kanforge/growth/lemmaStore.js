@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lexicalNormalize } from '../core/egraph.js';
+import { semanticNormalize } from '../core/egraph.js';
 
 const DATA_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'runs');
 
@@ -112,7 +112,7 @@ export class LemmaStore {
         this.dir = dir ?? path.join(DATA_ROOT, 'lemma-store');
         this.store = new Map();
         this.corrupt = [];
-        this._normIndex = new Map(); // lexicalNormalize(conclusion) → hash (first inserted wins)
+        this._normIndex = new Map(); // semanticNormalize(conclusion) → hash (first inserted wins)
         this._load();
     }
 
@@ -121,7 +121,7 @@ export class LemmaStore {
         this.store.set(hash, lemmaData);
         const conclusion = extractConclusion(lemmaData?.statement ?? '');
         if (conclusion) {
-            const norm = lexicalNormalize(conclusion);
+            const norm = semanticNormalize(conclusion);
             if (!this._normIndex.has(norm)) this._normIndex.set(norm, hash);
         }
         const dir = path.join(this.dir, 'lemmas');
@@ -176,7 +176,7 @@ export class LemmaStore {
     // { statementHash, proofScript, statement } or null. Used by the loop to skip LLM proposals
     // when a previously-proven lemma already closes the goal — one `exact` replaces the search.
     findByGoal(goalType) {
-        const norm = lexicalNormalize(goalType);
+        const norm = semanticNormalize(goalType);
         const hash = this._normIndex.get(norm);
         if (!hash) return null;
         const entry = this.store.get(hash);
@@ -199,7 +199,7 @@ export class LemmaStore {
                     this.store.set(parsed.hash, parsed.data);
                     const conclusion = extractConclusion(parsed.data?.statement ?? '');
                     if (conclusion) {
-                        const norm = lexicalNormalize(conclusion);
+                        const norm = semanticNormalize(conclusion);
                         if (!this._normIndex.has(norm)) this._normIndex.set(norm, parsed.hash);
                     }
                 } else {

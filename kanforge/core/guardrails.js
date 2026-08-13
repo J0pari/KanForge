@@ -23,6 +23,7 @@
 
 import { hashStatement } from '../lean/pin.js';
 import { verifyHashChain } from './hasher.js';
+import { buildProofSource } from './state.js';
 
 export const HARD_INVARIANTS = Object.freeze([1, 2, 3, 5]);
 export const FORBIDDEN_TOKENS = Object.freeze(['axiom', 'admit', 'unsafe', 'set_option', 'sorry']);
@@ -39,10 +40,23 @@ function nodeStatement(node) {
 }
 
 function proofScripts(graph) {
+    // The leakage scan covers the COMPLETE source (statement + proof composed — what the
+    // kernel actually verified), not the proof script alone: a `set_option`/`axiom` smuggled
+    // through the statement text is just as much a policy violation as one in the tactics.
+    // The raw stub statement still says `:= by sorry`, so scanning it directly would false-trip
+    // every proved lemma — composition replaces the sorry with the proof first.
     const out = [];
     for (const [id, node] of graph.nodes ?? new Map()) {
         if (node.cached && node.value && !node.value.error && node.value.proofScript) {
-            out.push({ id, script: node.value.proofScript });
+            let source = null;
+            try {
+                if (typeof node.value.statement === 'string') {
+                    source = buildProofSource(node.value.statement, node.value.proofScript);
+                }
+            } catch {
+                source = null;
+            }
+            out.push({ id, source: source ?? node.value.proofScript });
         }
     }
     return out;
@@ -93,14 +107,15 @@ export class Guardrails {
             }
         }
 
-        // 3. Leakage: forbidden tokens in any verified proof script. `sorry` is relaxable
-        //    only by an in-scope, unexpired 'sorry-stub' grant (skeleton/refine phases).
-        for (const { id, script } of proofScripts(graph)) {
+        // 3. Leakage: forbidden tokens anywhere in the COMPLETE verified source (statement +
+        //    proof), not just the tactic script. `sorry` is relaxable only by an in-scope,
+        //    unexpired 'sorry-stub' grant (skeleton/refine phases).
+        for (const { id, source } of proofScripts(graph)) {
             for (const token of FORBIDDEN_TOKENS) {
                 if (token === 'sorry' && permissionActive(permissions, 'sorry-stub', now)) continue;
                 const re = new RegExp(`\\b${token}\\b`);
-                if (re.test(script)) {
-                    violations.push({ invariant: 3, type: 'LEAKAGE', nodeId: id, token, message: `forbidden token '${token}' in proof script` });
+                if (re.test(source)) {
+                    violations.push({ invariant: 3, type: 'LEAKAGE', nodeId: id, token, message: `forbidden token '${token}' in verified source` });
                 }
             }
         }
@@ -136,8 +151,11 @@ export class Guardrails {
     }
 
     // HARD-set commit gate (§2.5): a lemma may become VERIFIED only if the pin holds, the
-    // kernel accepted the full source, and the script is clean — permissions never apply here.
-    static assertLemmaCommit({ pin, statement, proofScript, verification }) {
+    // kernel accepted the full source, and the COMPLETE source (statement + proof, `source`
+    // param) is clean — permissions never apply here. The scan covers the source text, so
+    // leakage through the statement (axiom/unsafe/set_option smuggled outside the tactics) is
+    // caught, not just leakage through the script.
+    static assertLemmaCommit({ pin, statement, proofScript, verification, source = null }) {
         const violations = [];
         if (pin && hashStatement(statement) !== pin.statementHash) {
             violations.push({ invariant: 1, type: 'STATEMENT_WEAKENED', message: 'statement hash differs from pin at commit' });
@@ -145,9 +163,10 @@ export class Guardrails {
         if (verification?.status !== 'verified') {
             violations.push({ invariant: 2, type: 'KERNEL_REJECTED', message: verification?.error?.message ?? 'kernel did not verify the proof' });
         }
+        const scanTarget = source ?? proofScript ?? '';
         for (const token of FORBIDDEN_TOKENS) {
-            if (new RegExp(`\\b${token}\\b`).test(proofScript ?? '')) {
-                violations.push({ invariant: 3, type: 'LEAKAGE', token, message: `forbidden token '${token}' in committed proof` });
+            if (new RegExp(`\\b${token}\\b`).test(scanTarget)) {
+                violations.push({ invariant: 3, type: 'LEAKAGE', token, message: `forbidden token '${token}' in committed source` });
             }
         }
         return { ok: violations.length === 0, violations };

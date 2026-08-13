@@ -330,6 +330,30 @@ Three roles, one implementation each; no component exists twice:
   provenance). Its output surface is `runs/defaults.json` — recommendations the live path and
   the GUI consume, never the loop's behavior (§5.7).
 
+### 0.5 The managed resource: redundant reasoning
+
+The resource every layer of this system manages is *redundant reasoning* — the design rationale
+is stated here once and the mechanisms are named where they live (the conceptual grounding is
+`research_notes_2026.md` §5). Four compression claims, each with a live mechanism:
+
+1. **State equivalence** — the goal-state transposition graph (§2.2) quotients tactic histories
+   that reach the same normalized state, so search statistics are shared, not recomputed.
+2. **Reusable lemmas** — the blueprint DAG and the lemma store (§2.8) turn a theorem family into
+   a small set of reused dictionary entries; every reuse is kernel re-verified, because a
+   corrupted dictionary entry is worthless.
+3. **Task-relevant context** — premise retrieval, the tactic menu, and prompt synthesis (§4)
+   send the next decision the information sufficient for it, discarding the irrelevant bulk of
+   the environment.
+4. **Learned search priors** — failure predictors and the dataset (§6) compress historical
+   outcomes into rejection rules and preference pairs; the exploration rate is their pressure
+   valve against over-compression.
+
+Kernel accountability is the unifying constraint: a compressed representation counts only when
+it re-expands into a kernel-verified artifact. The direct measurement of compression itself —
+proof description length, library-relative description length, and the amortized-cost curve
+across accumulated lemmas — is staged in the §6.1 metrics backlog, not fabricated before the
+instrumentation exists.
+
 
 ---
 
@@ -442,7 +466,7 @@ KanForge operates on two distinct but related structures:
 
 **Level 2: Goal e-graph** (within each lemma)
 - Root = the lemma's initial goal (the statement's type + empty context)
-- Nodes = equivalence classes of goals (alpha-equivalent or definitionally-equal proof states)
+- Nodes = equivalence classes of goals (identical under the syntactic normalization of §2.2)
 - Edges = tactic applications that transform one equivalence class into zero or more subgoal classes
 - A goal class is "solved" when a tactic closes all goals in the class (produces no subgoals)
 - A lemma is "proved" when the root class is solved
@@ -490,11 +514,25 @@ Node (Level 2 — goal equivalence class within a lemma's e-graph):
 }
 ```
 
-The `id` is computed from a **normalized** goal (alpha-equivalent renaming of bound variables,
-definitional equality reduction). Multiple concrete goals that are alpha-equivalent or
-definitionally-equal map to the same equivalence class. The `goals` array tracks all concrete
-goals in the class (for debugging and extraction). The `stats` are shared across all goals in the
-class, enabling transposition merging.
+The `id` is computed from a **normalized** goal — whitespace-collapsed text with the context
+binders alpha-renamed under one substitution (applied to the binder names, every context
+binder's TYPE, and the target type, with capture-avoiding fresh names). That normalization is
+the identity: no definitional-equality reduction and no algebraic simplification. Multiple
+concrete goals that normalize identically map to the same equivalence class. The `goals` array
+tracks all concrete goals in the class (for debugging and extraction). The `stats` are shared
+across all goals in the class, enabling transposition merging.
+
+**Terminology and identity semantics.** The structure is a **goal-state transposition graph** —
+a memoized proof-state graph that merges identical normalized goal descriptions. It is NOT an
+equality-saturation e-graph: there are no e-nodes, no congruence closure, and no rewrite
+saturation; classes merge only when the normalized text is equal. Two goals that are
+mathematically equivalent but textually different (`0 + x = y` vs `x = y`) stay in different
+classes: a tactic that solves one need not solve the other, and a wrong merge would corrupt
+solved-state propagation and shared statistics. Semantic (algebraic) normalization exists only
+as `semanticNormalize`, used by the lemma store's retrieval index where the kernel re-verifies
+every match — it is never class identity. Parent edges (`parents[]`) are populated by tactic
+expansion (genuine children get their parent class id; carried-over siblings do not), so MCGS
+backpropagation walks real ancestry through transposition merges.
 
 **Class identity is collision-safe (correctness, not just cache efficiency).** The class id is
 `sha256(normalizedGoalType + normalizedContext)` — the canonical serialized key is the identity,
@@ -596,6 +634,13 @@ CACHED   (restored from a checkpoint; skipped, never re-dispatched)
 - Guarantees: no cyclic dispatch (DAG), bounded in-flight (concurrency), deterministic ordering,
   maximal independent parallelism.
 - API: `enqueue(ids)`, `run()` -> `{ ok, results, failures }`, `onProgress`, timeout/kill-on-hang.
+- **Cancellation semantics are explicit.** The scheduler's `timeoutMs` is a LOGICAL timeout: when
+  it fires, the scheduler aborts its own signal, stops waiting, and reports the node FAILED. It
+  does not stop the underlying computation — cooperative cancellation is the `check` callback's
+  obligation via the AbortSignal, and hard cancellation (killing a worker) is the backend's
+  responsibility (§3.1 kill-on-hang). The loop sets `timeoutMs = null` and relies on the
+  backend's kill-on-hang precisely so the scheduler's semantics are never mistaken for process
+  control.
 - Locality: work scales with affected subgraph depth, not project size (Wave2 §14).
 
 ### 2.7 Patch algebra — the typed mutation record (`core/patch.js`)
@@ -689,11 +734,18 @@ neighborhood for repair (never regenerate whole files; verified regions stay imm
 Implementation notes:
 - **REPL** (default for RL): JSON-lines over a process pool (like Kimina Lean Server); parallel
   verification; warm workers; kill-on-hang timeout. Driven against the *real* `repl` binary built
-  at the pinned toolchain — no mocks, stubs, or facsimiles anywhere in the backend stack.
-- **CLI**: real `lean` for CI batch verification.
+  at the pinned toolchain — no mocks, stubs, or facsimiles anywhere in the backend stack. The
+  REPL is the **authoritative interactive proof engine**: it holds live proof states across
+  tactic applications, which is what tactic-level search needs.
+- **CLI**: real `lean` for CI batch verification. It reconstructs `example <binders> : <goal> :=
+  by <tactic>` per application, so it loses what a live proof state naturally possesses (implicit
+  and instance binder structure cannot be round-tripped through `formatBinders` faithfully). It
+  is the batch-verification fallback, not a substitute for the interactive semantics.
 - **lean4web**: *deferred.* Ships only once a real instance is exercised end-to-end; its API
   contract is not fabricated offline.
-- **Statement pinning** (`pin.js`): canonical `#print`-normalized string → sha256. Any mutation
+- **Statement pinning** (`pin.js`): whitespace-collapsed canonical text → sha256 — a CONTENT pin
+  (textual mutation detector), not semantic theorem identity: it does not canonicalize
+  alpha-equivalence, elaboration, notation, or definitional unfolding. Any mutation
   of goal text during search flips the hash → node `WEAKENED` + guardrail trip.
 
 ### 3.1 Pool lifecycle and resilience
@@ -719,12 +771,13 @@ discovered at scale.
   (P0.3 resilience suite, `build_order.md`), asserted in `test/backend.repl.live.test.js` against
   the real `repl` binary.
 
-**Pin drift:** the canonical `#print`-normalized string is *version-sensitive* — a Lean/mathlib
+**Pin drift:** the whitespace-normalized canonical text is *version-sensitive* — a Lean/mathlib
 update can change the printed form without changing meaning. Therefore `pin()` returns
 `Pin = { toolchain, mathlibHash, leanVersion, normVersion, statementHash }`, and pin verification
 re-normalizes on the current toolchain and compares `normVersion`; a mismatch reports `DRIFT`
-(not `WEAKENED`), so the operator re-pins deliberately rather than silently or falsely. Never
-compare a hash computed under a different `normVersion`.
+(not `WEAKENED`), so the operator re-pins deliberately rather than silently or falsely. Context
+comparison is tri-state: a field known at pin time and unknown now reports DRIFT (uncertainty is
+not equality). Never compare a hash computed under a different `normVersion`.
 
 ---
 
@@ -737,6 +790,21 @@ The agent loop operates at Level 2 (goal e-graph within a single lemma). The sch
 The loop is a class (`TacticLoop`, `agent/loop.js`). It implements
 the observe → propose → act → verify → repair → commit stages as explicit methods over the e-graph,
 with a stateful budget, concurrency, and repair path:
+
+**Role split.** The loop is orchestration; two extracted modules own the heavy seams:
+- `agent/proposalEngine.js` (`ProposalEngine`) — the single LLM seam. Every model call the loop
+  and its delegated recipes make (proposals, repairs, swiss proposals + pairwise judges, bfs/mcgs
+  calls) flows through its walled client, giving exactly one owner for (a) LLM-call accounting
+  (write-through counting — no path under- or over-counts, and cost-normalized ablation reads
+  the same counter), (b) the `maxLlmCalls` budget wall (after exhaustion every further call
+  returns an empty response, so the budget is hard for every recipe, not only the inline path),
+  and (c) **failure kinds** — `abstention` (no usable tactic), `budget-exhausted`, and
+  `provider-failure` (transport/CLI threw) are distinguished, so a dead provider is never
+  reported as a silent model.
+- `agent/commitGate.js` (`runCommitGate`) — the verification-and-policy sequence: pin drift,
+  proof assembly (tree → script → full source), pre-flight, whole-source kernel verify,
+  premise lock, the HARD guardrail gate (leakage scan over the complete source), and the hash
+  chain entry. It makes no LLM calls and returns typed outcomes the loop maps to events.
 
 ```
 observe(goal)   -> PromptInput        // goal (type + context) + retrieved premises → prompt
@@ -820,9 +888,11 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   the UCB values are a *heuristic* whose statistical meaning must be validated empirically, not
   assumed. **Open empirical question (see `build_order.md` §5.6):** does MCGS outperform simpler
   best-first / beam / BFS strategies on held-out theorem families once LLM-call and
-  kernel-verification cost are normalized? Transposition merging is built into the e-graph
-  structure — alpha-equivalent / definitionally-equal goals share one class — and node identity is
-  normalized so *every* search variant inherits the merge, not just MCGS.
+  kernel-verification cost are normalized?   Transposition merging is built into the e-graph
+  structure — identically-normalized goals share one class (§2.2) — and node identity is
+  normalized so *every* search variant inherits the merge, not just MCGS. MCGS backpropagation
+  walks the parent edges that tactic expansion populates, so transpositions share the update
+  across real ancestry.
 - `repulsion.js`: log-ratio diversity penalty among concurrent tactic samples. `RepulsionSampler`
   is the actionable form — it refuses to re-propose already-tried tactics (exact-duplicate penalty)
   and echoes the tried list into the prompt so the generator steers away; `MCGS`/`BestFirstSearch`
@@ -970,6 +1040,13 @@ A predictor with no held-out evidence, or whose support is below the gate, is tr
 (no rejection). The telemetry layer may still mine and report such patterns — they are
 hypotheses — but the search layer never suppresses on them.
 
+**Exploration rate (no permanent self-confirmation).** Even a gated rejection removes all future
+evidence about the rejected action — the predictor would otherwise confirm itself forever. The
+loop therefore re-tests rejected tactics with probability `predictorExploration` (loop option,
+default 0.02): the counterfactual application is emitted as a `predictor_explored` event, so the
+false-rejection accounting always has fresh evidence. Over-compression is the known failure mode
+of this layer, and the exploration rate is its pressure valve.
+
 ### 6.1 Evaluation metrics (`optimization/metrics.js`)
 
 `computeMetrics(events)` turns the loop's event stream into a KPI bundle attached to every run
@@ -991,6 +1068,13 @@ in hand cannot produce it (it needs instrumentation the loop does not yet emit �
   `heldOutImprovement`
 - **Economic quality** — wall / compute cost:
   `secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`
+- **Compression quality** — the §0.5 quantities, measured directly (staged; `null` with a
+  documented reason until instrumented):
+  `proofDescriptionLength` (the final proof script's length under the canonical `state.js`
+  layout), `libraryRelativeDescriptionLength` (the residual description once referenced stored
+  lemmas are taken as dictionary entries), `amortizedCostCurve` (cost to solve problem `T_i` as
+  a function of the verified lemma library accumulated from `T_1..T_{i−1}` — the falling curve
+  is the claim "knowledge is being compressed into reusable mathematics" made measurable)
 
 The metrics module's contract: pure function of the event stream; never calls the backend or LLM;
 every emitted value is derivable from events (or `null` with a documented reason).
@@ -1044,8 +1128,21 @@ update quantities, never applies them.
 
 ## 7. Checkpoint / audit formats
 
-Checkpoint (`graph.serialize()`): the full forest + event log tail + pins + repo HEAD — a
-**resumable transaction**. Resume = `deserialize()` + guardrail check 5.
+Two distinct persistence models, not one "checkpoint":
+
+- **Memoization snapshot** — `graph.serialize()` covers the CACHED nodes of the PullGraph (a
+  cache of computed values). It is not a full computation-state checkpoint: uncached/dirty nodes
+  are outside its scope, so it alone cannot resume an interrupted development.
+- **Resumable computation state** — `RunCheckpoint` (`core/checkpoint.js`) is the resume record:
+  per-lemma statements, proofs, stalled flags, rounds, and the run hash chain, written to
+  `runs/<problem>/checkpoint.json` after every refine round. `blueprint/run.js --problem=<id>`
+  resumes from it; proved lemmas are restored (and the lemma store's proofs are re-verified, not
+  trusted), stalled lemmas stay stalled. Resume = load + guardrail check 5.
+
+The in-memory event store (`optimization/store.js`) is bounded and indexed (O(1) id lookup;
+evicted events are counted, and a causal chain queried after eviction starts at its oldest
+surviving member). The durable full-stream record is the telemetry export (`exporter.js`, JSONL)
+and the checkpoint's event tail — the store itself is an index, not an archive.
 
 Audit pack (`digest/auditPack.js`):
 ```
@@ -1055,6 +1152,11 @@ theorem + statement pin + assumption account +
 ```
 Statement hash chain (`hasher.js`): every verified lemma appends
 `sha256(prevHash || statement || proofHash || outcome)` — tamper-evident, reproducible runs.
+The chain is **integrity evidence, not cryptographic authenticity**: it detects accidental or
+partial corruption, but there is no external secret/signature, so anyone able to rewrite the
+artifact files can recompute the whole chain. Artifacts that need attested provenance must add
+a signing step outside this system — the chain itself is evidence of internal consistency, not
+of authorship.
 
 ---
 
@@ -1097,7 +1199,7 @@ The aspirational vision docs — `docs/Research/KanForge_whitepaper.md` and
 vision. Adopted (now or staged) is reflected above. Everything below was considered and deferred
 for the stated reason; do not re-add without revisiting the reason.
 
-- **E-graph as a synchronized third representation** (Wave2 §3/§6). **Adopted for Level 2 search structure** (§2.2): the goal search tree is now an e-graph where nodes are equivalence classes of goals (alpha-equivalent or definitionally-equal). This enables transposition merging (research_notes trick 4) — different tactic sequences producing equivalent goals share statistics. The e-graph is the search structure itself, not a third synchronized representation alongside AST and script. We still keep tree↔script duality (state.js) for proof extraction.
+- **E-graph as a synchronized third representation** (Wave2 §3/§6). **Adopted for Level 2 search structure** (§2.2): the goal search structure is a goal-state transposition graph whose classes merge identically-normalized goals — NOT an equality-saturation e-graph (no e-nodes, congruence closure, or rewrite saturation; §2.2 states the identity semantics). This enables transposition merging (research_notes trick 4) — different tactic sequences producing the same normalized goal share statistics. The e-graph is the search structure itself, not a third synchronized representation alongside AST and script. We still keep tree↔script duality (state.js) for proof extraction.
 - **GPU/CUDA graph filtering** (whitepaper diagram; Wave2 §9). The kernel is CPU-bound; the
   useful core is **structural dedup** (hash candidates/goals before dispatch), done on CPU now.
   GPU revisit only if CPU dedup measurably saturates.

@@ -40,17 +40,30 @@ export function makePin(statement, { toolchain, mathlibHash = null, leanVersion 
 // Returns { ok, drift, reason }.
 //   drift: true  -> norm/toolchain/mathlib context changed (DRIFT; re-pin deliberately)
 //   drift: false -> same context, statement hash differs (WEAKENED; statement mutated)
+//
+// Context comparison is TRI-STATE, not truthy: a field known at pin time and unknown now (or
+// vice versa) is uncertainty, and uncertainty reports DRIFT. Treating "known before, unknown
+// now" as equal would let a proof built against a pinned mathlib be accepted under an
+// unrecorded one — exactly the case the drift check exists to catch.
 export function checkPin(pin, current) {
     if (!pin || !current) {
         return { ok: false, drift: true, reason: 'missing pin' };
     }
+    const known = v => v != null && v !== '';
+    const fieldChanged = (a, b) => {
+        const ka = known(a);
+        const kb = known(b);
+        if (ka !== kb) return true; // known-before/unknown-now = context uncertainty
+        if (!ka) return false;     // unknown before and now = nothing to compare
+        return a !== b;
+    };
     const contextChanged =
         (pin.normVersion ?? NORM_VERSION) !== (current.normVersion ?? NORM_VERSION) ||
         pin.toolchain !== current.toolchain ||
-        (pin.mathlibHash && current.mathlibHash && pin.mathlibHash !== current.mathlibHash) ||
-        (pin.leanVersion && current.leanVersion && pin.leanVersion !== current.leanVersion);
+        fieldChanged(pin.mathlibHash, current.mathlibHash) ||
+        fieldChanged(pin.leanVersion, current.leanVersion);
     if (contextChanged) {
-        return { ok: false, drift: true, reason: 'norm/toolchain context changed' };
+        return { ok: false, drift: true, reason: 'norm/toolchain context changed or missing' };
     }
     if (pin.statementHash !== current.statementHash) {
         return { ok: false, drift: false, reason: 'statement hash mismatch' };

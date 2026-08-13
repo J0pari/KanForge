@@ -193,8 +193,10 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; `mcgs.js` is
   UCB-guided graph search over the open classes — selection / expansion / backprop only, **not**
   textbook MCTS (no cheap rollout; the "simulation" is an LLM + kernel call — `architecture.md` §5,
-  §5.6). Transposition merging is built into the e-graph structure — alpha-equivalent or
-  definitionally-equal goals are already merged into equivalence classes with shared statistics
+  §5.6). Transposition merging is built into the e-graph structure — identically-normalized
+  goals are already merged into equivalence classes with shared statistics
+  (identity semantics per `architecture.md` §2.2; parent edges are populated by tactic
+  expansion, so MCGS backprop walks real ancestry)
   (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10),
   so every search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
@@ -426,12 +428,15 @@ about dead code.
   to the full catalog — search efficiency (`kernelChecksPerSolved`, `llmCallsPerSolved`,
   `uniqueStatesExplored`, `duplicateStatesAvoided`), search quality (`firstSuccessRank`,
   `branchingFactor`, `meanDepth`, `deadEndRate`, `transpositionHitRate`), planning quality
-  (`blueprintLemmasPerTheorem`, `resplitsPerTheorem`, `unusedHelperLemmas`, `dependencyDepth`),
-  learning quality (`predictorPrecision`, `predictorRecall`, `falseRejectionRate`,
-  `performanceBeforeAfterPredictor`, `heldOutImprovement`), economic quality
-  (`secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`). Emit `null`
-  (with a documented reason) for any metric the current event stream cannot produce, rather than
-  fabricating a number. **Instrumentation backlog** (loop must emit to un-null these):
+   (`blueprintLemmasPerTheorem`, `resplitsPerTheorem`, `unusedHelperLemmas`, `dependencyDepth`),
+   learning quality (`predictorPrecision`, `predictorRecall`, `falseRejectionRate`,
+   `performanceBeforeAfterPredictor`, `heldOutImprovement`), economic quality
+   (`secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`), and
+   compression quality (research_notes §5, architecture §0.5/§6.1): `proofDescriptionLength`,
+   `libraryRelativeDescriptionLength`, `amortizedCostCurve` — the direct measurements of the
+   compression claims, staged with the same no-fabrication rule. Emit `null`
+   (with a documented reason) for any metric the current event stream cannot produce, rather than
+   fabricating a number. **Instrumentation backlog** (loop must emit to un-null these):
   - per-proposal LLM latency and token counts (`tactic_proposed`);
   - per-goal attempt rank of the solving tactic (`goal_solved` carries `attempt`), for
     `firstSuccessRank`;
@@ -439,7 +444,9 @@ about dead code.
     `deadEndRate`;
   - blueprint-level counts (lemmas / resplits / unused helpers / dependency depth) surfaced by
     `blueprint/refine.js` into the digest, for planning quality;
-  - predictor pre-filter outcomes (rejected-then-verified, allowed-then-failed) for learning quality.
+  - predictor pre-filter outcomes (rejected-then-verified, allowed-then-failed) for learning quality;
+  - per-lemma store reuse records (accepted/rejected with verification) and accumulated-library
+    size per problem index, for `libraryRelativeDescriptionLength` and `amortizedCostCurve`.
 - **Acceptance:** the held-out MCGS-vs-baseline cost table is produced and either shows a strict
   Pareto gain or is recorded as "no measured advantage, keep best-first"; `computeMetrics` emits
   the full catalog with no fabricated values; no doc/comment claims causal inference where only

@@ -10,7 +10,7 @@ restating design facts.
 | Document | Owns | Depends on |
 |---|---|---|
 | `architecture.md` | repo layout, module/file names, API contracts, wire formats, event vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, module inventory | — |
-| `research_notes_2026.md` | systems landscape, working tricks, design warnings, source list, implementation lineage | — |
+| `research_notes_2026.md` | systems landscape, working tricks, design warnings, source list, implementation lineage, the compression lens (§5) | — |
 | `build_order.md` | phases, deliverables, acceptance criteria, sequencing, staffing, definition of done | architecture (layout, events, reward, guardrails), research_notes (evidence) |
 | `blueprint.md` | goal/non-goals, design narrative, module inventory, architecture overview, evaluation plan | architecture, research_notes |
 | `Research/KanForge_whitepaper.md` | aspirational vision (template source doc), not binding | — |

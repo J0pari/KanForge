@@ -21,11 +21,22 @@
 
 import crypto from 'node:crypto';
 
-// Lexical mathematical normalizer: operates on the GOAL TYPE string. Applies simple algebraic
-// identity simplifications (0+x→x, x*1→x). Pure JS — zero latency, works in tests. When
-// injected into GoalEGraph, mathematically-equivalent goals share one e-class.
+// Goal-type canonicalization (architecture.md §2.2). CLASS IDENTITY IS SYNTACTIC ONLY:
+// whitespace-collapsed text under alpha-renaming. No algebraic simplification belongs in
+// identity — merging `0 + x = y` with `x = y` assumes mathematical equivalence, but the two
+// proof states are not interchangeable (a tactic that solves one need not solve the other), and
+// a wrong merge corrupts solved-state propagation and shared statistics. Semantic (algebraic)
+// normalization exists only as `semanticNormalize`, for retrieval similarity where the kernel
+// re-verifies every reuse — never for class identity.
 export function lexicalNormalize(type) {
-    let s = String(type ?? '').trim().replace(/\s+/g, ' ').trim();
+    return String(type ?? '').trim().replace(/\s+/g, ' ').trim();
+}
+
+// Retrieval-only similarity form (lemmaStore §2.8): algebraic identities that make similar
+// conclusions comparable for ranking. NOT used for class identity — the kernel re-verifies any
+// lemma matched this way, and a retrieval mismatch costs at most a wasted attempt.
+export function semanticNormalize(type) {
+    let s = lexicalNormalize(type);
     s = s.replace(/\b0\s*\+\s*/g, '').replace(/\s*\+\s*\b0\b/g, '');
     s = s.replace(/\s*-\s*\b0\b/g, '');
     s = s.replace(/\b1\s*\*\s*/g, '').replace(/\s*\*\s*\b1\b/g, '');
@@ -56,27 +67,41 @@ export class GoalEGraph {
         const { type, context = [] } = goal;
         const varMap = new Map();
         let varCounter = 0;
-        
+
+        // Canonical names must avoid capture: a context variable literally named `v0` must not
+        // absorb a renamed sibling. Fresh names skip anything already used in the context.
+        const usedNames = new Set(context.map(c => c.name));
+        const fresh = () => {
+            let n;
+            do { n = `v${varCounter++}`; } while (usedNames.has(n));
+            return n;
+        };
         const renameVar = (name) => {
-            if (!varMap.has(name)) {
-                varMap.set(name, `v${varCounter++}`);
-            }
+            if (!varMap.has(name)) varMap.set(name, fresh());
             return varMap.get(name);
         };
-        
+
+        // Register every binder first, then substitute under ONE map into the goal type AND
+        // every context binder's type. Renaming only the binder names leaves `h : x = x` (with
+        // `x` renamed to `v0` in the target) un-merged with its alpha-equivalent sibling — the
+        // context must be renamed under the same substitution or transposition merging misses.
+        for (const { name } of context) renameVar(name);
+        const substitute = (text) => {
+            let out = String(text);
+            for (const [original, canonical] of varMap) {
+                out = out.replace(new RegExp(`\\b${original}\\b`, 'g'), canonical);
+            }
+            return out;
+        };
+
         const normalizedContext = context.map(({ name, type: varType }) => ({
-            name: renameVar(name),
-            type: varType
+            name: varMap.get(name) ?? name,
+            type: substitute(varType)
         }));
-        
-        // Apply the mathematical normalizer to the type AFTER alpha-renaming, so identities
-        // like 0+n → n merge with equivalent forms regardless of bound-variable names.
-        let normalizedType = type;
-        for (const [original, canonical] of varMap) {
-            normalizedType = normalizedType.replace(new RegExp(`\\b${original}\\b`, 'g'), canonical);
-        }
-        normalizedType = this._normalizeType(normalizedType);
-        
+
+        // The normalizer is syntactic (whitespace) only — semantic identity is out of contract.
+        const normalizedType = this._normalizeType(substitute(type));
+
         return {
             type: normalizedType,
             context: normalizedContext
@@ -185,19 +210,26 @@ export class GoalEGraph {
         const newFrontier = [];
 
         for (const g of subgoals) {
-            // Collision-safe: addGoal resolves the canonical key (a hash collision produces a
-            // distinct class, never a wrong merge). The frontier membership check uses the
-            // returned id so carried-over vs child is decided on real identity.
-            const id = this.addGoal(g);
-            if (frontierIds.has(id)) {
+            // Carried-over siblings are NOT children of this tactic — a false parent edge would
+            // corrupt MCGS backprop (reward would flow to sibling goals across unrelated
+            // branches). Compute identity first: a carried-over class refreshes its concrete
+            // instance only; a genuine child is added WITH the parent link, so MCGS._backprop
+            // walks real ancestry (transposition merges push the parent into the existing
+            // class's parents[]).
+            const normalized = this.normalizeGoal(g);
+            const key = this.canonicalKey(normalized);
+            const id = this.hashGoal(normalized);
+            const existing = this.classes.get(id);
+            if (frontierIds.has(id) && existing?.canonicalKey === key) {
+                existing.goals.push(g);
                 carriedOver.push(id);
                 newFrontier.push(id);
-            } else {
-                const childId = id;
-                created.push(g);
-                subgoalClasses.push(childId);
-                newFrontier.push(childId);
+                continue;
             }
+            const childId = this.addGoal(g, goalClassId);
+            created.push(g);
+            subgoalClasses.push(childId);
+            newFrontier.push(childId);
         }
 
         const tacticRecord = {

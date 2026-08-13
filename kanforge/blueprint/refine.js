@@ -11,6 +11,7 @@ import { SkeletonGenerator, normalizeStub } from './skeleton.js';
 import { validateBlueprint, topologicalOrder } from './dag.js';
 import { checkDrift } from './drift.js';
 import { hashStatement } from '../lean/pin.js';
+import { buildProofSource } from '../core/state.js';
 import { buildLemmaIndex } from '../growth/lemmaStore.js';
 import { Patch, patchStreamFromEvents } from '../core/patch.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
@@ -159,15 +160,28 @@ export class BlueprintRefiner {
 
     async _attempt(stub, working) {
         // §5.7 Stage 2 — exact reuse: a previously-verified statement (same hash) in the store
-        // reuses its stored proof with zero LLM/kernel spend. The proof is re-verified by the
-        // kernel at commit — retrieval never bypasses verification.
+        // reuses its stored proof with zero LLM spend — but NEVER with zero kernel spend. The
+        // stored proof is re-verified against the CURRENT backend/toolchain before it is
+        // accepted (retrieval never bypasses verification); a store entry that fails here is a
+        // stale entry and the stub falls through to a fresh proof.
         const stmtHash = hashStatement(stub.statement);
         const reused = this.lemmaStore?.get(stmtHash);
         if (reused?.proofScript) {
-            stub.proof = reused.proofScript;
-            // §5.9: a store hit is a typed `reuse` patch — recorded, not a silent shortcut.
-            stub.patchStream = [new Patch({ node: stmtHash, op: 'reuse', replacement: reused.proofScript, scope: 'lemma', meta: { source: reused.statementHash ?? stmtHash } })];
-            return { proved: true, resplit: false, added: 0, reused: true };
+            try {
+                const fullSource = buildProofSource(stub.statement, reused.proofScript);
+                const reuseCheck = await this.backend.check(fullSource, { useWarmEnv: false });
+                if (reuseCheck.status === 'verified') {
+                    stub.proof = reused.proofScript;
+                    stub.reuseVerifiedAt = new Date().toISOString();
+                    // §5.9: a store hit is a typed `reuse` patch — recorded with its fresh
+                    // verification evidence, not a silent shortcut.
+                    stub.patchStream = [new Patch({ node: stmtHash, op: 'reuse', replacement: reused.proofScript, scope: 'lemma', meta: { source: reused.statementHash ?? stmtHash, verification: 'verified', verifiedAt: stub.reuseVerifiedAt } })];
+                    return { proved: true, resplit: false, added: 0, reused: true };
+                }
+                console.log(`[refine] reuse rejected by kernel: ${String(reuseCheck.error?.message ?? 'verification failed').slice(0, 160)}`);
+            } catch (err) {
+                console.log(`[refine] reuse path failed to assemble/verify source (${err?.message ?? err}); proving fresh`);
+            }
         }
 
         const userOnEvent = this.loopOptions.onEvent;

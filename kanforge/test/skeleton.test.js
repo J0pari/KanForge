@@ -11,13 +11,18 @@ import { stripImports } from '../agent/roles/autoformalizer.js';
 import { validateBlueprint } from '../blueprint/dag.js';
 import { hashStatement } from '../lean/pin.js';
 import { resolveModule } from '../lean/moduleResolver.js';
+import { MATHLIB_PRESENT } from './mathlibEnv.js';
 
 const THM = 'theorem add_comm_thm (a b : Nat) : a + b = b + a := by sorry';
 const H1 = 'theorem add_comm (a b : Nat) : a + b = b + a := by sorry';
 const H2 = 'theorem zero_comm : 0 + 0 = 0 := by sorry';
 
 // Stubs are emitted with the canonical tactic imports prepended — hash statements accordingly.
-const TACTIC_IMPORTS = STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean);
+// Hermeticity: with the Mathlib tree absent, fall back to the raw (stable) module names so
+// stub shape tests still run; exact-resolution assertions are gated separately.
+const TACTIC_IMPORTS = MATHLIB_PRESENT
+    ? STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean)
+    : STUB_TACTIC_MODULES;
 const stubOf = s => TACTIC_IMPORTS.map(m => `import ${m}`).join('\n') + '\n\n' + normalizeStub(s);
 
 class ScriptedLLM {

@@ -14,6 +14,14 @@ export class Scheduler {
         // null means "no timeout" (each operation is bounded by its backend), matching the
         // _spawn timer guard. Only an omitted option falls back to the 60s default.
         this.timeoutMs = options.timeoutMs === undefined ? 60_000 : options.timeoutMs;
+        // CANCELLATION SEMANTICS (§2.6): `timeoutMs` is a LOGICAL timeout — when it fires the
+        // scheduler aborts its own signal, stops caring about the job, and reports FAILED. It
+        // does NOT and cannot stop the underlying computation (e.g. a backend worker mid-check);
+        // cooperative cancellation is the check callback's obligation via the AbortSignal, and
+        // HARD cancellation (killing the worker/process) is the backend's responsibility
+        // (§3.1 kill-on-hang). The loop therefore sets timeoutMs = null and relies on the
+        // backend's own kill-on-hang; the default exists for dispatch correctness, not for
+        // stopping misbehaving backends.
         this.priority = options.priority ?? null; // override (nodeId, ctx) => number
         this.onProgress = options.onProgress ?? null;
         this.maxFailures = options.maxFailures ?? null; // stop budget: halt once N nodes failed
@@ -177,7 +185,9 @@ export class Scheduler {
                 if (!settled) {
                     settled = true;
                     controller.abort();
-                    reject(new Error(`timeout after ${timeoutMs}ms: ${nodeId}`));
+                    // Logical timeout: the scheduler stops waiting; hard cancellation of the
+                    // underlying computation is the backend's job (§2.6, §3.1).
+                    reject(new Error(`logical timeout after ${timeoutMs}ms (cooperative abort sent; hard cancellation is the backend's responsibility): ${nodeId}`));
                 }
             }, timeoutMs) : null;
             timer?.unref?.();

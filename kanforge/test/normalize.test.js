@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { normalizeStatement, normalizeStatementText, normalizeFormalization, suggestImportsForError } from '../agent/roles/normalize.js';
 import { resolveModule, resolveImports } from '../lean/moduleResolver.js';
+import { skipWithoutMathlib } from './mathlibEnv.js';
 
 test('unicode math symbols normalize to ASCII Lean type names', () => {
     assert.strictEqual(normalizeStatement('example : ∃ n : ℕ, n = n := by sorry'), 'example : ∃ n : Nat, n = n := by sorry');
@@ -25,14 +26,14 @@ test('fenced and multiline statements collapse to a single canonical form', () =
     assert.strictEqual(normalizeStatementText('open scoped BigOperators\n\ntheorem t : True := by sorry'), 'theorem t : True := by sorry');
 });
 
-test('normalizeFormalization resolves imports + normalizes the theorem', () => {
+test('normalizeFormalization resolves imports + normalizes the theorem', { skip: skipWithoutMathlib('module resolution scans the mathlib source tree') }, () => {
     const r = normalizeFormalization(['Mathlib.Data.Nat.Prime'], 'theorem t : ∃ n : ℕ, Nat.Prime n := by sorry');
     assert.deepStrictEqual(r.imports, ['Mathlib.Data.Nat.Prime.Defs']);
     assert.strictEqual(r.theorem, 'theorem t : ∃ n : Nat, Nat.Prime n := by sorry');
     assert.strictEqual(r.statement, 'import Mathlib.Data.Nat.Prime.Defs\n\ntheorem t : ∃ n : Nat, Nat.Prime n := by sorry');
 });
 
-test('module resolver maps directory aliases to real modules, drops unresolvable', () => {
+test('module resolver maps directory aliases to real modules, drops unresolvable', { skip: skipWithoutMathlib('module resolution scans the mathlib source tree') }, () => {
     assert.strictEqual(resolveModule('Mathlib.Data.Nat.Prime'), 'Mathlib.Data.Nat.Prime.Defs');
     assert.strictEqual(resolveModule('Mathlib.Data.Nat.Prime.Defs'), 'Mathlib.Data.Nat.Prime.Defs');
     assert.strictEqual(resolveModule('Mathlib.Data.Real.Basic'), 'Mathlib.Data.Real.Basic');

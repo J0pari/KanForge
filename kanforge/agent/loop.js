@@ -26,8 +26,7 @@ import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 import { hashChainEntry, verifyHashChain } from '../core/hasher.js';
 import { isGoalSolved, isLemmaProved } from './solve.js';
 import { GoalEGraph, lexicalNormalize } from '../core/egraph.js';
-import { straighten, buildProofSource } from '../core/state.js';
-import { Guardrails } from '../core/guardrails.js';
+import { buildProofSource } from '../core/state.js';
 import { Patch } from '../core/patch.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
@@ -35,7 +34,8 @@ import { computeMetrics } from '../optimization/metrics.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
 import { formatGoalPrompt, buildTacticPrompt } from './prompts.js';
-import { sanitizeTacticText } from './llm.js';
+import { ProposalEngine } from './proposalEngine.js';
+import { runCommitGate } from './commitGate.js';
 import { bestOfNWithSwiss, buildPairwiseJudge, swissRank } from '../search/swiss.js';
 import { bestOfN } from '../search/bestofn.js';
 import { BestFirstSearch } from '../search/bfs.js';
@@ -47,7 +47,7 @@ import { analyzePatterns } from '../optimization/patterns.js';
 import { exportTelemetry } from '../optimization/exporter.js';
 import { TestTimePolicy } from '../optimization/ttrl.js';
 import { GRPOHarness } from '../optimization/grpo.js';
-import { PremiseRetriever, buildPremisePrompt, findPremiseLockViolations } from '../search/premises.js';
+import { PremiseRetriever, buildPremisePrompt } from '../search/premises.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -57,7 +57,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02 } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -91,6 +91,7 @@ export class TacticLoop {
         this.writeAuditPacks = writeAuditPacks !== false; // digest/artifacts are the record for driven runs
         this.repair = repair !== false; // error-driven repair toggle (registry component)
         this.predictorSkips = 0; // kernel-budget saved by the predictor pre-filter (per lemma, summed)
+        this.predictorExploration = predictorExploration; // §6: counterfactual re-tests of rejected tactics
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -159,13 +160,20 @@ export class TacticLoop {
             throw err;
         };
 
+        let proposal = null;
         try {
             // Level 2: Goal e-graph. extractGoals opens the backend proof session.
             const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
-            // Per-lemma proposal LLM: the tactic menu wraps the raw llm with this lemma's
-            // statement (import-verified capability menu). Repairs and the lemma-level repair
-            // use the same wrapped client, so all proposal prompts get the same capability info.
+            // Per-lemma proposal engine (§4.1): the tactic menu wraps the raw llm with this
+            // lemma's statement, and the ProposalEngine owns the budget-walled, write-through
+            // counting client every proposal path uses — one accounting point, one budget wall.
             const proposalLLM = this.menu ? new TacticMenuAugmentingLLM(this.llm, { statement }) : this.llm;
+            proposal = new ProposalEngine({
+                llm: proposalLLM,
+                maxLlmCalls: this.maxLlmCalls,
+                predictorExploration: this.predictorExploration,
+                onEvent: e => this._emit({ ...e, lemmaId }, lemmaId)
+            });
             let rootGoals;
             try {
                 rootGoals = await this.backend.extractGoals(statement);
@@ -208,20 +216,18 @@ export class TacticLoop {
             if (this.searchRecipe === 'bfs' || this.searchRecipe === 'mcgs') {
                 // Whole-graph delegation (architecture.md §5 integration contract): the strategy
                 // owns goal selection AND proposals over the e-graph; the loop keeps the commit
-                // gate below. Cost is counted via counting proxies so the loop's llmCalls and
-                // tacticCalls stay honest for metrics/audit.
-                const countedLLM = this._countingLLM(proposalLLM);
+                // gate below. LLM calls flow through the proposal engine (counted + budget-walled);
+                // backend calls are counted via the proxy so tacticCalls stays honest.
                 const countedBackend = this._countingBackend(this.backend);
                 const searcher = this.searchRecipe === 'mcgs'
-                    ? new MCGS({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
-                    : new BestFirstSearch({ backend: countedBackend, llm: countedLLM, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors });
+                    ? new MCGS({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
+                    : new BestFirstSearch({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors });
                 this._emit({ type: 'search_start', lemmaId, recipe: this.searchRecipe, budget: this.maxGoalsPerLemma }, lemmaId);
                 const searchResult = await searcher.search(egraph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
                 goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
-                this.llmCalls += countedLLM.llmCalls;
                 this.tacticCalls += countedBackend.tacticCalls;
                 this.predictorSkips += searcher.skipped ?? 0;
-                this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: egraph.isRootSolved(), llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
+                this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: egraph.isRootSolved(), llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
                 if (!egraph.isRootSolved()) {
                     fail(`search recipe ${this.searchRecipe} exhausted budget ${this.maxGoalsPerLemma} without solving`);
                 }
@@ -230,8 +236,8 @@ export class TacticLoop {
                 goalCount = 1;
                 while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
                     if (signal?.aborted) break;
-                    if (this.maxLlmCalls && this.llmCalls >= this.maxLlmCalls) {
-                        this._emit({ type: 'budget_exhausted', lemmaId, budget: this.maxLlmCalls, llmCalls: this.llmCalls }, lemmaId);
+                    if (proposal.budgetExhausted) {
+                        this._emit({ type: 'budget_exhausted', lemmaId, budget: this.maxLlmCalls, llmCalls: proposal.llmCalls }, lemmaId);
                         break;
                     }
 
@@ -261,18 +267,19 @@ export class TacticLoop {
                         const predictorHistory = [];
                         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                             if (signal?.aborted) break;
+                            if (proposal.budgetExhausted) break;
 
-                            this.llmCalls++;
                             // Lemma-store lookup: if a previously-proven lemma's conclusion
-                            // matches the current goal type (after lexical normalization),
-                            // skip the LLM entirely and use `exact <lemma>`.
+                            // matches the current goal type (after semantic normalization),
+                            // skip the LLM entirely and use `exact <lemma>`. A store hit costs
+                            // zero LLM calls — only real model calls go through the engine.
                             const stored = this.lemmaStore?.findByGoal(goal.type);
                             const proposed = stored
                                 ? { tactic: `exact ${extractLemmaName(stored.statement)}`, llmMs: 0, promptTokens: 0, completionTokens: 0 }
-                                : (this.llmCalls++, await this._proposeTactic(goal, attempt, lemmaId, currentGoalClass.id, proposalLLM, predictorHistory));
+                                : await proposal.propose(this._buildTacticPrompt(goal, attempt, lemmaId, currentGoalClass.id, predictorHistory));
                             const tactic = proposed?.tactic;
                             if (!tactic) {
-                                this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: 'LLM returned no tactic' }, lemmaId);
+                                this._emit({ type: 'llm_error', lemmaId, goalClassId: currentGoalClass.id, attempt, error: proposed?.error ?? 'LLM returned no tactic', errorKind: proposed?.errorKind ?? 'abstention' }, lemmaId);
                                 continue;
                             }
 
@@ -281,12 +288,19 @@ export class TacticLoop {
 
                             // Feedback interconnection (architecture.md §0.3): a causal predictor
                             // that knows a tactic head leads to kernel rejection can veto it before
-                            // the expensive call — zero kernel spend on a predicted failure.
+                            // the expensive call — zero kernel spend on a predicted failure. The
+                            // veto is NOT permanent (§6): with probability `predictorExploration`
+                            // the tactic is tried anyway, producing the counterfactual evidence
+                            // that keeps the predictor from self-confirming.
                             const head = tacticHead(tactic);
                             if (this.predictors?.rejects(head, predictorHistory)) {
-                                this.predictorSkips++;
-                                this._emit({ type: 'tactic_predicted_failure', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, head }, lemmaId);
-                                continue;
+                                if (proposal.shouldExplore(tactic)) {
+                                    this._emit({ type: 'predictor_explored', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, head }, lemmaId);
+                                } else {
+                                    this.predictorSkips++;
+                                    this._emit({ type: 'tactic_predicted_failure', lemmaId, goalClassId: currentGoalClass.id, attempt, tactic, head }, lemmaId);
+                                    continue;
+                                }
                             }
                             predictorHistory.push(head);
 
@@ -318,8 +332,8 @@ export class TacticLoop {
                         }
                     } else {
                         // Per-goal delegated recipes: bestofn / swiss / swiss+repulsion
-                        const pick = await this._pickByRecipe(goal, lemmaId, currentGoalClass.id, triedTactics, proposalLLM);
-                        this.llmCalls += pick.llmCalls ?? 0;
+                        // (LLM calls counted by the proposal engine; kernel calls by the proxy).
+                        const pick = await this._pickByRecipe(goal, lemmaId, currentGoalClass.id, triedTactics, proposal);
                         this.tacticCalls += pick.tacticCalls ?? 0;
                         this.predictorSkips += pick.skipped ?? 0;
 
@@ -348,7 +362,7 @@ export class TacticLoop {
                         this._emit({ type: 'repair_attempted', lemmaId, goalClassId: currentGoalClass.id, errorType, lastError }, lemmaId);
 
                         const repairPrompt = buildRepairPrompt(goal, lastError, lastResult?.tactic);
-                        const repaired = await this._proposeTacticFromPrompt(repairPrompt, proposalLLM);
+                        const repaired = await proposal.propose(repairPrompt);
                         const repairedTactic = repaired?.tactic;
 
                         if (repairedTactic) {
@@ -413,9 +427,9 @@ export class TacticLoop {
             // All per-goal attempts exhausted without solving the root. Try one lemma-level
             // repair: ask the LLM for a complete proof of the full statement. If the kernel
             // accepts a multi-line proof, skip the rest of the commit path and mark solved.
-            if (this.repair && !egraph.isRootSolved()) {
+            if (this.repair && !egraph.isRootSolved() && !proposal.budgetExhausted) {
                 console.log(`[${ts()}] [loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
-                const resp = await this._proposeTacticFromPrompt(buildLemmarepairPrompt(statement), proposalLLM);
+                const resp = await proposal.propose(buildLemmarepairPrompt(statement));
                 const proof = resp?.tactic;
                 if (proof && isMultiLineProof(proof)) {
                     const fullSource = buildProofSource(statement, `by\n${proof}`);
@@ -445,101 +459,77 @@ export class TacticLoop {
                 fail('guardrails rejected the commit: STATEMENT_WEAKENED');
             }
 
-            // Pin-context drift check (§3.1): the toolchain/norm context captured at pin
-            // time must still match the live backend, or the proof was built against a
-            // different Lean/mathlib than the one that will re-verify it.
-            const currentPin = makePin(statement, this.backend.pin?.() ?? {});
-            const pinStatus = checkPin(pin, currentPin);
-            if (!pinStatus.ok && !pinStatus.drift) {
-                const v = { invariant: 1, type: 'PIN_DRIFT', message: pinStatus.reason };
-                this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
-                fail(`guardrails rejected the commit: PIN_DRIFT (${pinStatus.reason})`);
-            }
-
-            // Compose the proof tree, straighten to a script, splice into the pinned
-            // statement, and kernel-verify the WHOLE source (§2.4, §2.5 invariant 2).
-            // If a multi-line repair gave us a direct proof, use it — skip extraction.
+            // Commit gate (§2.5, commitGate.js): pin-drift check, proof assembly (tree →
+            // script → full source), pre-flight, whole-source kernel verify, premise lock, and
+            // the HARD guardrail gate (the leakage scan covers the complete source). The gate
+            // makes no LLM calls and returns a typed outcome the loop maps to its event stream.
             const rootClass = egraph.classes.get(egraph.rootId);
-            const directProof = rootClass?._directProof;
-            const proofTree = directProof ? null : egraph.extractProof();
-            if (!directProof && !proofTree) {
-                fail('proof extraction failed');
-            }
-            const proofScript = directProof ?? straighten(proofTree).script;
-            let source;
-            if (directProof) {
-                source = buildProofSource(statement, directProof);
-            } else {
-                source = buildProofSource(statement, proofScript);
-            }
+            const gate = await runCommitGate({
+                backend: this.backend,
+                statement,
+                lemmaId,
+                pin,
+                currentPin: makePin(statement, this.backend.pin?.() ?? {}),
+                checkPin,
+                egraph,
+                directProof: rootClass?._directProof ?? null,
+                premiseLocked: this.premiseLocked,
+                retriever: this.retriever,
+                retrievedPremises: this._retrievedPremises
+            });
 
-            // Pre-flight check: the assembled source must be syntactically and type-level
-            // valid before the full kernel verify. Catches bullet misalignment, unclosed
-            // goals, and variable shadowing — compose errors that straighten missed.
-            const preflight = await this.backend.check(source, { useWarmEnv: false });
-            if (preflight.status !== 'verified') {
-                const perr = preflight.error?.message ?? 'pre-flight check failed';
-                console.log(`[${ts()}] [loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(perr).slice(0, 300)}`);
-                console.log(`[${ts()}] [loop] assembled source:\n${source.slice(0, 600)}`);
-                fail(`proof composition invalid: ${perr.slice(0, 200)}`, { sourceHead: source.slice(0, 400), preflightError: perr });
-            }
-            const verification = await this.backend.verifyProof(source, lemmaId);
-
-            // Premise-lock gate (build_order.md §5.2): when locked, the proof may only
-            // reference premises that were actually retrieved for this lemma.
-            if (this.premiseLocked) {
-                const violations = findPremiseLockViolations(proofScript, this.retriever?.corpus ?? [], [...this._retrievedPremises]);
-                if (violations.length > 0) {
-                    const v = { type: 'PREMISE_LOCK_VIOLATION', message: `proof references unretrieved premises: ${violations.join(', ')}`, names: violations };
+            if (!gate.ok) {
+                if (gate.kind === 'pin_drift') {
+                    const v = { invariant: 1, type: 'PIN_DRIFT', message: gate.message };
+                    this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                    fail(`guardrails rejected the commit: PIN_DRIFT (${gate.message})`);
+                }
+                if (gate.kind === 'premise_lock') {
+                    const v = { type: 'PREMISE_LOCK_VIOLATION', message: gate.message, names: gate.names };
                     this._emit({ type: 'premise_lock_trip', lemmaId, violation: v }, lemmaId);
                     this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
                     fail('guardrails rejected the commit: PREMISE_LOCK_VIOLATION');
                 }
-            }
-
-            // HARD guardrail gate at commit (§2.5): pin unchanged, kernel accepted, no leakage.
-            const commit = Guardrails.assertLemmaCommit({
-                pin: this.pins.get(lemmaId),
-                statement,
-                proofScript,
-                verification
-            });
-            if (!commit.ok) {
-                for (const v of commit.violations) {
-                    if (v.type === 'STATEMENT_WEAKENED') {
-                        this._emit({ type: 'statement_weakened', lemmaId, violation: v }, lemmaId);
-                    }
-                    this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                if (gate.kind === 'preflight_failed') {
+                    console.log(`[${ts()}] [loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(gate.preflightError ?? gate.message).slice(0, 300)}`);
+                    console.log(`[${ts()}] [loop] assembled source:\n${(gate.sourceHead ?? '').slice(0, 600)}`);
+                    fail(gate.message, { sourceHead: gate.sourceHead, preflightError: gate.preflightError });
                 }
-                // Surface the kernel error and the assembled source so the refine cohort can
-                // diagnose what the kernel rejected — silent KERNEL_REJECTED is unactionable.
-                const verr = verification.error?.message ?? verification.error ?? 'no kernel message';
-                const srcHead = source.slice(0, 400);
-                console.log(`[${ts()}] [loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
-                console.log(`[${ts()}] [loop] assembled source head:\n${srcHead}`);
-                fail(`guardrails rejected the commit: ${commit.violations.map(v => v.type).join(', ')}`, {
-                    kernelError: String(verr),
-                    sourceHead: srcHead
-                });
+                if (gate.kind === 'guardrails') {
+                    for (const v of gate.violations) {
+                        if (v.type === 'STATEMENT_WEAKENED') {
+                            this._emit({ type: 'statement_weakened', lemmaId, violation: v }, lemmaId);
+                        }
+                        this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
+                    }
+                    // Surface the kernel error and the assembled source so the refine cohort can
+                    // diagnose what the kernel rejected — silent KERNEL_REJECTED is unactionable.
+                    const verr = gate.kernelError ?? 'no kernel message';
+                    console.log(`[${ts()}] [loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
+                    console.log(`[${ts()}] [loop] assembled source head:\n${gate.sourceHead ?? ''}`);
+                    fail(`guardrails rejected the commit: ${gate.message}`, {
+                        kernelError: String(verr),
+                        sourceHead: gate.sourceHead
+                    });
+                }
+                fail(gate.message ?? 'commit gate failed');
             }
 
             // Run-level statement hash chain (§7): every verified lemma appends a tamper-evident
             // entry — sha256(prevHash || statementHash || proofHash || outcome).
             const prevHash = this.hashChain.length > 0 ? this.hashChain[this.hashChain.length - 1].hash : null;
-            const statementHash = hashStatement(statement);
-            const proofHash = hashStatement(proofScript);
             this.hashChain.push({
                 prevHash,
-                statementHash,
-                proofHash,
+                statementHash: gate.hashEntry.statementHash,
+                proofHash: gate.hashEntry.proofHash,
                 outcome: 'verified',
-                hash: hashChainEntry(prevHash, statementHash, proofHash, 'verified')
+                hash: hashChainEntry(prevHash, gate.hashEntry.statementHash, gate.hashEntry.proofHash, 'verified')
             });
 
             const ms = Date.now() - start;
-            this._emit({ type: 'lemma_verified', lemmaId, statement, proofScript, ms, goalCount }, lemmaId);
+            this._emit({ type: 'lemma_verified', lemmaId, statement, proofScript: gate.proofScript, ms, goalCount }, lemmaId);
 
-            const result = { statement, proofScript, verifiedAt: new Date().toISOString(), goalCount, ms };
+            const result = { statement: gate.result.statement, proofScript: gate.proofScript, verifiedAt: gate.result.verifiedAt, goalCount, ms };
 
             // Checkpoint: serialize graph state after each verified lemma (P2.2 resumability)
             // Mark node as cached before serializing so it's included in the checkpoint
@@ -566,21 +556,20 @@ export class TacticLoop {
             }
             throw err;
         } finally {
+            // Accumulate this lemma's engine-counted LLM calls into the loop total (write-through
+            // accounting: the engine counted every call once; the loop just adds it up).
+            if (proposal) this.llmCalls += proposal.llmCalls;
             // Release the leased proof-session worker back to the backend pool.
             this.backend.endLemma?.(lemmaId);
         }
     }
 
-    async _proposeTactic(goal, attempt, lemmaId = null, goalClassId = null, proposalLLM = null, history = []) {
-        const prompt = this._buildTacticPrompt(goal, attempt, lemmaId, goalClassId, history);
-        return this._proposeTacticFromPrompt(prompt, proposalLLM);
-    }
-
     // Per-goal delegated recipes (architecture.md §5): pick a tactic for the current goal via the
-    // named strategy, applying candidates through a counting backend. Returns
-    // { ok, tactic, result, via, llmCalls, tacticCalls, lastError }.
-    async _pickByRecipe(goal, lemmaId, goalClassId, triedTactics, proposalLLM = this.llm) {
-        const countedLLM = this._countingLLM(proposalLLM);
+    // named strategy, applying candidates through a counting backend. LLM calls flow through the
+    // proposal engine's walled client (counted + budget-enforced); the engine's counter is the
+    // single accounting point. Returns { ok, tactic, result, via, llmCalls, tacticCalls,
+    // lastError }.
+    async _pickByRecipe(goal, lemmaId, goalClassId, triedTactics, proposal) {
         const countedBackend = this._countingBackend(this.backend);
         const N = this.swissN > 1 ? this.swissN : this.maxTacticsPerGoal;
         // Preference-pair hook (§6.2): every judged pair is a preference record — persisted to
@@ -590,25 +579,25 @@ export class TacticLoop {
         };
 
         if (this.searchRecipe === 'bestofn') {
-            const pick = await bestOfN(goal, countedBackend, countedLLM, N, this.predictors);
-            return { ...pick, via: 'bestofn', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: pick.ok ? null : 'no tactic accepted in best-of-N' };
+            const pick = await bestOfN(goal, countedBackend, proposal.llm, N, this.predictors);
+            return { ...pick, via: 'bestofn', llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: pick.ok ? null : 'no tactic accepted in best-of-N' };
         }
 
         if (this.searchRecipe === 'swiss') {
             this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId, N }, lemmaId);
-            const swissResult = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors: this.predictors, onOutcome });
+            const swissResult = await bestOfNWithSwiss(goal, countedBackend, proposal.llm, { N, predictors: this.predictors, onOutcome });
             if (swissResult.ok) {
                 this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
-                return { ...swissResult, via: 'swiss', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
+                return { ...swissResult, via: 'swiss', llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
             }
             this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: swissResult.ranking.length }, lemmaId);
-            return { ...swissResult, via: 'swiss', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no tactic accepted in tournament' };
+            return { ...swissResult, via: 'swiss', llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no tactic accepted in tournament' };
         }
 
         // swiss+repulsion: candidates drawn through a RepulsionSampler seeded with every tactic
         // tried (and failed) so far in this lemma, ranked by swiss, applied in order.
         this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId, N, repulsion: true }, lemmaId);
-        const sampler = new RepulsionSampler({ llm: countedLLM });
+        const sampler = new RepulsionSampler({ llm: proposal.llm });
         const candidates = [];
         const seen = new Set();
         for (let i = 0; i < N; i++) {
@@ -620,9 +609,9 @@ export class TacticLoop {
         }
         if (candidates.length === 0) {
             this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: 0, repulsion: true }, lemmaId);
-            return { ok: false, via: 'swiss+repulsion', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no candidates sampled' };
+            return { ok: false, via: 'swiss+repulsion', llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no candidates sampled' };
         }
-        const judge = buildPairwiseJudge(goal, { llm: countedLLM });
+        const judge = buildPairwiseJudge(goal, { llm: proposal.llm });
         const ranking = await swissRank(candidates, judge, { onOutcome });
         let skipped = 0;
         const history = [];
@@ -635,26 +624,12 @@ export class TacticLoop {
             const result = await countedBackend.applyTactic(goal, candidate);
             if (result.status === 'ok') {
                 this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId, winner: candidate, rankingSize: ranking.length, repulsion: true }, lemmaId);
-                return { ok: true, tactic: candidate, result, via: 'swiss+repulsion', skipped, llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
+                return { ok: true, tactic: candidate, result, via: 'swiss+repulsion', skipped, llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
             }
             triedTactics.push(candidate);
         }
         this._emit({ type: 'swiss_tournament_failed', lemmaId, goalClassId, rankingSize: ranking.length, repulsion: true }, lemmaId);
-        return { ok: false, via: 'swiss+repulsion', skipped, llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'all ranked candidates failed kernel' };
-    }
-
-    // Counting proxies: make delegated strategies' LLM/backend cost visible to the loop's
-    // counters without touching their interfaces. The ablation harness reads these counters
-    // (architecture.md §0.4), so delegated costs must accumulate on the loop.
-    _countingLLM(llm) {
-        const counted = { ...llm };
-        counted.llmCalls = 0;
-        const complete = llm.complete.bind(llm);
-        counted.complete = async (...args) => {
-            counted.llmCalls++;
-            return complete(...args);
-        };
-        return counted;
+        return { ok: false, via: 'swiss+repulsion', skipped, llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'all ranked candidates failed kernel' };
     }
 
     _countingBackend(backend) {
@@ -668,26 +643,6 @@ export class TacticLoop {
         };
         counted.extractGoals = async (statement) => extractGoals(statement);
         return counted;
-    }
-
-        async _proposeTacticFromPrompt(prompt, llm = this.llm) {
-        const t0 = Date.now();
-        try {
-            const response = await llm.complete(prompt);
-            const llmMs = Date.now() - t0;
-            if (llmMs > 20000) console.log(`[${ts()}] [loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
-            // Single response contract (§4.1): the shared sanitizer extracts the tactic from
-            // fences/prose; multi-line scripts pass through untouched for the repair path.
-            const tactic = sanitizeTacticText(response.text) || null;
-            return {
-                tactic,
-                llmMs,
-                promptTokens: response.usage?.promptTokens ?? null,
-                completionTokens: response.usage?.completionTokens ?? null
-            };
-        } catch (err) {
-            return { tactic: null, llmMs: Date.now() - t0, promptTokens: null, completionTokens: null };
-        }
     }
 
     _buildTacticPrompt(goal, attempt, lemmaId = null, goalClassId = null, history = []) {
