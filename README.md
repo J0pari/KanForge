@@ -2,12 +2,12 @@
 
 **LLM-guided proof refinery for Lean 4**
 
-KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM-guided tactic search to construct Lean 4 proofs. It implements a two-level architecture: a lemma DAG for dependency-ordered dispatch, and a goal e-graph for tactic-level search with transposition merging. Every tactic proposal is checked against the real Lean kernel before it is committed — the LLM proposes, the kernel disposes.
+KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM-guided tactic search to construct Lean 4 proofs. It implements a two-level architecture: a lemma DAG for dependency-ordered dispatch, and a goal transposition graph for tactic-level search with transposition merging. Every tactic proposal is checked against the real Lean kernel before it is committed — the LLM proposes, the kernel disposes.
 
 ## Key Features
 
 - **Tactic-level search**: LLM proposes one tactic per call, the backend applies it, and subgoals are searched recursively
-- **Goal e-graph**: Equivalence classes of goals with shared statistics enable efficient transposition merging
+- **Goal transposition graph**: Equivalence classes of goals with shared statistics enable efficient transposition merging
 - **REPL integration**: Direct interaction with the Lean kernel via `leanprover-community/repl`
 - **Causal telemetry**: Every event (tactic proposal, application, goal solving) is traced with parent links
 - **Guardrails enforcement**: Statement pinning prevents weakening; kernel verification ensures correctness
@@ -17,7 +17,7 @@ KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM
 ## Architecture
 
 ```
-Level 1: Lemma DAG                    Level 2: Goal E-Graph
+Level 1: Lemma DAG                    Level 2: Goal transposition graph
 ┌─────────────────┐                   ┌─────────────────┐
 │ Lemma A         │                   │ Goal Class 1    │
 │ (verified)      │──────depends─────▶│ (root goal)     │
@@ -161,7 +161,7 @@ Test suite includes:
 - **Integration tests**: end-to-end loop with a mock backend
 - **Live REPL tests**: real kernel interaction (gated on `KANFORGE_REPL_BIN` pointing at a repl binary)
 - **Swiss-tournament tests**: Bradley-Terry fitting, pairwise judging, best-of-n selection
-- **Unit tests**: goal parsing, state serialization, guardrails, e-graph, telemetry
+- **Unit tests**: goal parsing, state serialization, guardrails, transposition graph, telemetry
 
 ## Project Structure
 
@@ -175,7 +175,7 @@ kanforge/
 │   └── solve.js        # Per-lemma solving logic
 ├── core/               # Foundational primitives
 │   ├── lazy.js         # Memoized thunks (used by PullGraph)
-│   ├── egraph.js       # Goal equivalence graph
+│   ├── transpositionGraph.js       # Goal equivalence graph
 │   ├── pullgraph.js    # Memoized dependency DAG
 │   ├── scheduler.js    # Dependency-ordered dispatch
 │   ├── patch.js        # Typed mutation record (Patch + patchFromEvent)
@@ -261,7 +261,7 @@ Mathlib-enabled repl in `lean-project`):
 
 **Verified by unit/integration tests** (mock kernel):
 
-- E-graph normalization and transposition merging
+- transposition graph normalization and transposition merging
 - Proof-tree ↔ script straightening (round-trip bijectivity)
 - Guardrail invariants (statement weakening, leakage/`sorry`/`admit` rejection)
 - Checkpoint/resume via `state.json`
@@ -325,7 +325,7 @@ captured per lemma into the retrieval index + development digest as the transfor
 
 2. **Kernel verification**: Every tactic application is checked by the Lean kernel. No trusted LLM output.
 
-3. **Transposition merging**: Equivalent goals (alpha-equivalent or definitionally equal) share statistics in the e-graph, avoiding redundant search. Class identity is collision-safe: the canonical serialized goal key is the equality authority, hashed with SHA-256 as a lookup index — a collision never merges unrelated proof states.
+3. **Transposition merging**: Goals that normalize identically (syntactic identity — alpha-renaming + whitespace) share statistics in the transposition graph, avoiding redundant search. Class identity is collision-safe: the canonical serialized goal key is the equality authority, hashed with SHA-256 as a lookup index — a collision never merges unrelated proof states.
 
 4. **Causal telemetry**: Every event has a parent link, enabling reconstruction of the proof search trajectory.
 
@@ -339,7 +339,7 @@ captured per lemma into the retrieval index + development digest as the transfor
   deliberate constraint with a measured rationale (sample efficiency), expressed as data
   (`PROPOSAL_SPEC`, architecture.md §4.1) and staged as an ablable axis (`maxAtoms`,
   build_order.md §5.11). The repair path already consumes whole proof scripts, and the
-  atom-wise application invariant makes granularity swappable without touching the e-graph or
+  atom-wise application invariant makes granularity swappable without touching the transposition graph or
   the DAG.
 - **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. are available with
   the Mathlib-enabled repl (P0.1, built in `lean-project` and exercised by the live suite). Each
@@ -358,7 +358,7 @@ captured per lemma into the retrieval index + development digest as the transfor
   (5-problem Mathlib run, all recipes) found the search recipes (bfs/mcgs) beat ranking recipes
   on cost; tacticMenu adds a pass at higher cost — those results inform which toggle a mission
   runs under, not which toggles exist.
-- **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalEGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
+- **Blueprint refine vs. multi-goal roots**: multi-goal roots are now provable end-to-end: `GoalTranspositionGraph` models the repl's "remaining goals" frontier (siblings carried over are not re-attached as children), `straighten` emits Lean-valid bullet scripts (sequential tactics align at one column), and the live suite proves a `constructor`-split conjunction root against the real kernel.
 - **Geometry weakness**: Synthetic geometry reasoning (angle chasing, cyclic quadrilaterals) is challenging.
 
 ## Roadmap

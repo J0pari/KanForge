@@ -81,7 +81,7 @@ test('live: skeleton stubs typecheck under the real Lean kernel', { skip: SKIP_L
 // The root is deliberately a conjunction, so the live path exercises the repl's
 // multi-goal "remaining goals" semantics end-to-end: `constructor` splits the root,
 // each `· rfl` branch closes its own goal, and the composed bullet script must pass
-// the kernel at commit (regression for the old e-graph frontier misattribution).
+// the kernel at commit (regression for the old goal-frontier misattribution).
 test('live: end-to-end skeleton → refine proves a development with no sorry remaining', { skip: SKIP_LIVE, timeout: 900000 }, async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-live-'));
     const backend = makeBackend();

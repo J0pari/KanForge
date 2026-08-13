@@ -5,7 +5,7 @@ import { PullGraph } from '../core/pullgraph.js';
 import { Scheduler } from '../core/scheduler.js';
 import { Guardrails } from '../core/guardrails.js';
 import { straighten, unstraighten, assertRoundTrip } from '../core/state.js';
-import { GoalEGraph } from '../core/egraph.js';
+import { GoalTranspositionGraph } from '../core/transpositionGraph.js';
 
 test('Lazy evaluation and memoization', () => {
     let count = 0;
@@ -29,12 +29,12 @@ test('State straightening and round-trip bijectivity', () => {
     assert.strictEqual(assertRoundTrip(tree), true);
 });
 
-test('Goal e-graph normalization and transposition merging', () => {
-    const egraph = new GoalEGraph();
+test('Goal transposition-graph normalization and transposition merging', () => {
+    const graph = new GoalTranspositionGraph();
     const g1 = { type: 'P → Q', context: [{ name: 'h', type: 'P' }] };
     const g2 = { type: 'P → Q', context: [{ name: 'h', type: 'P' }] };
-    const id1 = egraph.addGoal(g1);
-    const id2 = egraph.addGoal(g2);
+    const id1 = graph.addGoal(g1);
+    const id2 = graph.addGoal(g2);
     assert.strictEqual(id1, id2);
 });
 

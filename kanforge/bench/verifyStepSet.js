@@ -2,7 +2,7 @@
 // HONEST benchmark against the real kernel, in the loop's own order of operations:
 //
 //   1. stubTypechecks — the `:= by sorry` statement types under the kernel (check).
-//   2. chainProves     — the golden `chain` replays through the SAME egraph/open[0] discipline
+//   2. chainProves     — the golden `chain` replays through the SAME transposition-graph/open[0] discipline
 //                        the ablation drivers use (extractGoals + applyTactic).
 //   3. assembledVerifies — the chain assembled into `:= by ...` re-verifies in the kernel
 //                        (verifyProof): extract -> propose -> apply -> assemble.
@@ -17,7 +17,7 @@
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GoalEGraph } from '../core/egraph.js';
+import { GoalTranspositionGraph } from '../core/transpositionGraph.js';
 import { STEP_PROBLEMS } from './stepSmoke.js';
 import { validateSmokeSet } from './smoke.js';
 
@@ -47,28 +47,28 @@ export async function replayChain(backend, statement, chain) {
     if (!rootGoals?.length) {
         return { solved: false, error: 'no root goal (statement failed to typecheck)', trace: [] };
     }
-    const egraph = new GoalEGraph();
-    egraph.addGoal(rootGoals[0]);
-    egraph.setRoot(rootGoals[0]);
+    const graph = new GoalTranspositionGraph();
+    graph.addGoal(rootGoals[0]);
+    graph.setRoot(rootGoals[0]);
     const sessionKey = rootGoals[0].sessionKey;
     const trace = [];
     try {
-        for (let step = 0; step < chain.length && !egraph.isRootSolved(); step++) {
-            const open = egraph.getOpenGoals();
+        for (let step = 0; step < chain.length && !graph.isRootSolved(); step++) {
+            const open = graph.getOpenGoals();
             if (open.length === 0) break;
             const goalClass = open[0];
-            const goal = egraph.currentGoal(goalClass.id);
+            const goal = graph.currentGoal(goalClass.id);
             const result = await backend.applyTactic(goal, chain[step]);
             trace.push({ step: step + 1, tactic: chain[step], status: result.status, newGoals: result.newGoals.length });
             if (result.status !== 'ok') {
                 return { solved: false, error: `chain step ${step + 1} '${chain[step]}' failed: ${result.error?.message ?? 'tactic error'}`, trace };
             }
-            egraph.applyTactic(goalClass.id, chain[step], result.newGoals);
+            graph.applyTactic(goalClass.id, chain[step], result.newGoals);
         }
-        const solved = egraph.isRootSolved();
+        const solved = graph.isRootSolved();
         return {
             solved,
-            error: solved ? null : `chain exhausted with ${egraph.getOpenGoals().length} goal(s) remaining`,
+            error: solved ? null : `chain exhausted with ${graph.getOpenGoals().length} goal(s) remaining`,
             trace
         };
     } finally {
@@ -160,7 +160,7 @@ export function renderMarkdown(report) {
     }
     lines.push('');
     lines.push(`> Every stub must typecheck, its golden chain must replay through the ablation drivers'`);
-    lines.push('> egraph/open[0] discipline AND re-verify once assembled, and none of');
+    lines.push('> transposition-graph/open[0] discipline AND re-verify once assembled, and none of');
     lines.push(`> ${report.config.negatives.join(', ')} may close it.`);
     return lines.join('\n');
 }

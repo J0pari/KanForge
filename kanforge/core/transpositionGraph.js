@@ -1,15 +1,19 @@
-// Goal e-graph for Level 2 search (architecture.md §2.2).
+// Goal transposition graph for Level 2 search (architecture.md §2.2).
 //
-// The e-graph structure enables transposition merging: different tactic sequences that produce
-// equivalent goals share a single equivalence class with shared statistics. This is what makes
-// search efficient — all search variants automatically benefit from transposition merging.
+// A GOAL-STATE TRANSPOSITION GRAPH, not an equality-saturation e-graph: classes merge only on
+// identical normalized goal text (syntactic identity — alpha-renaming + whitespace), there are
+// no e-nodes, no congruence closure, and no rewrite saturation. The genuine e-graph structure
+// (core/egraph.js, staged) is a separate subsystem; ablation compares them at equal budget.
+//
+// The transposition merging enables shared statistics: different tactic sequences that produce
+// the same normalized goal share a single class with shared stats — all search variants benefit.
 //
 // Class identity is COLLISION-SAFE (architecture.md §2.2, build_order.md §5.10): the id is
 // sha256(canonicalKey), where canonicalKey is the deterministically-serialized normalized goal.
 // The canonical key is the equality authority, stored on the class; the hash is a lookup index
 // over it, never the identity itself. On an id hit the canonical keys are compared — unequal keys
 // mean a hash collision, and the goals are NOT merged (separate class, collision-resolved id,
-// egraph_collision telemetry). A weak 32-bit hash as identity would merge unrelated proof states.
+// transposition_collision telemetry). A weak 32-bit hash as identity would merge unrelated proof states.
 //
 // Each equivalence class contains:
 // - id: sha256 of canonical key (alpha-equivalent goals map to same id)
@@ -43,7 +47,7 @@ export function semanticNormalize(type) {
     return s.replace(/\s+/g, ' ').trim();
 }
 
-export class GoalEGraph {
+export class GoalTranspositionGraph {
     // normalizer: optional `(goalType: string) => string` — applied before canonical-key
     // computation so mathematically-equivalent goals merge into one e-class. Cached per raw
     // input for zero repeat cost.
@@ -256,10 +260,10 @@ export class GoalEGraph {
 
     // The patch algebra interface (architecture.md §0.3, Research doc §4): a `tactic` patch
     // carries the goal class, the tactic text, and the subgoal results from the kernel call.
-    // applyPatch is the single mutation entry point — the egraph never sees raw (classId, tactic,
+    // applyPatch is the single mutation entry point — the graph never sees raw (classId, tactic,
     // subgoals) tuples directly; the Patch is the typed record.
     applyPatch(patch) {
-        if (patch.op !== 'tactic') throw new Error(`egraph.applyPatch: unsupported op '${patch.op}'`);
+        if (patch.op !== 'tactic') throw new Error(`GoalTranspositionGraph.applyPatch: unsupported op '${patch.op}'`);
         const subgoals = patch.meta?.newGoals ?? [];
         return this.applyTactic(patch.node, patch.replacement, subgoals);
     }
@@ -392,17 +396,17 @@ export class GoalEGraph {
     }
 
     static deserialize(data, { normalizer = null } = {}) {
-        const egraph = new GoalEGraph({ normalizer });
-        egraph.rootId = data.rootId;
-        egraph.frontier = data.frontier ?? [];
-        egraph.classes = new Map(data.classes);
+        const graph = new GoalTranspositionGraph({ normalizer });
+        graph.rootId = data.rootId;
+        graph.frontier = data.frontier ?? [];
+        graph.classes = new Map(data.classes);
         // Old checkpoints predate the explicit `solved` flag; a record with no subgoals
         // then meant the tactic closed the goal.
-        for (const [, gc] of egraph.classes) {
+        for (const [, gc] of graph.classes) {
             for (const t of gc.tactics ?? []) {
                 if (t.solved === undefined) t.solved = t.subgoalClasses.length === 0;
             }
         }
-        return egraph;
+        return graph;
     }
 }

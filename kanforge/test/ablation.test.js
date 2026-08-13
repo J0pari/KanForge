@@ -13,7 +13,7 @@ import { BestFirstSearch } from '../search/bfs.js';
 import { RECIPES, runAblation, renderMarkdown, wilsonInterval, buildAblationGraph, summarizeAblationGraph } from '../bench/ablation.js';
 import { validateSmokeSet } from '../bench/smoke.js';
 import { MATHLIB_PROBLEMS } from '../bench/mathlibSmoke.js';
-import { GoalEGraph } from '../core/egraph.js';
+import { GoalTranspositionGraph } from '../core/transpositionGraph.js';
 
 // Deterministic llm: cycles a per-goal-type tactic pool (found by substring match on the prompt
 // text), answers swiss judge prompts with the first candidate, and logs every prompt it saw.
@@ -166,7 +166,7 @@ test('MCGS repulsion skips duplicate tactic re-checks', async () => {
     const { backend } = makeWorld();
     const repeatingLLM = { calls: 0, async complete() { this.calls++; return { text: 'rfl' }; } };
 
-    const egraphPlain = new GoalEGraph();
+    const egraphPlain = new GoalTranspositionGraph();
     egraphPlain.addGoal({ type: 'a < c', context: [] });
     egraphPlain.setRoot({ type: 'a < c', context: [] });
     const plainStart = backend.applyCalls.length;
@@ -174,7 +174,7 @@ test('MCGS repulsion skips duplicate tactic re-checks', async () => {
         .search(egraphPlain, { rollouts: 1 });
     const plainChecks = backend.applyCalls.length - plainStart;
 
-    const egraphRep = new GoalEGraph();
+    const egraphRep = new GoalTranspositionGraph();
     egraphRep.addGoal({ type: 'a < c', context: [] });
     egraphRep.setRoot({ type: 'a < c', context: [] });
     const repStart = backend.applyCalls.length;
@@ -190,7 +190,7 @@ test('BestFirstSearch repulsion skips duplicate tactic re-checks', async () => {
     const { backend } = makeWorld();
     const repeatingLLM = { calls: 0, async complete() { this.calls++; return { text: 'rfl' }; } };
 
-    const egraphPlain = new GoalEGraph();
+    const egraphPlain = new GoalTranspositionGraph();
     egraphPlain.addGoal({ type: 'a < c', context: [] });
     egraphPlain.setRoot({ type: 'a < c', context: [] });
     const plainStart = backend.applyCalls.length;
@@ -198,7 +198,7 @@ test('BestFirstSearch repulsion skips duplicate tactic re-checks', async () => {
         .search(egraphPlain, { maxExpansions: 1 });
     const plainChecks = backend.applyCalls.length - plainStart;
 
-    const egraphRep = new GoalEGraph();
+    const egraphRep = new GoalTranspositionGraph();
     egraphRep.addGoal({ type: 'a < c', context: [] });
     egraphRep.setRoot({ type: 'a < c', context: [] });
     const repStart = backend.applyCalls.length;

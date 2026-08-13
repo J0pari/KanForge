@@ -17,7 +17,7 @@ export { parseGoalText, formatBinders, splitGoalBlocks } from './lean/goalText.j
 // Core
 export { PullGraph } from './core/pullgraph.js';
 export { Scheduler } from './core/scheduler.js';
-export { GoalEGraph } from './core/egraph.js';
+export { GoalTranspositionGraph } from './core/transpositionGraph.js';
 export { Guardrails, HARD_INVARIANTS, FORBIDDEN_TOKENS } from './core/guardrails.js';
 export { straighten, unstraighten, assertRoundTrip, buildProofSource } from './core/state.js';
 export { Patch, PATCH_OPS, patchFromEvent, patchStreamFromEvents } from './core/patch.js';

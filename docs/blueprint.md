@@ -69,7 +69,7 @@ section only argues the shape.
 | Module | Role in KanForge | Why it exists |
 |---|---|---|
 | `core/lazy.js` | memoized thunk | goals/lemmas are expensive; PullGraph registers each computation lazily (§4.6) |
-| `core/pullgraph.js` | memoized dependency DAG; invalidation; serialize/deserialize | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's e-graph); checkpoint/resume, error containment (§4.6) |
+| `core/pullgraph.js` | memoized dependency DAG; invalidation; serialize/deserialize | **the proof DAG** — two levels: lemma nodes (Level 1, dependency edges) and goal equivalence classes (Level 2, tactic edges within each lemma's transposition graph); checkpoint/resume, error containment (§4.6) |
 | `core/hasher.js` | absorbing hash chains; integrity verify | statement pinning + tamper-evident audit trail |
 | `core/state.js` | straighten/unstraighten (tree ↔ script) | lossless dual representation — the backbone (§4.2) |
 | `core/scheduler.js` | dependency-ordered dispatch, 7-state lifecycle | concurrent verification of a goal batch over the DAG |
@@ -184,12 +184,12 @@ Detailed contracts: `architecture.md`. This is the shape.
   over a process pool, `lean` CLI; `lean4web` is deferred until a real instance is exercised).
   Default is the REPL over a process pool (Kimina-style). Statement pinning (`lean/pin.js`) makes
   every checked goal carry a hash; mutation = `WEAKENED` + guardrail trip.
-- **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal e-graph (equivalence classes of proof states, tactic edges within each lemma's e-graph); memoized per node, `serialize()` is the checkpoint, `invalidate()` triggers transitive re-verification. The scheduler dispatches via a `check(nodeId)` callback; the loop reads
+- **`core/pullgraph.js`** — two-level structure: Level 1 lemma nodes (theorems, dependency edges) and Level 2 goal transposition graph (equivalence classes of proof states, tactic edges within each lemma's transposition graph); memoized per node, `serialize()` is the checkpoint, `invalidate()` triggers transitive re-verification. The scheduler dispatches via a `check(nodeId)` callback; the loop reads
   `nodes.get(id).computation.value` directly. Error boundary per node:
   `retry → repair → skip (never weaken)`. Node identity is normalized so identically-normalized
   goals share an equivalence class (goal-state transposition graph; identity semantics per
   `architecture.md` §2.2 — the adopted core of Wave2's
-  e-graph structure — `architecture.md` §2.2, §10).
+  transposition graph structure — `architecture.md` §2.2, §10).
 - **`core/scheduler.js`** — dependency-ordered dispatch with a 7-state lifecycle (Wave2 §7–8;
   `architecture.md` §2.6).
 - **`core/patch.js`** — the typed mutation record (§2.7, §5.9): `Patch` + `patchFromEvent(e)`,

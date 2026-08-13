@@ -20,7 +20,7 @@ export async function runCommitGate({
     pin,
     currentPin,
     checkPin,
-    egraph,
+    graph,
     directProof,
     premiseLocked = false,
     retriever = null,
@@ -36,7 +36,7 @@ export async function runCommitGate({
 
     // Compose the proof: a multi-line repair may have produced a direct proof; otherwise the
     // tree is extracted and straightened. Either way the WHOLE source is what gets verified.
-    const proofTree = directProof ? null : egraph.extractProof();
+    const proofTree = directProof ? null : graph.extractProof();
     if (!directProof && !proofTree) {
         return { ok: false, kind: 'proof_extraction_failed', message: 'proof extraction failed' };
     }

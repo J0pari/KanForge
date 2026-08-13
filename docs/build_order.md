@@ -103,7 +103,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   stage before verification (Wave2 cost-model idea, CPU-side): drop known-failing patterns (causal
   predictors), premise-lock violations, and near-duplicate patches.
 - **Acceptance (provisional):** on a 20-problem miniF2F smoke set with a frontier model,
-   ≥ 1 problem fully proved (all goal equivalence classes in e-graph solved); `optimization/metrics.js` reports success rate, tokens/tactic,
+   ≥ 1 problem fully proved (all goal equivalence classes in transposition graph solved); `optimization/metrics.js` reports success rate, tokens/tactic,
   tactics/lemma. Re-set the threshold from the first run.
 - **Search efficiency KPI:** kernel checks eliminated by the pre-filter (Wave2 §15),
   logged per run.
@@ -120,7 +120,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 **Est. 1–2 weeks.**
 
 ### 2.1 Lemmas as graph nodes
-- Wire `PullGraph` to the two-level structure: Level 1 nodes = lemmas (with `statementHash`, `proof`, `deps`, cache); Level 2 nodes = goal equivalence classes within each lemma's e-graph (with `normalizedGoalType`, `normalizedContext`, `tactics`, `stats`, `parents`).
+- Wire `PullGraph` to the two-level structure: Level 1 nodes = lemmas (with `statementHash`, `proof`, `deps`, cache); Level 2 nodes = goal equivalence classes within each lemma's transposition graph (with `normalizedGoalType`, `normalizedContext`, `tactics`, `stats`, `parents`).
 - Error boundaries per node: fallback policy `retry→repair→skip (never weaken)`.
 - **Deliverable:** proof of a theorem with 3+ lemmas produces a serializable forest; re-running
   hits the cache (cache-hit stats via `optimization/metrics.js`).
@@ -193,11 +193,11 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - `search/bfs.js`, `search/mcgs.js`: best-first over goal equivalence classes; `mcgs.js` is
   UCB-guided graph search over the open classes — selection / expansion / backprop only, **not**
   textbook MCTS (no cheap rollout; the "simulation" is an LLM + kernel call — `architecture.md` §5,
-  §5.6). Transposition merging is built into the e-graph structure — identically-normalized
+  §5.6). Transposition merging is built into the transposition graph structure — identically-normalized
   goals are already merged into equivalence classes with shared statistics
   (identity semantics per `architecture.md` §2.2; parent edges are populated by tactic
   expansion, so MCGS backprop walks real ancestry)
-  (value/visit counts). The e-graph is the search structure itself (`architecture.md` §2.2, §10),
+  (value/visit counts). The transposition graph is the search structure itself (`architecture.md` §2.2, §10),
   so every search variant inherits the merge, not just MCGS.
 - **Acceptance (provisional):** MCGS ≥ best-of-N at equal budget on the smoke set; merge rate
   reported. Compare, then decide. (§5.6 sharpens this to a held-out, cost-normalized comparison;
@@ -317,7 +317,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
     `mul_comm_rw`, `func_compose`, `eq_trans_chain`.
   - Each problem carries a golden `chain`; `validateSmokeSet` rejects malformed chains.
 - **Full-paces harness** (`bench/verifyStepSet.js`): every stub must typecheck, the golden chain
-  must replay through the SAME `GoalEGraph`/`open[0]` frontier discipline the live loop uses
+  must replay through the SAME `GoalTranspositionGraph`/`open[0]` frontier discipline the live loop uses
   (`replayChain`) AND re-verify once assembled via `assembleProofSource`, and each of the trivial
   closers `rfl`, `simp`, `omega`, `decide`, `assumption` must FAIL on the root goal. CLI:
   `node bench/verifyStepSet.js [--set=step] [--problems=id,...] [--out=dir]` → report.json/report.md.
@@ -357,10 +357,10 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   golden-chain premise into its top-8 (quality floor pinned by `test/premises.test.js`, 14
   tests, incl. 3 new). `--set=step` now defaults `--corpus=step`; `--corpus=step-no-rw` is the
   rewrite-lock control.
-- **Cycle guard in `GoalEGraph.isSolved`.** A tactic whose subgoal hashes back to an ancestor
+- **Cycle guard in `GoalTranspositionGraph.isSolved`.** A tactic whose subgoal hashes back to an ancestor
   class (e.g. `rw [Nat.mul_comm]` twice on `b*a = c` re-attaches the ROOT class as a child)
   would recurse without bound. `isSolved` carries a path-visited set that treats an on-path
-  class as not-yet-solved (regression test `test/egraph.test.js` "isSolved terminates on a
+  class as not-yet-solved (regression test `test/transpositionGraph.test.js` "isSolved terminates on a
   goal-class cycle"; premise-locked MCGS on `mul_comm_rw` completes and solves in 1 rollout).
 - **Premise lock, past and present.** The historical wrapper-based harness only influenced the
   prompt — `findPremiseLockViolations` is enforced inside `TacticLoop`, and the wrapper never
@@ -391,7 +391,7 @@ about dead code.
 - The live foundations are `core/lazy` (via `PullGraph`) and `core/hasher` (§9).
 - The loop's core operation is a typed graph mutation: `core/patch.js` carries the `Patch` record
   (`patchFromEvent`), captured per lemma into the retrieval index + digest (§2.7, §5.9). The
-  e-graph's single mutation entry point is `applyPatch` — a tactic is a `Patch({op:'tactic', ...})`,
+  transposition graph's single mutation entry point is `applyPatch` — a tactic is a `Patch({op:'tactic', ...})`,
   never a raw tuple.
 - `query/` is not part of the system; `architecture.md` §8 names the digest + commit as the
   correctness surface.
@@ -440,7 +440,7 @@ about dead code.
   - per-proposal LLM latency and token counts (`tactic_proposed`);
   - per-goal attempt rank of the solving tactic (`goal_solved` carries `attempt`), for
     `firstSuccessRank`;
-  - e-graph transposition hits / dead-end goal classes, for `transpositionHitRate` and
+  - transposition graph transposition hits / dead-end goal classes, for `transpositionHitRate` and
     `deadEndRate`;
   - blueprint-level counts (lemmas / resplits / unused helpers / dependency depth) surfaced by
     `blueprint/refine.js` into the digest, for planning quality;
@@ -483,8 +483,9 @@ a measured effect; retrieval never bypasses kernel verification.
      is present and non-degenerate.
   2. **Ablation graph (`--ablate=<comps>`)** — the full factorial over the named component toggles
      (`tacticMenu`, `premises`, `predictors`, `repulsion`, `exemplars`, `ttrl`, `monitor`,
-     `repair`, `search` — registry names, `architecture.md` §0.4/§5.8; the egraph and the kernel
-     are infrastructure, never ablation axes) runs
+     `repair`, `search` — registry names, `architecture.md` §0.4/§5.8; the kernel
+     is the only non-ablated infrastructure, and `searchStructure` joins the axes once the
+     e-graph lands, §5.12) runs
      on the fixed corpus at equal budget, one ablation pass per node. Report per node: the same
      per-cell table; per component: **main effect** (mean pass rate on − off over all
      configurations holding the rest fixed) and **pairwise interactions** (does A's effect change
@@ -539,13 +540,13 @@ a measured effect; retrieval never bypasses kernel verification.
   `Patch` construction anywhere (the type is built from live events, consumed by live writers).
 
 ### 5.10 Goal-class identity: collision-safe (architecture.md §2.2)
-- **Correctness, not cache efficiency.** The e-graph class id determines equivalence-class
+- **Correctness, not cache efficiency.** The transposition graph class id determines equivalence-class
   identity; a hash collision merges unrelated proof states. The identity must be the canonical
   serialized key (normalized type + context), hashed with SHA-256 as a lookup index — never a
   weak 32-bit hash as the identity.
 - **Deliverables:** (1) replace the 32-bit DJB2 `hashGoal` with `sha256(canonicalKey)` and store
   the canonical key on the class; (2) collision resolution — on an id hit, compare canonical keys;
-  unequal keys mean collision → separate class with a collision-resolved id + `egraph_collision`
+  unequal keys mean collision → separate class with a collision-resolved id + `transposition_collision`
   telemetry; (3) unit tests: known-distinct goals never merge, alpha-equivalent goals still do,
   and a synthetic collision (same 32-bit hash, different keys) is resolved, not merged.
 - **Long-term (Lean as the authority):** goal equivalence is `target proposition + local context +
@@ -554,7 +555,7 @@ a measured effect; retrieval never bypasses kernel verification.
   normalization above is the practical approximation; delegating equivalence to Lean itself
   (kernel-side `isDefEq`-style comparison) is the eventual authority and is tracked here.
 - **Acceptance:** the full non-live suite passes with the new identity; a collision-injection test
-  proves unrelated goals do not merge; `egraph_collision` events appear in telemetry when a
+  proves unrelated goals do not merge; `transposition_collision` events appear in telemetry when a
   collision is forced.
 
 ### 5.11 Proposal-unit constraint schema (architecture.md §4.1)
@@ -563,7 +564,7 @@ a measured effect; retrieval never bypasses kernel verification.
   The constraint now lives as data (`PROPOSAL_SPEC = { maxAtoms: 1 }` in `agent/prompts.js`), and
   the invariant that makes it swappable is stated: any proposal is consumed **atom-wise** through
   `backend.applyTactic` with canonical state capture, so a multi-atom proposal is a pre-verified
-  e-graph path — never a black-box script application (which would discard intermediate classes,
+  transposition graph path — never a black-box script application (which would discard intermediate classes,
   merging, and the patch stream).
 - **Staged deliverables (P6):**
   1. `maxAtoms: 1..k` on `PROPOSAL_SPEC` with the loop applying a k-atom response sequentially
@@ -574,7 +575,37 @@ a measured effect; retrieval never bypasses kernel verification.
      ablation-decided value.
 - **Acceptance (provisional):** a k-atom cell run solves at least the same problem subset as the
   1-atom cell at equal budget on the step tier with a reported cost table; every intermediate
-  macro state appears as an e-graph class (telemetry-verifiable, not asserted).
+  macro state appears as a transposition graph class (telemetry-verifiable, not asserted).
+
+### 5.12 Genuine equality-saturation e-graph (searchStructure: 'egraph')
+- **Why:** the goal transposition graph merges classes only on identical normalized text
+  (`architecture.md` §2.2). A genuine e-graph merges on STRUCTURE: e-nodes over the goal term,
+  union-find classes, congruence closure (same head, merged children → merged parents), and
+  rewrite rules — so goals like `0 + x = y` and `x = y` merge when the identity is confirmed.
+  Because semantic merging is only sound when the equivalence is real, the e-graph is
+  **Lean-grounded**: every union that is not pure congruence closure must be confirmed by the
+  kernel (definitional-equality check of the instantiated pair, memoized per pair). Unconfirmed
+  unions never happen — the e-graph cannot BS.
+- **Deliverables in order:**
+  1. `lean/termParse.js` — goal-type term parser (applications, binders, foralls, arrows,
+     numerals, projections); unparseable goals become opaque leaf e-nodes (no merging, no
+     corruption — principled degradation).
+  2. `core/egraph.js` — e-nodes + hashcons + union-find + congruence closure + saturation loop,
+     with the kernel def-eq oracle injected (batchable, memoized).
+  3. Rewrite-rule registry — the algebraic identities (0+x→x, x+0→x, x−0→x, 1·x→x, x·1→x, …)
+     as RULES, each fire requiring oracle confirmation; rules recorded with provenance in the
+     event stream.
+  4. Search integration behind the common goal-state-graph interface (frontier, applyTactic
+     records, isRootSolved, extractProof, per-class stats): the loop's `searchStructure`
+     option selects the structure; the e-graph RETAINS alternative successful expansions per
+     class (the review's §8 branching complaint falls out of the structure, not a patch).
+  5. Registry + ablation: `searchStructure` as a dropdown component; the factorial graph
+     measures transposition vs egraph at equal budget on the fixed corpora.
+- **Acceptance:** both structures run under the same loop interface with the suite green; the
+  e-graph merges a kernel-confirmed `0 + x = y`/`x = y` pair and never merges an unconfirmed
+  pair; an ablation run reports main effect + cost for `searchStructure` and writes the winning
+  default to `runs/defaults.json` — the structure is an evidence-decided component, not an
+  inherited label.
 
 ---
 

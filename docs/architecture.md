@@ -225,11 +225,11 @@ and mapped to the code modules below. Each arrow names a data contract.
      │       └────────────────┘                │
      │                                         │
      │  ┌──────────────────────────┐           │
-     │  │   GOAL E-GRAPH           │           │
+     │  │   GOAL transposition graph           │           │
      │  │   equivalence classes    │           │
      │  │   + transposition merge  │           │
      │  │   + lexical math norms   │           │
-     │  │   core/egraph.js         │           │
+     │  │   core/transpositionGraph.js         │           │
      │  └──────────────┬───────────┘           │
      │                 │                      │
      │  ┌──────────────▼───────────┐           │
@@ -276,8 +276,8 @@ and mapped to the code modules below. Each arrow names a data contract.
 | Tactic Loop | LLM | `llm.complete(prompt)` → tactic text (`agent/llm.js`, opencode CLI) |
 | Tactic Loop | Backend | `applyTactic(goal, tactic)` → subgoals (`lean/backendRepl.js` repl pool) |
 | Tactic Loop | Backend | `extractGoals(statement)` → root goal list (leased session in repl pool) |
-| Tactic Loop | E-Graph | `egraph.applyPatch(Patch({op:'tactic', ...}))` — the patch is the mutation record, never a raw tuple |
-| E-Graph | Proof Extraction | `egraph.extractProof()` → proof tree (`core/state.js` straighten) |
+| Tactic Loop | transposition graph | `transposition graph.applyPatch(Patch({op:'tactic', ...}))` — the patch is the mutation record, never a raw tuple |
+| transposition graph | Proof Extraction | `transposition graph.extractProof()` → proof tree (`core/state.js` straighten) |
 | Extraction | Commit Gate | `Guardrails.assertLemmaCommit({pin, statement, proof, verification})` |
 | Commit Gate | Lemma Store | `lemmaStore.put(hash, index)` |
 | Lemma Store | Dataset | `dataset.addSample(lemma, proof, outcome)` |
@@ -303,8 +303,8 @@ each lemma, so memory is released between lemmas. When the warm worker is replac
 from the last warmup statement automatically.
 
 **Planned extensions (Research doc §3–§7 framing not yet in the code):** a structural AST
-synchronized with the e-graph (the proof tree is currently the only structural form, extracted at
-commit time); e-graph-driven invalidation scoping over the dependency DAG; scheduler dispatch
+synchronized with the transposition graph (the proof tree is currently the only structural form, extracted at
+commit time); transposition graph-driven invalidation scoping over the dependency DAG; scheduler dispatch
 keyed on build states; and corpus-tag domain presets for starter imports. The patch algebra is
 live as the mutation interface; the loop proposes tactics, which are the tactic-level patch
 operator.
@@ -368,7 +368,7 @@ kanforge/
   core/                      # memoized DAG + proof-state primitives (the live surface only)
     lazy.js                  # Lazy (memoized thunks) — used by PullGraph
     pullgraph.js             # proof DAG: nodes, edges, invalidate, serialize
-    egraph.js                # goal equivalence classes (Level 2 search structure, §2.2)
+    transpositionGraph.js                # goal equivalence classes (Level 2 search structure, §2.2)
     hasher.js                # Hasher (statement/event hash chains)
     state.js                 # straighten / unstraighten (tree ↔ script)
     scheduler.js             # dependency-ordered dispatch over the PullGraph (Wave2 §7–8)
@@ -464,25 +464,26 @@ KanForge operates on two distinct but related structures:
 - Scheduler dispatches lemmas dependency-ordered
 - Each lemma has a pinned statement and a proof (initially null, built from Level 2 search)
 
-**Level 2: Goal e-graph** (within each lemma)
+**Level 2: Goal transposition graph** (within each lemma — the incumbent structure; the genuine
+e-graph is the staged `searchStructure` alternative, build_order.md §5.12)
 - Root = the lemma's initial goal (the statement's type + empty context)
 - Nodes = equivalence classes of goals (identical under the syntactic normalization of §2.2)
 - Edges = tactic applications that transform one equivalence class into zero or more subgoal classes
 - A goal class is "solved" when a tactic closes all goals in the class (produces no subgoals)
 - A lemma is "proved" when the root class is solved
-- The proof is a tree of tactics extracted from the e-graph (root to solved leaves)
+- The proof is a tree of tactics extracted from the transposition graph (root to solved leaves)
 - Statistics (visit counts, success rates, value estimates) are shared across all goals in an equivalence class
 
-The e-graph structure enables **transposition merging** (research_notes trick 4): different tactic sequences that produce equivalent goals share a single equivalence class with shared statistics. This is what makes search efficient — MCGS, BFS, and other search algorithms operate on the e-graph, not a tree, so they automatically benefit from transposition merging.
+The transposition graph enables **transposition merging** (research_notes trick 4): different tactic sequences that produce the same normalized goal share a single equivalence class with shared statistics. This is what makes search efficient — MCGS, BFS, and other search algorithms operate on the graph, not a tree, so they automatically benefit from transposition merging.
 
-The LLM operates at Level 2: it proposes ONE tactic for ONE goal. The backend applies the tactic and returns new subgoals. The search operates on the e-graph: it searches over tactic sequences, and equivalent goals are automatically merged into the same equivalence class.
+The LLM operates at Level 2: it proposes ONE tactic for ONE goal. The backend applies the tactic and returns new subgoals. The search operates on the transposition graph: it searches over tactic sequences, and identically-normalized goals are automatically merged into the same equivalence class.
 
 The scheduler operates at Level 1: it dispatches lemmas dependency-ordered. Within each lemma, the tactic-level search runs to completion (or budget exhaustion) before the lemma is marked verified or failed.
 
 This two-level structure is what makes the loop's operations meaningful: a single tactic applied to
 a single goal produces zero or more subgoal equivalence classes; a proof is a tree of such
-applications extracted from the e-graph. The DAG tracks both levels: lemma dependencies at Level 1,
-goal e-graphs at Level 2.
+applications extracted from the transposition graph. The DAG tracks both levels: lemma dependencies at Level 1,
+goal transposition graphs at Level 2.
 
 ### 2.3 `PullGraph` — the proof DAG
 Node (Level 1 — lemma):
@@ -498,7 +499,7 @@ Node (Level 1 — lemma):
 }
 ```
 
-Node (Level 2 — goal equivalence class within a lemma's e-graph):
+Node (Level 2 — goal equivalence class within a lemma's transposition graph):
 ```jsonc
 {
   "id": "sha256(normalizedGoalType + normalizedContext)",
@@ -522,17 +523,27 @@ concrete goals that normalize identically map to the same equivalence class. The
 tracks all concrete goals in the class (for debugging and extraction). The `stats` are shared
 across all goals in the class, enabling transposition merging.
 
-**Terminology and identity semantics.** The structure is a **goal-state transposition graph** —
-a memoized proof-state graph that merges identical normalized goal descriptions. It is NOT an
-equality-saturation e-graph: there are no e-nodes, no congruence closure, and no rewrite
-saturation; classes merge only when the normalized text is equal. Two goals that are
-mathematically equivalent but textually different (`0 + x = y` vs `x = y`) stay in different
-classes: a tactic that solves one need not solve the other, and a wrong merge would corrupt
-solved-state propagation and shared statistics. Semantic (algebraic) normalization exists only
-as `semanticNormalize`, used by the lemma store's retrieval index where the kernel re-verifies
-every match — it is never class identity. Parent edges (`parents[]`) are populated by tactic
-expansion (genuine children get their parent class id; carried-over siblings do not), so MCGS
-backpropagation walks real ancestry through transposition merges.
+**Terminology and identity semantics.** The incumbent Level 2 structure is a **goal-state
+transposition graph** — a memoized proof-state graph that merges identical normalized goal
+descriptions. It is NOT an equality-saturation e-graph: there are no e-nodes, no congruence
+closure, and no rewrite saturation; classes merge only when the normalized text is equal. Two
+goals that are mathematically equivalent but textually different (`0 + x = y` vs `x = y`) stay
+in different classes: a tactic that solves one need not solve the other, and a wrong merge
+would corrupt solved-state propagation and shared statistics. Semantic (algebraic)
+normalization exists only as `semanticNormalize`, used by the lemma store's retrieval index
+where the kernel re-verifies every match — it is never class identity. Parent edges
+(`parents[]`) are populated by tactic expansion (genuine children get their parent class id;
+carried-over siblings do not), so MCGS backpropagation walks real ancestry through
+transposition merges.
+
+The genuine equality-saturation e-graph — `core/egraph.js`: e-nodes over the goal term
+structure, union-find classes, congruence closure, and rewrite rules whose every union is
+confirmed by the Lean backend (definitional-equality check, memoized) — is the staged
+`searchStructure: 'egraph'` alternative (build_order.md §5.12). It merges goals the
+transposition graph cannot (e.g. `0 + x = y` with `x = y` when Lean confirms the identity),
+retains alternative successful expansions per class, and is measured against the incumbent at
+equal budget — the winning default is written to `runs/defaults.json` like any other
+component.
 
 **Class identity is collision-safe (correctness, not just cache efficiency).** The class id is
 `sha256(normalizedGoalType + normalizedContext)` — the canonical serialized key is the identity,
@@ -547,7 +558,7 @@ graph; therefore:
   comparing the canonical keys before merging classes.
 - On a key mismatch under the same id (hash collision), the class is **not merged**; the new goal
   is inserted under its own canonical key with a collision-resolved id, and the collision is
-  recorded as telemetry (count of `egraph_collision` events).
+  recorded as telemetry (count of `transposition_collision` events).
 - Equivalence is decided by canonical-key equality, not by hash equality.
 
 The `state` axis is proof-semantic; the scheduler adds a parallel lifecycle axis
@@ -577,7 +588,7 @@ assertRoundTrip(tree)                      // bijectivity check, enforced in tes
 ```
 Rule: repairs edit the tree, then re-straighten; kernel successes un-straighten back. Never edit
 one representation only (the dual of Wave2's "no representation diverges independently" — we keep
-the tree↔script duality as the backbone and skip a third e-graph representation; see §10).
+the tree↔script duality as the backbone and skip a third transposition graph representation; see §10).
 
 ### 2.5 `guardrails.js` — the invariant spec
 ```js
@@ -665,7 +676,7 @@ The patch is **derived from the live event stream, not a parallel dead type**: e
 `meta`=attempt/llmMs/tokens/via). `core/patch.js` provides `patchFromEvent(e)` — a pure projection
 of an event into the typed form — and the patch stream is captured per lemma and stored in the
 retrieval index + development digest as the transformation history (whitepaper §14). A proof is a
-tree of tactic applications extracted from the e-graph; the patch stream is the typed trace of how
+tree of tactic applications extracted from the transposition graph; the patch stream is the typed trace of how
 that tree was built.
 
 ### 2.8 Lemma store as retrieval index (`growth/lemmaStore.js`)
@@ -783,12 +794,12 @@ not equality). Never compare a hash computed under a different `normVersion`.
 
 ## 4. Agent loop
 
-The agent loop operates at Level 2 (goal e-graph within a single lemma). The scheduler dispatches lemmas at Level 1; for each lemma, the agent loop runs the tactic-level search below.
+The agent loop operates at Level 2 (goal transposition graph within a single lemma). The scheduler dispatches lemmas at Level 1; for each lemma, the agent loop runs the tactic-level search below.
 
 **Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application reduces the current goal to zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
 
 The loop is a class (`TacticLoop`, `agent/loop.js`). It implements
-the observe → propose → act → verify → repair → commit stages as explicit methods over the e-graph,
+the observe → propose → act → verify → repair → commit stages as explicit methods over the transposition graph,
 with a stateful budget, concurrency, and repair path:
 
 **Role split.** The loop is orchestration; two extracted modules own the heavy seams:
@@ -818,7 +829,7 @@ commit(verified)-> LemmaRef           // all goals solved → compose proof scri
 The loop passes tactic strings directly; the typed mutation record of these operations is the
 patch algebra (§2.7).
 
-Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the e-graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it makes no progress.
+Each LLM call proposes ONE tactic for ONE goal. The backend applies it and returns zero or more new subgoals. The loop continues until all goal equivalence classes in the transposition graph are solved (lemma proved) or the budget is exhausted. **Complexity reduction**: each tactic application should produce subgoals that are simpler than the parent goal; if a tactic produces subgoals of equal or greater complexity, it makes no progress.
 
 **Event vocabulary** (all stages emit to `optimization/bus.js`; canonical — do not re-list in other
 docs):
@@ -831,7 +842,7 @@ REPAIR_PROPOSED   LEMMA_PROVEN      LEMMA_COMMITTED   STATEMENT_WEAKENED
 Event = `{ id, t, type, parent?, nodeId?, candidate?, detail }` — parent chaining gives the
 causal DAG that `causal.js` consumes.
 
-Stopping rule (`solve.js`): a goal is *solved* iff `applyTactic(goal, tactic)` returns zero subgoals. A lemma is *proved* iff all goal equivalence classes in its e-graph are solved **and** `statement.hash === pinned.hash` (the composed proof script verifies the full statement).
+Stopping rule (`solve.js`): a goal is *solved* iff `applyTactic(goal, tactic)` returns zero subgoals. A lemma is *proved* iff all goal equivalence classes in its transposition graph are solved **and** `statement.hash === pinned.hash` (the composed proof script verifies the full statement).
 
 ### 4.1 Proposal-unit constraint (granularity schema)
 
@@ -843,9 +854,9 @@ propose one kernel-applicable tactic for one goal — and every prompt path (the
 **The invariant that makes granularity swappable: atom-wise application with canonical state
 capture.** A proposal, whatever its granularity, is consumed by applying each tactic atom
 through `backend.applyTactic`; every intermediate goal state gets a canonical key and merges
-into the e-graph as an ordinary class, and every atom is a `Patch({op:'tactic'})` in the patch
+into the transposition graph as an ordinary class, and every atom is a `Patch({op:'tactic'})` in the patch
 stream. A multi-atom proposal is therefore a pre-committed, kernel-verified *path* — it feeds
-the e-graph (more material for transposition merging and shared statistics), never bypasses it.
+the transposition graph (more material for transposition merging and shared statistics), never bypasses it.
 The contra-indicated variant is black-box script application (kernel checks the whole script and
 returns only the final state): that discards intermediate classes, merging, and the patch
 stream, and is out of contract.
@@ -853,8 +864,8 @@ stream, and is out of contract.
 **Two granularities are already live.** The proposal path runs at 1 atom; the repair path runs
 at whole-script granularity — a multi-line repair response is verified as complete source
 (`isMultiLineProof` → `backend.check` → the root class carries `_directProof`) and skips
-per-goal application. Multi-step replay through the e-graph frontier is likewise already
-exercised by `bench/verifyStepSet.js`'s golden chains (`replayChain` over `GoalEGraph`/`open[0]`),
+per-goal application. Multi-step replay through the transposition graph frontier is likewise already
+exercised by `bench/verifyStepSet.js`'s golden chains (`replayChain` over `GoalTranspositionGraph`/`open[0]`),
 so the atom-wise act machinery has no single-atom assumption.
 
 **The default stays 1 atom for search — deliberately, for sample efficiency.** One LLM call is
@@ -863,7 +874,7 @@ branches. The frontier systems run both granularities in different phases (coars
 seed, fine tactic search to refine); the schema makes that phase choice a configuration, not an
 architecture change. The staged axis (`build_order.md` §5.11) is `maxAtoms: 1..k` measured at
 equal budget via the existing cost counters (`llmCalls` vs `tacticCalls` per cell), with
-failure-position repair (a macro failing at atom k commits its verified prefix as e-graph edges
+failure-position repair (a macro failing at atom k commits its verified prefix as transposition graph edges
 and repairs from the failure point — strictly richer feedback than single-atom failure). The
 DAG (Level 1) is untouched by any of this: its proposal unit — a whole lemma decomposition —
 is already coarse-grained via the skeleton, and the schema generalizes the same idea to
@@ -873,9 +884,9 @@ Level 2.
 
 ## 5. Search
 
-Search operates at Level 2 (within a lemma's goal e-graph). Each search algorithm explores tactic sequences over the e-graph structure: given a goal equivalence class, propose tactics that decompose it into simpler subgoal classes, apply them, repeat. The search works backwards from complex goals to simple subgoals, seeking tactics that maximally reduce complexity at each step.
+Search operates at Level 2 (within a lemma's goal transposition graph). Each search algorithm explores tactic sequences over the transposition graph structure: given a goal equivalence class, propose tactics that decompose it into simpler subgoal classes, apply them, repeat. The search works backwards from complex goals to simple subgoals, seeking tactics that maximally reduce complexity at each step.
 
-The e-graph structure enables **transposition merging** (research_notes trick 4): different tactic sequences that produce equivalent goals share a single equivalence class with shared statistics (visit counts, success rates, value estimates). This is what makes search efficient — all search variants automatically benefit from transposition merging because they operate on the e-graph, not a tree.
+The transposition graph structure enables **transposition merging** (research_notes trick 4): different tactic sequences that produce equivalent goals share a single equivalence class with shared statistics (visit counts, success rates, value estimates). This is what makes search efficient — all search variants automatically benefit from transposition merging because they operate on the transposition graph, not a tree.
 
 - `bestofn.js`: for a single goal class, sample k tactic proposals, apply each, take first that succeeds. Pre-filter stage (Wave2: cost-model idea, CPU-side): reject known-failing patterns (causal predictors), premise-lock violations, and near-duplicate patches before verification.
 - `bfs.js`: best-first over goal classes by progress (open-goal spectrum decrease). A state is the set of unsolved goal classes; a tactic application transitions to a new state with simpler subgoal classes.
@@ -888,7 +899,7 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   the UCB values are a *heuristic* whose statistical meaning must be validated empirically, not
   assumed. **Open empirical question (see `build_order.md` §5.6):** does MCGS outperform simpler
   best-first / beam / BFS strategies on held-out theorem families once LLM-call and
-  kernel-verification cost are normalized?   Transposition merging is built into the e-graph
+  kernel-verification cost are normalized?   Transposition merging is built into the transposition graph
   structure — identically-normalized goals share one class (§2.2) — and node identity is
   normalized so *every* search variant inherits the merge, not just MCGS. MCGS backpropagation
   walks the parent edges that tactic expansion populates, so transpositions share the update
@@ -940,7 +951,9 @@ and every comparison cost-normalized:
   - Each **node** is a full configuration: a subset of the registry's component names —
     `{tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search}` —
     where `search` is the recipe axis (bestofn vs mcgs) and `repulsion` composes with it. The
-    goal e-graph and the kernel are infrastructure — always on, never an ablation axis.
+    goal-state search structure itself becomes an axis when both exist: `searchStructure`
+    (transposition graph vs e-graph, build_order.md §5.12) is measured like any other
+    component — the kernel is the only non-ablated infrastructure.
   - Each **edge** connects two configurations differing in exactly ONE toggle — the graph is the
     Boolean hypercube of configurations, not a fixed linear order.
   - The report gives, per node, the same per-cell table; and per component, its **main effect**
@@ -991,7 +1004,7 @@ Reward (`reward.js`) — **initial defaults, to be tuned in P6**, not settled va
 ```
 +1.0  goal solved (tactic produces zero subgoals)
 +0.5  complexity reduction (subgoals simpler than parent goal)
-+0.1  goal-depth decrease (fewer open goal equivalence classes in e-graph)
++0.1  goal-depth decrease (fewer open goal equivalence classes in transposition graph)
 +0.05 lemma reused later (Level 1)
 -0.1  repair round (tactic failed, retry)
 -0.5  wasted tactic (no complexity reduction, no progress)
@@ -1179,7 +1192,7 @@ by role:
 - **Foundations** (generic, unit-tested, no proof assumptions): `core/lazy` (memoized thunk used by
   `PullGraph`), `core/hasher`.
 - **Proof domain** (the contribution that makes this a proof refinery): `core/pullgraph` (proof
-  DAG), `core/egraph` (goal equivalence classes), `core/state` (tree↔script), `core/scheduler`,
+  DAG), `core/transpositionGraph` (goal equivalence classes), `core/state` (tree↔script), `core/scheduler`,
   `core/guardrails`, `lean/*` (incl. `goalText`), `agent/*`, `blueprint/*`,
   `search/*` (incl. `swiss`).
 - **Instrumentation / growth / digest**: `optimization/*`, `growth/*`, `digest/*`, `bench/*`
@@ -1199,7 +1212,13 @@ The aspirational vision docs — `docs/Research/KanForge_whitepaper.md` and
 vision. Adopted (now or staged) is reflected above. Everything below was considered and deferred
 for the stated reason; do not re-add without revisiting the reason.
 
-- **E-graph as a synchronized third representation** (Wave2 §3/§6). **Adopted for Level 2 search structure** (§2.2): the goal search structure is a goal-state transposition graph whose classes merge identically-normalized goals — NOT an equality-saturation e-graph (no e-nodes, congruence closure, or rewrite saturation; §2.2 states the identity semantics). This enables transposition merging (research_notes trick 4) — different tactic sequences producing the same normalized goal share statistics. The e-graph is the search structure itself, not a third synchronized representation alongside AST and script. We still keep tree↔script duality (state.js) for proof extraction.
+- **E-graph as a synchronized third representation** (Wave2 §3/§6). **Adopted in two parts.**
+  The goal transposition graph is the incumbent Level 2 search structure (§2.2) — not a third
+  synchronized representation alongside AST and script (we keep tree↔script duality, state.js,
+  for extraction). The genuine equality-saturation e-graph is the staged `searchStructure`
+  alternative (core/egraph.js, build_order.md §5.12): e-nodes, congruence closure, and
+  Lean-confirmed rewrite rules — the structure the Research vision describes, measured against
+  the incumbent at equal budget.
 - **GPU/CUDA graph filtering** (whitepaper diagram; Wave2 §9). The kernel is CPU-bound; the
   useful core is **structural dedup** (hash candidates/goals before dispatch), done on CPU now.
   GPU revisit only if CPU dedup measurably saturates.

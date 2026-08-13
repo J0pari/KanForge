@@ -99,7 +99,7 @@ export function validateSmokeSet(problems = SMOKE_PROBLEMS) {
             throw new Error(`smoke problem ${p.id} tags must be an array of strings`);
         }
         // Multi-step tier (§5.4): `chain` is the golden path — a non-empty list of single
-        // tactics replayed through the same egraph/open[0] discipline as the ablation drivers.
+        // tactics replayed through the same transposition-graph/open[0] discipline as the ablation drivers.
         if (p.chain !== undefined && (!Array.isArray(p.chain) || p.chain.length === 0 || p.chain.some(t => typeof t !== 'string' || !t.trim()))) {
             throw new Error(`smoke problem ${p.id} chain must be a non-empty array of tactic strings`);
         }

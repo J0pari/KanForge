@@ -1,6 +1,6 @@
 // Best-first search over goal equivalence classes (architecture.md §5).
-// A state is the e-graph frontier; expanding a class applies ONE tactic (via the backend)
-// and merges the resulting subgoals into the graph. Classes are scored by shared e-graph
+// A state is the transposition-graph frontier; expanding a class applies ONE tactic (via the backend)
+// and merges the resulting subgoals into the graph. Classes are scored by shared
 // stats: fewest visits first, then highest value — transposition merging means a class
 // reached by two paths keeps one shared score.
 //
@@ -38,8 +38,8 @@ export class BestFirstSearch {
     }
 
     // Expand one goal class: try tactics until one applies cleanly. Returns true on progress.
-    async expand(egraph, classId) {
-        const goal = egraph.currentGoal(classId);
+    async expand(graph, classId) {
+        const goal = graph.currentGoal(classId);
         const attempted = this.repulsion ? new Set() : null;
         const history = [];
         let penalty = 0;
@@ -58,27 +58,27 @@ export class BestFirstSearch {
             history.push(tacticHead(tactic));
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
-            egraph.applyTactic(classId, tactic, result.newGoals);
+            graph.applyTactic(classId, tactic, result.newGoals);
             if (penalty > 0) this._penalties.set(classId, (this._penalties.get(classId) ?? 0) + penalty);
             return true;
         }
         return false;
     }
 
-    async search(egraph, { maxExpansions = 100 } = {}) {
+    async search(graph, { maxExpansions = 100 } = {}) {
         let expansions = 0;
-        while (!egraph.isRootSolved() && expansions < maxExpansions) {
-            const open = egraph.getOpenGoals();
+        while (!graph.isRootSolved() && expansions < maxExpansions) {
+            const open = graph.getOpenGoals();
             if (open.length === 0) break;
             open.sort((a, b) => {
                 const sa = this._score(a), sb = this._score(b);
                 return sa[0] - sb[0] || sa[1] - sb[1] || (a.id < b.id ? -1 : 1);
             });
             const target = open[0];
-            const progressed = await this.expand(egraph, target.id);
-            if (!progressed) egraph.markFailed(target.id);
+            const progressed = await this.expand(graph, target.id);
+            if (!progressed) graph.markFailed(target.id);
             expansions++;
         }
-        return { ok: egraph.isRootSolved(), expansions };
+        return { ok: graph.isRootSolved(), expansions };
     }
 }

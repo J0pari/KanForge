@@ -8,7 +8,7 @@
 // greedy single-tactic model can no longer brute-force a one-liner.
 //
 // Each problem's `chain` is the golden path (the verifier replays it through the SAME
-// egraph/open[0] discipline as the ablation drivers, then assembles the proof source and
+// transposition-graph/open[0] discipline as the ablation drivers, then assembles the proof source and
 // re-verifies it in the kernel). Runs over the core repl (no Mathlib imports needed — `rcases`,
 // `constructor`, `rw`, `omega`, `Or.inl/inr` are all core Lean).
 //

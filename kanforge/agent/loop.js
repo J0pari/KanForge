@@ -2,7 +2,8 @@
 //
 // Two-level structure:
 // - Level 1: Lemma DAG (dependency-ordered dispatch via scheduler)
-// - Level 2: Goal e-graph (equivalence classes of goals with transposition merging)
+// - Level 2: Goal transposition graph (syntactic class identity with transposition merging;
+//   the genuine e-graph in core/graph.js is a staged searchStructure alternative)
 //
 // For each lemma, the loop works backwards from the target goal to simpler subgoals:
 // 1. Pick the first open goal equivalence class from the e-graph (frontier order — the repl
@@ -25,7 +26,7 @@ import { PullGraph } from '../core/pullgraph.js';
 import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 import { hashChainEntry, verifyHashChain } from '../core/hasher.js';
 import { isGoalSolved, isLemmaProved } from './solve.js';
-import { GoalEGraph, lexicalNormalize } from '../core/egraph.js';
+import { GoalTranspositionGraph, lexicalNormalize } from '../core/transpositionGraph.js';
 import { buildProofSource } from '../core/state.js';
 import { Patch } from '../core/patch.js';
 import { EventBus } from '../optimization/bus.js';
@@ -163,7 +164,7 @@ export class TacticLoop {
         let proposal = null;
         try {
             // Level 2: Goal e-graph. extractGoals opens the backend proof session.
-            const egraph = new GoalEGraph({ normalizer: lexicalNormalize });
+            const graph = new GoalTranspositionGraph({ normalizer: lexicalNormalize });
             // Per-lemma proposal engine (§4.1): the tactic menu wraps the raw llm with this
             // lemma's statement, and the ProposalEngine owns the budget-walled, write-through
             // counting client every proposal path uses — one accounting point, one budget wall.
@@ -184,14 +185,14 @@ export class TacticLoop {
                 fail('could not extract root goal (empty goal list)', { extractFailed: true });
             }
 
-            const rootId = egraph.addGoal(rootGoals[0]);
-            egraph.setRoot(rootGoals[0]);
+            const rootId = graph.addGoal(rootGoals[0]);
+            graph.setRoot(rootGoals[0]);
 
             // Lemma-store reuse (§2.8, §0.3): if a previously-proven lemma's conclusion matches
             // the root goal, inline the lemma's declaration + proof into the source and prove by
             // `exact <name>` — the kernel re-verifies the whole source, so retrieval never
             // bypasses verification and cross-problem reuse works in any fresh session.
-            if (this.lemmaStore && !egraph.isRootSolved()) {
+            if (this.lemmaStore && !graph.isRootSolved()) {
                 const stored = this.lemmaStore.findByGoal(rootGoals[0].type);
                 if (stored) {
                     const storedSource = stored.statement.replace(/:=\s*by\s+sorry\s*$/, `:= ${stored.proofScript}`);
@@ -199,7 +200,7 @@ export class TacticLoop {
                     const combined = `${storedSource}\n\n${currentDecl}`;
                     const reuseCheck = await this.backend.check(combined, { useWarmEnv: false });
                     if (reuseCheck.status === 'verified') {
-                        const rootClass = egraph.classes.get(egraph.rootId);
+                        const rootClass = graph.classes.get(graph.rootId);
                         if (rootClass) {
                             rootClass.state = 'SOLVED';
                             rootClass._directProof = `by exact ${extractLemmaName(stored.statement)}`;
@@ -223,18 +224,18 @@ export class TacticLoop {
                     ? new MCGS({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
                     : new BestFirstSearch({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors });
                 this._emit({ type: 'search_start', lemmaId, recipe: this.searchRecipe, budget: this.maxGoalsPerLemma }, lemmaId);
-                const searchResult = await searcher.search(egraph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
+                const searchResult = await searcher.search(graph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
                 goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
                 this.tacticCalls += countedBackend.tacticCalls;
                 this.predictorSkips += searcher.skipped ?? 0;
-                this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: egraph.isRootSolved(), llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
-                if (!egraph.isRootSolved()) {
+                this._emit({ type: 'search_complete', lemmaId, recipe: this.searchRecipe, solved: graph.isRootSolved(), llmCalls: proposal.llmCalls, tacticCalls: countedBackend.tacticCalls, skipped: searcher.skipped ?? 0 }, lemmaId);
+                if (!graph.isRootSolved()) {
                     fail(`search recipe ${this.searchRecipe} exhausted budget ${this.maxGoalsPerLemma} without solving`);
                 }
             } else {
                 const triedTactics = [];
                 goalCount = 1;
-                while (!egraph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
+                while (!graph.isRootSolved() && goalCount < this.maxGoalsPerLemma) {
                     if (signal?.aborted) break;
                     if (proposal.budgetExhausted) {
                         this._emit({ type: 'budget_exhausted', lemmaId, budget: this.maxLlmCalls, llmCalls: proposal.llmCalls }, lemmaId);
@@ -243,11 +244,11 @@ export class TacticLoop {
 
                     // Frontier order: the first open class is the head goal of the current
                     // proof state; its freshest concrete goal carries the live proofState.
-                    const openGoals = egraph.getOpenGoals();
+                    const openGoals = graph.getOpenGoals();
                     if (openGoals.length === 0) break;
 
                     const currentGoalClass = openGoals[0];
-                    const goal = egraph.currentGoal(currentGoalClass.id);
+                    const goal = graph.currentGoal(currentGoalClass.id);
                     this._emit({ type: 'goal_selected', lemmaId, goalClassId: currentGoalClass.id, goal }, lemmaId);
                     const ctx = (goal.context ?? []).map(c => `${c.name}: ${c.type}`).join('; ');
                     console.log(`[${ts()}] [loop] goal_selected ${currentGoalClass.id.slice(0,10)}… ⊢ ${goal.type.slice(0, 120)}${ctx ? ` | ctx: ${ctx.slice(0, 200)}` : ''}`);
@@ -315,7 +316,7 @@ export class TacticLoop {
                             }
 
                             const patch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: tactic, scope: 'goal', meta: { attempt, newGoals: result.newGoals } });
-                            const record = egraph.applyPatch(patch);
+                            const record = graph.applyPatch(patch);
                             this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic, goalType: goal.type, newGoalCount: result.newGoals?.length ?? 0 }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -339,7 +340,7 @@ export class TacticLoop {
 
                         if (pick.ok) {
                             const dpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: pick.tactic, scope: 'goal', meta: { via: pick.via, newGoals: pick.result.newGoals } });
-                            const record = egraph.applyPatch(dpatch);
+                            const record = graph.applyPatch(dpatch);
                             this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via, goalType: goal.type, newGoalCount: pick.result.newGoals?.length ?? 0 }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -376,9 +377,9 @@ export class TacticLoop {
                                 const check = await this.backend.check(fullSource, { useWarmEnv: false });
                                 if (check.status === 'verified') {
                                     // Bypass the per-goal loop: the LLM gave us the full proof.
-                                    // Mark the egraph's root as solved and store the proof for
+                                    // Mark the graph's root as solved and store the proof for
                                     // the commit gate to use directly.
-                                    const rootClass = egraph.classes.get(egraph.rootId);
+                                    const rootClass = graph.classes.get(graph.rootId);
                                     if (rootClass) {
                                         rootClass.state = 'SOLVED';
                                         rootClass._directProof = `by\n${repairedTactic}`;
@@ -396,7 +397,7 @@ export class TacticLoop {
 
                             if (repairResult.status === 'ok') {
                                 const rpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: repairedTactic, scope: 'goal', meta: { via: 'repair', newGoals: repairResult.newGoals } });
-                                const record = egraph.applyPatch(rpatch);
+                                const record = graph.applyPatch(rpatch);
                                 this._emit({ type: 'repair_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic }, lemmaId);
                                 for (const subgoal of record.created) {
                                     this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
@@ -416,7 +417,7 @@ export class TacticLoop {
                         if (!solved) {
                             const attemptsLabel = this.searchRecipe === 'loop' ? maxAttempts : this.maxTacticsPerGoal;
                             console.log(`[${ts()}] [loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${attemptsLabel} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
-                            egraph.markFailed(currentGoalClass.id);
+                            graph.markFailed(currentGoalClass.id);
                         }
                     }
 
@@ -427,7 +428,7 @@ export class TacticLoop {
             // All per-goal attempts exhausted without solving the root. Try one lemma-level
             // repair: ask the LLM for a complete proof of the full statement. If the kernel
             // accepts a multi-line proof, skip the rest of the commit path and mark solved.
-            if (this.repair && !egraph.isRootSolved() && !proposal.budgetExhausted) {
+            if (this.repair && !graph.isRootSolved() && !proposal.budgetExhausted) {
                 console.log(`[${ts()}] [loop] lemma ${lemmaId.slice(0,10)}… per-goal exhausted, trying lemma-level repair`);
                 const resp = await proposal.propose(buildLemmarepairPrompt(statement));
                 const proof = resp?.tactic;
@@ -436,7 +437,7 @@ export class TacticLoop {
                     const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
                     if (lemmaCheck.status === 'verified') {
                         console.log(`[${ts()}] [loop] lemma-level repair ACCEPTED`);
-                        const rootClass = egraph.classes.get(egraph.rootId);
+                        const rootClass = graph.classes.get(graph.rootId);
                         if (rootClass) {
                             rootClass.state = 'SOLVED';
                             rootClass._directProof = `by\n${proof}`;
@@ -448,8 +449,8 @@ export class TacticLoop {
             }
 
             const pin = this.pins.get(lemmaId);
-            if (!isLemmaProved(egraph, hashStatement(statement), pin?.statementHash ?? '')) {
-                if (!egraph.isRootSolved()) {
+            if (!isLemmaProved(graph, hashStatement(statement), pin?.statementHash ?? '')) {
+                if (!graph.isRootSolved()) {
                     fail(`root goal not solved after ${goalCount} goals`);
                 }
                 // Root solved but pin mismatch — record as a guardrail violation.
@@ -463,7 +464,7 @@ export class TacticLoop {
             // script → full source), pre-flight, whole-source kernel verify, premise lock, and
             // the HARD guardrail gate (the leakage scan covers the complete source). The gate
             // makes no LLM calls and returns a typed outcome the loop maps to its event stream.
-            const rootClass = egraph.classes.get(egraph.rootId);
+            const rootClass = graph.classes.get(graph.rootId);
             const gate = await runCommitGate({
                 backend: this.backend,
                 statement,
@@ -471,7 +472,7 @@ export class TacticLoop {
                 pin,
                 currentPin: makePin(statement, this.backend.pin?.() ?? {}),
                 checkPin,
-                egraph,
+                graph,
                 directProof: rootClass?._directProof ?? null,
                 premiseLocked: this.premiseLocked,
                 retriever: this.retriever,

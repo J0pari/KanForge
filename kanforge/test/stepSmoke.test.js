@@ -74,7 +74,7 @@ test('assembleProofSource formats tactic chains correctly', () => {
     assert.match(assembled, /:= by\n  rw \[Nat\.add_comm\]\n  rfl$/);
 });
 
-test('replayChain drives tactics through GoalEGraph and solves when chain matches', async () => {
+test('replayChain drives tactics through GoalTranspositionGraph and solves when chain matches', async () => {
     const rules = [
         { type: 'root_goal', tactic: 'step1', newGoals: ['sub_goal'] },
         { type: 'sub_goal', tactic: 'step2', newGoals: [] }

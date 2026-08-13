@@ -1,6 +1,6 @@
 // Architectural verification (architecture.md §2.2, §4) — node:test form.
 // - Level 1: Lemma DAG (dependency-ordered dispatch)
-// - Level 2: Goal e-graph (tactic-level search within each lemma)
+// - Level 2: Goal transposition graph (tactic-level search within each lemma)
 // - Each LLM call proposes ONE tactic for ONE goal; the backend applies it and returns subgoals
 // - The proof is a tree of tactic applications; commit verifies the FULL statement source
 // - No timeout possible by design (each operation is bounded)

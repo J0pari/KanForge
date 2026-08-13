@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { semanticNormalize } from '../core/egraph.js';
+import { semanticNormalize } from '../core/transpositionGraph.js';
 
 const DATA_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'runs');
 
