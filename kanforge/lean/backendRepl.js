@@ -297,21 +297,24 @@ export class BackendRepl {
         // The first worker is the warm worker: it holds the warm env for fast chained checks
         // and never handles leased sessions (extractGoals). Loop workers are spawned
         // subsequently and handle leased sessions; they're killed after each lemma.
-        if (!this._warmWorker) this._warmWorker = worker;
+        const becomesWarm = !this._warmWorker;
+        if (becomesWarm) this._warmWorker = worker;
         // Warm the new worker in the background (also covers retire-replacements). The worker
         // stays busy until its warmup response lands, so _acquire never hands it out cold.
-        if (this.warmupStatement) {
+        const warmupStmt = this.warmupStatement ?? (becomesWarm ? this._lastWarmup : null);
+        if (warmupStmt) {
             worker.busy = true;
-            this._warm(worker);
+            this._warm(worker, warmupStmt);
         }
         return worker;
     }
 
     // Send one trivial statement on a fresh worker so the first-elaboration cold start happens
     // off the caller's clock. Failures retire+replace the worker, which re-warms itself.
-    async _warm(worker) {
+    async _warm(worker, statement) {
+        const stmt = statement ?? this.warmupStatement;
         try {
-            await this._requestOnWorker(worker, { cmd: this.warmupStatement, env: null }, { timeoutMs: this.warmupTimeoutMs });
+            await this._requestOnWorker(worker, { cmd: stmt, env: null }, { timeoutMs: this.warmupTimeoutMs });
         } catch {
             // timeout path already retired the worker and spawned a warm replacement
         } finally {
@@ -328,10 +331,12 @@ export class BackendRepl {
     _retire(worker) {
         if (worker._retired) return;
         worker._retired = true;
+        const wasWarm = this._warmWorker === worker;
+        if (wasWarm) this.warmEnvId = null; // the env died with the worker
         if (worker.isAlive()) worker.kill();
         const idx = this._workers.indexOf(worker);
         if (idx !== -1) this._workers.splice(idx, 1);
-        if (this._warmWorker === worker) this._warmWorker = null; // replacement becomes warm
+        if (wasWarm) this._warmWorker = null; // replacement becomes warm
         // Any session on this worker is broken; drop it so the next call fails loudly
         // instead of waiting on a dead process.
         for (const [key, session] of this._sessions) {
@@ -468,6 +473,7 @@ export class BackendRepl {
     async warm(statement, opts = {}) {
         const imports = String(statement ?? '').split(/\r?\n/).filter(l => /^\s*import\s+\S/.test(l)).join('\n');
         const warmup = (imports ? imports + '\n\n' : '') + 'example : True := by trivial';
+        this._lastWarmup = warmup; // a replacement warm worker re-warms from this automatically
         const res = await this.check(warmup, { ...opts, useWarmEnv: true });
         return res;
     }

@@ -46,14 +46,20 @@ export class BlueprintRefiner {
         // Resume from checkpoint: mark proved lemmas, restore rounds, continue hash chain.
         const loaded = this.checkpoint?.load();
         if (loaded) {
-            const { proved } = RunCheckpoint.applyResume(loaded);
+            const { proved, stalled } = RunCheckpoint.applyResume(loaded);
             for (const [id, l] of proved) {
                 const lemma = working.lemmas.find(w => w.id === id);
                 if (lemma) { lemma.proof = l.proof; lemma.stalled = false; }
             }
+            // Stalled lemmas stay stalled — they already exhausted their budget in a prior
+            // cycle; re-attempting them wastes rounds that could go to other lemmas.
+            for (const id of stalled) {
+                const lemma = working.lemmas.find(w => w.id === id);
+                if (lemma && !lemma.proof) lemma.stalled = true;
+            }
             rounds.push(...(loaded.rounds ?? []));
             hashChain = (loaded.hashChain ?? []).map(e => ({ ...e }));
-            console.log(`[refine] resumed ${proved.size} proven lemmas from checkpoint (${loaded.rounds?.length ?? 0} rounds, ${loaded.savedAt})`);
+            console.log(`[refine] resumed ${proved.size} proven + ${stalled.size} stalled from checkpoint (${loaded.rounds?.length ?? 0} rounds, ${loaded.savedAt})`);
         }
 
         while (guard < this.maxRounds) {

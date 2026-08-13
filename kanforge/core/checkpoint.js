@@ -83,8 +83,10 @@ export class RunCheckpoint {
     static applyResume(checkpoint, { eventStore = null } = {}) {
         if (!checkpoint) return null;
         const proved = new Map();
+        const stalled = new Set();
         for (const l of checkpoint.lemmas ?? []) {
             if (l.proof) proved.set(l.id, l);
+            if (l.stalled) stalled.add(l.id);
         }
         const hashChain = (checkpoint.hashChain ?? []).map(e => ({ ...e }));
         if (eventStore) {
@@ -92,6 +94,7 @@ export class RunCheckpoint {
         }
         return {
             proved,
+            stalled,
             rounds: checkpoint.rounds ?? [],
             hashChain,
             eventCount: checkpoint.events?.length ?? 0,
