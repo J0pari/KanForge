@@ -3,7 +3,7 @@
 //
 // CLI: node blueprint/run.js '<theorem>' [--out-dir=<dir>] [--max-rounds=<n>]
 //      [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--statement-file=<path>]
-//      [--recipe=...] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]
+//      [--recipe=...] [--use-swiss] [--swiss-n=<n>] [--repulsion]
 //
 // --statement-file: read the theorem from a file instead of argv — unicode Lean statements are
 // mangled by some shells' argv encoding (observed: Windows PowerShell corrupts ∀ ∧ → ≠), so the
@@ -17,13 +17,13 @@ import { BlueprintRefiner } from './refine.js';
 import { LemmaStore } from '../growth/lemmaStore.js';
 import { TrainingDataset } from '../growth/dataset.js';
 import { assembleDevelopmentDigest, writeDevelopmentDigest } from '../digest/development.js';
-import { commitLemma, commitDevelopment, writeLemmaArtifacts } from '../growth/commit.js';
+import { writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, repoDir = null, provenance = null } = {}) {
+export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, provenance = null } = {}) {
     if (!backend || !llm) throw new Error('runBlueprintTheorem requires a real backend and a real llm client');
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
@@ -90,7 +90,8 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     const refined = await refiner.refine(generated.blueprint);
 
     // DoD tail (§7.4): assemble + write the development digest (writeup + audit + hash chain),
-    // and commit every verified lemma to the scratch repo (P2.3) when repoDir is given.
+    // and write every verified lemma's artifacts (statement + proof + audit) into the problem
+    // workdir. The digest's hash chain is the publication record — files, not git narration.
     const digest = assembleDevelopmentDigest({
         theorem,
         refined,
@@ -100,24 +101,17 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     });
     const digestPaths = writeDevelopmentDigest(digest, workDir);
 
-    const commits = [];
-    if (repoDir) {
-        for (const l of refined.refined.lemmas) {
-            if (!l.proof) continue;
-            writeLemmaArtifacts({
-                repoDir,
-                lemmaId: l.id,
-                statementHash: hashStatement(l.statement),
-                statement: l.statement,
-                proofScript: l.proof
-            });
-            const c = commitLemma({ lemmaId: l.id, statementHash: hashStatement(l.statement), repoDir });
-            if (c) commits.push({ lemmaId: l.id, commit: c });
-        }
-        // The closing development commit captures the digest; write it into the repo first.
-        writeDevelopmentDigest(digest, repoDir);
-        const devCommit = commitDevelopment({ developmentId: digest.statementHash, statementHash: digest.statementHash, repoDir });
-        if (devCommit) commits.push({ lemmaId: 'development', commit: devCommit });
+    const artifacts = [];
+    for (const l of refined.refined.lemmas) {
+        if (!l.proof) continue;
+        const artifactDir = writeLemmaArtifacts({
+            workDir,
+            lemmaId: l.id,
+            statementHash: hashStatement(l.statement),
+            statement: l.statement,
+            proofScript: l.proof
+        });
+        artifacts.push({ lemmaId: l.id, dir: artifactDir });
     }
 
     return {
@@ -130,7 +124,7 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         digest: {
             hashChainHash: digest.hashChainHash,
             paths: digestPaths,
-            commits
+            artifacts
         }
     };
 }
@@ -155,7 +149,7 @@ export function printBlueprintSummary(r) {
     if (r.digest) {
         console.log(`digest: development.md / development.html / development.json`);
         if (r.digest.hashChainHash) console.log(`chain-head: ${r.digest.hashChainHash}`);
-        for (const c of r.digest.commits ?? []) console.log(`commit ${c.lemmaId.slice(0, 12)}… ${c.commit}`);
+        for (const a of r.digest.artifacts ?? []) console.log(`artifact ${a.lemmaId.slice(0, 12)}… ${a.dir}`);
     }
     for (const w of r.warnings ?? []) console.log(`warn: ${w}`);
 }
@@ -202,7 +196,6 @@ async function main() {
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? 8);
     const maxGoals = Number(argValue(args, '--max-goals=') ?? 100);
     const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
-    const repoDir = argValue(args, '--repo-dir=');
     const recipe = argValue(args, '--recipe=') ?? null;
     const useSwiss = args.includes('--use-swiss');
     const swissN = Number(argValue(args, '--swiss-n=') ?? 8);
@@ -261,7 +254,6 @@ async function main() {
             outDir,
             loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion },
             maxRounds,
-            repoDir,
             provenance
         });
         printBlueprintSummary(r);

@@ -112,12 +112,18 @@ export class LemmaStore {
         this.dir = dir ?? path.join(DATA_ROOT, 'lemma-store');
         this.store = new Map();
         this.corrupt = [];
+        this._normIndex = new Map(); // lexicalNormalize(conclusion) → hash (first inserted wins)
         this._load();
     }
 
     put(hash, lemmaData) {
         if (typeof hash !== 'string' || !hash) throw new Error('LemmaStore.put requires a hash string');
         this.store.set(hash, lemmaData);
+        const conclusion = extractConclusion(lemmaData?.statement ?? '');
+        if (conclusion) {
+            const norm = lexicalNormalize(conclusion);
+            if (!this._normIndex.has(norm)) this._normIndex.set(norm, hash);
+        }
         const dir = path.join(this.dir, 'lemmas');
         fs.mkdirSync(dir, { recursive: true });
         writeJsonAtomic(path.join(dir, `${hash}.json`), { hash, data: lemmaData });
@@ -165,26 +171,23 @@ export class LemmaStore {
     }
 
     // Exact-match retrieval on the normalized conclusion (the proposition after `:` in the
-    // lemma statement). Normalizes both the query goal type and every stored lemma's conclusion
-    // through the same normalizer. Returns { statementHash, proofScript, statement } or null.
-    // Used by the loop to skip LLM proposals when a previously-proven lemma already closes the
-    // goal — one `exact` or `apply` replaces the entire search.
+    // lemma statement). Normalizes the query goal type and looks it up in the maintained
+    // normalized-conclusion index (O(1), rebuilt on load). Returns
+    // { statementHash, proofScript, statement } or null. Used by the loop to skip LLM proposals
+    // when a previously-proven lemma already closes the goal — one `exact` replaces the search.
     findByGoal(goalType) {
         const norm = lexicalNormalize(goalType);
-        for (const [hash, entry] of this.store) {
-            const stmt = entry?.statement ?? '';
-            const conclusion = extractConclusion(stmt);
-            if (!conclusion) continue;
-            if (lexicalNormalize(conclusion) === norm) {
-                return { statementHash: hash, proofScript: entry.proofScript, statement: stmt };
-            }
-        }
-        return null;
+        const hash = this._normIndex.get(norm);
+        if (!hash) return null;
+        const entry = this.store.get(hash);
+        if (!entry) return null;
+        return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement };
     }
 
     _load() {
         this.store = new Map();
         this.corrupt = [];
+        this._normIndex = new Map();
         const dir = path.join(this.dir, 'lemmas');
         if (!fs.existsSync(dir)) return;
         for (const f of fs.readdirSync(dir)) {
@@ -194,6 +197,11 @@ export class LemmaStore {
                 const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
                 if (parsed && typeof parsed.hash === 'string' && parsed.data !== undefined) {
                     this.store.set(parsed.hash, parsed.data);
+                    const conclusion = extractConclusion(parsed.data?.statement ?? '');
+                    if (conclusion) {
+                        const norm = lexicalNormalize(conclusion);
+                        if (!this._normIndex.has(norm)) this._normIndex.set(norm, parsed.hash);
+                    }
                 } else {
                     this.corrupt.push({ hash, error: 'malformed entry (missing hash or data)' });
                 }

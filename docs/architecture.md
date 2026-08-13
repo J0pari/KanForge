@@ -19,7 +19,7 @@ produces a kernel-verified Lean proof plus a reproducible audit trail:
   → prove bottom-up via tactic-level search (blueprint/refine.js → agent/loop.js):
       LLM proposes ONE tactic → kernel disposes → repair → repeat until root solved
   → verify the assembled full statement against the kernel (commit gate, §4)
-  → digest: writeup + audit pack + per-lemma commit + hash chain (digest/, growth/commit.js)
+  → digest: writeup + audit pack + per-lemma artifacts + hash chain (digest/, growth/commit.js)
 ```
 
 The known-answer harnesses (the smoke sets, the ablation runner) check that the machinery behaves
@@ -169,18 +169,16 @@ attempted. Sequencing and acceptance live in `build_order.md` §7.
 The system is a **proof compiler**: a language model proposes local structural mutations (patches);
 a deterministic build system validates, scopes, schedules, verifies, and commits them. The
 interconnection is adapted from the Research doc (`docs/Research/KanForge_architecture.md` §17)
-and mapped to the actual code modules below. Each arrow names a data contract; a contract marked
-`[BUILT]` is exercised by the live path; `[STUBBED]` is declared but unverified end-to-end;
-`[MISSING]` does not exist.
+and mapped to the code modules below. Each arrow names a data contract.
 
 ```
                      ┌──────────┐
-                     │  CORPUS   │ [BUILT] corpus/index/corpus.json (322 candidates)
+                     │  CORPUS   │ corpus/index/corpus.json (322 candidates)
                      │  INTAKE   │ prose + source + tags per candidate
                      └────┬─────┘
                           │
             ┌─────────────▼─────────────┐
-            │   AUTO-FORMALIZER         │ [BUILT] agent/roles/autoformalizer.js
+            │   AUTO-FORMALIZER         │ agent/roles/autoformalizer.js
             │   kernel-typechecks the   │   → normalize.js, moduleResolver.js
             │   statement from prose    │   → symbolIndex.js (derived repair)
             │   emits: shortlist entry  │   → consensus + ledger + pin
@@ -188,7 +186,7 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
                           │ pinned, kernel-verified statement (:= by sorry)
                           │
             ┌─────────────▼─────────────┐
-            │   HUMAN GATE               │ [BUILT] shortlist persisted; human selection
+            │   HUMAN GATE               │ shortlist persisted; human selection
             │   selects the mission      │   is the architectural rule, not automated
             │   target from shortlist    │
             └─────────────┬─────────────┘
@@ -211,10 +209,11 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
      │       └──────────────────┘               │
      └────────────────────┬────────────────────┘
                           │ refinement loop: per round, pick lowest unproved stub
+                          │ with all dependencies proved; stalled lemmas wait
                           │
      ┌────────────────────▼────────────────────┐
      │            TACTIC SEARCH LOOP            │
-     │  [BUILT] agent/loop.js                  │
+     │  agent/loop.js                          │
      │                                         │
      │  ┌──────────┐   ┌──────────────┐        │
      │  │  LLM     │   │   BACKEND    │        │
@@ -229,6 +228,7 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
      │  │   GOAL E-GRAPH           │           │
      │  │   equivalence classes    │           │
      │  │   + transposition merge  │           │
+     │  │   + lexical math norms   │           │
      │  │   core/egraph.js         │           │
      │  └──────────────┬───────────┘           │
      │                 │                      │
@@ -241,72 +241,73 @@ and mapped to the actual code modules below. Each arrow names a data contract; a
                        │ composed proof script
                        │
            ┌───────────▼───────────┐
-           │   COMMIT GATE          │ [BUILT] core/guardrails.js
+           │   COMMIT GATE          │ core/guardrails.js
            │   pin unchanged?       │   agent/solve.js
            │   kernel-verified?     │   core/hasher.js (hash chain)
-           │   no PREMISE_LOCK      │
-           │   violation?           │
+           │   no PREMISE_LOCK      │   pre-flight check of the
+           │   violation?           │   assembled source
            └───────────┬───────────┘
                        │ verified lemma
                        │
            ┌───────────▼───────────┐
-           │   LEMMA STORE          │ [BUILT] growth/lemmaStore.js
-           │   + DATASET            │ [BUILT] growth/dataset.js
-           │   + COMMIT             │ [BUILT] growth/commit.js
+           │   LEMMA STORE          │ growth/lemmaStore.js — GLOBAL
+           │   + DATASET            │ growth/dataset.js — GLOBAL
+           │   + ARTIFACTS           │ growth/commit.js (statement.lean + proof.lean + audit.json per lemma)
            │   content-addressed    │
            │   retrieval index     │
            └───────────┬───────────┘
                        │
            ┌───────────▼───────────┐
-           │   DEVELOPMENT DIGEST   │ [BUILT] digest/development.js
-           │   + AUDIT PACK         │ [BUILT] digest/auditPack.js
-           │   + HASH CHAIN         │ [BUILT] core/hasher.js
+           │   DEVELOPMENT DIGEST   │ digest/development.js
+           │   + AUDIT PACK         │ digest/auditPack.js
+           │   + HASH CHAIN         │ core/hasher.js
            └───────────────────────┘
 ```
 
 **Contracts between stages (arrow labels above):**
 
-| From | To | Contract | Status |
-|---|---|---|---|
-| Corpus | Autoformalizer | prose string + source id + asserted instances | `[BUILT]` `bench/validateFormalization.js` |
-| Autoformalizer | Shortlist | kernel-verified statement + hash + shape + substrate cost | `[BUILT]` `_entry()` → shortlist JSON |
-| Shortlist | Blueprint | human-selected pinned statement (with imports) | `[BUILT]` `blueprint/run.js --statement-file=` |
-| Blueprint Skeleton | Refine | validated DAG of kernel-typechecked stubs | `[BUILT]` `blueprint/skeleton.js` → `refine.js` |
-| Refine | Tactic Loop | stub statement per lemma attempt | `[BUILT]` `refine.js._attempt` → `new TacticLoop` |
-| Tactic Loop | LLM | `llm.complete(prompt)` → tactic text | `[BUILT]` `agent/llm.js` (opencode CLI) |
-| Tactic Loop | Backend | `applyTactic(goal, tactic)` → subgoals | `[BUILT]` `lean/backendRepl.js` (repl pool) |
-| Tactic loop | Backend | `extractGoals(statement)` → root goal list | `[BUILT]` leased session in repl pool |
-| Tactic Loop | E-Graph | `egraph.applyTactic(classId, tactic, newGoals)` | `[BUILT]` `core/egraph.js` |
-| E-Graph | Proof Extraction | `egraph.extractProof()` → proof tree | `[BUILT]` `core/state.js` straighten |
-| Extraction | Commit Gate | `Guardrails.assertLemmaCommit({pin, statement, proof, verification})` | `[BUILT]` `core/guardrails.js` |
-| Commit Gate | Lemma Store | `lemmaStore.put(hash, index)` | `[BUILT]` `growth/lemmaStore.js` |
-| Lemma Store | Dataset | `dataset.addSample(lemma, proof, outcome)` | `[BUILT]` `growth/dataset.js` |
-| Lemma Store | Digest | `assembleDevelopmentDigest(...)` | `[BUILT]` `digest/development.js` |
-| Refine Loop | Checkpoint | `RunCheckpoint.save({ lemmas, rounds, hashChain })` after each round | `[BUILT]` `core/checkpoint.js` |
-| Blueprint Run | Checkpoint | `RunCheckpoint.load()` + resume — skip already-proved lemmas, continue hash chain | `[BUILT]` `core/checkpoint.js` + `blueprint/run.js` |
-| Loop | Feedback | `this.predictors.rejects(tacticHead(tactic), history)` per proposal — causal predictor pre-filter before kernel call | `[BUILT]` `agent/loop.js` → `optimization/causal.js` |
-
-**Interconnections that exist but are NOT the intended path (resolved):**
-
-| From | To | What happens | Resolution |
-| Loop | E-Graph | Was: applied tactic directly via `egraph.applyTactic()` | Now: `Patch({op:'tactic', node, replacement, meta:{newGoals}})` → `egraph.applyPatch(patch)` — the patch is created BEFORE the egraph mutation. `[FIXED]` |
-| Loop | Commit | Was: `verifyProof` rejected assembled proofs without diagnostic | Now: pre-flight `check(source)` validates the assembled script before full kernel verify — surfacing composition errors (bullet alignment, unclosed goals) with the assembled source head. `[FIXED]` |
-| Blueprint Skeleton | Backend | Was: stubs checked only in warm env, failed in fresh sessions | Now: double-validation (warm fast check → fresh-env check with full imports) — stubs that typecheck in warm but not fresh are rejected at skeleton time. `[FIXED]` |
-| Refine Loop | Skeleton re-split | Was: one stalled lemma broke the entire refine | Now: stalled lemmas survive; dependency-order selection only schedules ready lemmas; idle count breaks after 3 empty rounds. `[FIXED]` |
-| Refine Loop | Lemma re-split | Was: re-split stub checks could be defective | Same fix as skeleton stub-check — fresh-env validation catches name collisions before the loop's extractGoals. `[FIXED]` |
-| Loop | Loop | Was: `fail()` swallowed extractGoals errors | Now: extractGoals errors surfaced in `lemma_failed` events; KERNEL_REJECTED logs verification error + assembled source head. `[FIXED]` |
-
-**Interconnections MISSING entirely:**
-
-| From | To | Research doc reference |
+| From | To | Contract |
 |---|---|---|
-| Refine Loop | Patch Algebra | Patch proposal as the interface between LLM and build system (§4). Currently the loop proposes TACTICS, not patches; the patch type exists (`core/patch.js`) but is only used for replay tracing, not as the active mutation interface. |
-| Patch Algebra | E-Graph / AST | A validated patch is applied to synchronized representations (§3, §5). Currently there's no structural AST that synchronizes with the e-graph; the proof tree is the only structural form, extracted at commit time. |
-| E-Graph / AST | Dependency DAG | A verified transformation scopes invalidation to dependency descendants (§6). Currently PullGraph tracks lemma-level deps; the e-graph is per-lemma and doesn't propagate invalidation. |
-| Dependency DAG | Scheduler | The scheduler dispatches independent work based on build states (§7). Currently `core/scheduler.js` dispatches all lemmas without checking build-state invalidation — there's no incremental rebuild. |
-| Blueprint | Domain Presets | Corpus tags (35 distinct) → starter import modules per domain. Cold-start optimization for the repair loop (fewer round-trips); documented, not implemented. |
+| Corpus | Autoformalizer | prose string + source id + asserted instances (`bench/validateFormalization.js`) |
+| Autoformalizer | Shortlist | kernel-verified statement + hash + shape + substrate cost (`_entry()` → shortlist JSON) |
+| Shortlist | Blueprint | human-selected pinned statement with imports (`blueprint/run.js --statement-file=`) |
+| Blueprint Skeleton | Refine | validated DAG of kernel-typechecked stubs (`blueprint/skeleton.js` → `refine.js`) |
+| Refine | Tactic Loop | stub statement per lemma attempt (`refine.js._attempt` → `new TacticLoop`) |
+| Tactic Loop | LLM | `llm.complete(prompt)` → tactic text (`agent/llm.js`, opencode CLI) |
+| Tactic Loop | Backend | `applyTactic(goal, tactic)` → subgoals (`lean/backendRepl.js` repl pool) |
+| Tactic Loop | Backend | `extractGoals(statement)` → root goal list (leased session in repl pool) |
+| Tactic Loop | E-Graph | `egraph.applyPatch(Patch({op:'tactic', ...}))` — the patch is the mutation record, never a raw tuple |
+| E-Graph | Proof Extraction | `egraph.extractProof()` → proof tree (`core/state.js` straighten) |
+| Extraction | Commit Gate | `Guardrails.assertLemmaCommit({pin, statement, proof, verification})` |
+| Commit Gate | Lemma Store | `lemmaStore.put(hash, index)` |
+| Lemma Store | Dataset | `dataset.addSample(lemma, proof, outcome)` |
+| Lemma Store | Digest | `assembleDevelopmentDigest(...)` |
+| Refine Loop | Checkpoint | `RunCheckpoint.save({ lemmas, rounds, hashChain })` after each round |
+| Blueprint Run | Checkpoint | `RunCheckpoint.load()` + resume — proved and stalled lemmas are restored, the hash chain continues |
+| Loop | Feedback | `this.predictors.rejects(tacticHead(tactic), history)` — causal predictor pre-filter before kernel call |
+| Loop | Lemma Store | `lemmaStore.findByGoal(goalType)` — the stored lemma is INLINED (declaration + proof) into the source and closed with `exact`; the kernel re-verifies the combined source |
 
-The current test suite (275 tests) covers the components above in isolation — mock backend, mock LLM, synthetic events. The `[BUILT]` contracts are exercised by the live-path tests (`*.live.test.js`, `validateFormalization.js`). All `[STUBBED]` interconnections have been resolved — the patch algebra is now the active mutation interface (`egraph.applyPatch`), the pre-flight check validates assembled proofs before kernel verify, the skeleton double-validates stubs, the refiner uses dependency-order scheduling with stall survival, and extractGoals errors are surfaced. The remaining `[MISSING]` interconnections are the Research doc's compiler framing that the current code doesn't yet realize: synchronized AST/e-graph representations, incremental DAG invalidation, scheduler build-state dispatch, and domain presets.
+**The run is a cycle, not a shot.** A proof development proceeds over arbitrarily many
+resume cycles: `blueprint/run.js --problem=<id>` resumes `runs/<id>/checkpoint.json` when it
+exists and never overwrites it; `--fresh` archives the old workdir first; `--list` reports every
+problem's rounds/proved/lemmas. Proven lemmas are skipped on resume, stalled lemmas stay stalled
+(they only un-stall when one of their dependencies is proved), and the lemma store plus training
+dataset are GLOBAL (`runs/lemma-store`, `runs/training-dataset`) — a lemma proved for one problem
+is reusable, kernel-verified, in any other problem's session. Everything else (checkpoint,
+blueprint, events, digest) is scoped to the problem's workdir.
+
+**Backend worker roles.** The repl pool runs two worker roles: the **warm worker** (first spawned)
+serves stateless checks from a chained warm environment so re-split and skeleton checks reuse one
+mathlib import; **leased workers** serve `extractGoals` sessions and are killed and replaced after
+each lemma, so memory is released between lemmas. When the warm worker is replaced, it re-warms
+from the last warmup statement automatically.
+
+**Planned extensions (Research doc §3–§7 framing not yet in the code):** a structural AST
+synchronized with the e-graph (the proof tree is currently the only structural form, extracted at
+commit time); e-graph-driven invalidation scoping over the dependency DAG; scheduler dispatch
+keyed on build states; and corpus-tag domain presets for starter imports. The patch algebra is
+live as the mutation interface; the loop proposes tactics, which are the tactic-level patch
+operator.
 
 
 ---
@@ -377,7 +378,7 @@ kanforge/
     auditPack.js             # per-lemma publication unit (§7)
     development.js           # whole-development digest (writeup + audit + hash chain)
   growth/
-    commit.js                # commit-per-lemma to a scratch repo (statement hash in message)
+    commit.js                # per-lemma artifact writer: statement.lean + proof.lean + audit.json into the workdir
     lemmaStore.js            # content-addressed lemma store → retrieval index (§2.8): statementHash, goal shape, imports, deps, proof length, tactic trajectory, difficulty
     dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
@@ -710,9 +711,9 @@ The agent loop operates at Level 2 (goal e-graph within a single lemma). The sch
 
 **Backward decomposition**: the loop works backwards from the target goal to simpler subgoals. Each tactic application reduces the current goal to zero or more simpler subgoals. The proof tree is built by working backwards: the root is the lemma's goal, each edge is a tactic that reduces complexity, and the leaves are solved goals (zero subgoals).
 
-The loop is a class (`TacticLoop`, `agent/loop.js`), not a composed monadic pipeline. It implements
+The loop is a class (`TacticLoop`, `agent/loop.js`). It implements
 the observe → propose → act → verify → repair → commit stages as explicit methods over the e-graph,
-with a stateful budget, concurrency, and repair path that a stateless composition would misrepresent:
+with a stateful budget, concurrency, and repair path:
 
 ```
 observe(goal)   -> PromptInput        // goal (type + context) + retrieved premises → prompt
@@ -934,8 +935,9 @@ Statement hash chain (`hasher.js`): every verified lemma appends
 
 A signed, rate-limited query API over the telemetry is not part of the system. The
 proof-of-correctness surface is the **development digest** (`digest/development.js`): writeup +
-audit pack + hash chain written per blueprint completion, plus `growth/commit.js`'s per-lemma git
-commits. An operator-facing query API would be specified against a real consumer, with
+audit pack + hash chain written per blueprint completion, plus `growth/commit.js`'s per-lemma
+artifact files (statement.lean + proof.lean + audit.json) under the problem workdir. An
+operator-facing query API would be specified against a real consumer, with
 `/integrity/verify` implemented as a real `verifyHashChain` over the run's chain.
 
 ---

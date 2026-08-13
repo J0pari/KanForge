@@ -79,7 +79,7 @@ section only argues the shape.
 | `optimization/metrics.js` | KPI calculator (wired into the loop's per-run outcome) | the quantitative evaluation catalog (§6.1): search efficiency/quality, planning, learning, economic KPIs |
 | `optimization/patterns.js` | degradation/cluster/spike detection | reward-hacking and loop-degeneracy monitors |
 | `optimization/exporter.js` | telemetry export | metrics feed for RL and dashboards |
-| `growth/commit.js` | commit-per-lemma to a scratch repo | content-addressed library growth; statement hash in the message |
+| `growth/commit.js` | per-lemma artifact files (statement + proof + audit) | content-addressed library growth; digest hash chain is the publication record |
 | `growth/lemmaStore.js` | content-addressed lemma store → retrieval index | reproducible lemma reuse: exact reuse / specialization / generalization / proof-pattern transfer (§2.8) |
 | `growth/multibody.js` | one-owner-per-region, processing lanes | multi-agent single-owner lemma edits (P7) |
 | `digest/writeup.js` | parse → render (Markdown/HTML, KaTeX) | human-readable, peer-reviewable proofs (warning 9, `research_notes_2026.md`) |
@@ -112,7 +112,8 @@ The mechanisms in plain language (the only load-bearing part):
 - **Memoized pull DAG**: each lemma/goal computation is a memoized thunk registered on the DAG;
   the scheduler dispatches dependency-ordered (`core/lazy`, `core/pullgraph`, `core/scheduler`).
 - **Stage-structured loop**: observe → propose → act → verify → repair → commit, each stage
-  emitting a traced event (`agent/loop.js` — a class, not a composed monadic pipeline).
+  emitting a traced event (`agent/loop.js` — a class; every observation and action is an
+  event in the causal store).
 - **Dual proof representation**: a proof tree (for surgery) and a Lean script (for the kernel),
   converted losslessly (`core/state.js`).
 - **LLM proposes, kernel disposes**: every tactic is verified by Lean before commit; a goal is
@@ -198,8 +199,9 @@ Detailed contracts: `architecture.md`. This is the shape.
   to every loop outcome.
 - **`search/*`** — best-of-N baseline, BFS, UCB-guided graph search (MCGS), repulsion,
   premise retrieval, goal-shape tactic menu.
-- **`growth/commit.js`** — commit-per-lemma to a scratch repo with statement hash in the message;
-  the lemma store is content-addressed. Wired into `blueprint/run.js`'s DoD tail.
+- **`growth/commit.js`** — per-lemma artifact writer: statement.lean + proof.lean + audit.json
+  into the problem workdir; the digest's hash chain is the publication record. Wired into
+  `blueprint/run.js`'s DoD tail.
 - **`digest/writeup.js` + `auditPack.js` + `development.js`** — per-lemma and whole-development
   writeups plus the full reproducible artifact set (writeup, audit JSON, hash chain).
 - **Query API** — not part of the system; see `architecture.md` §8.
@@ -240,7 +242,7 @@ The full warnings list is `research_notes_2026.md` §3; each maps to a guardrail
 | Proof of wrong/weakened statement | statement pinning, assumption accounting, human review gate |
 | Reward hacking | guardrail invariants, tactic caps, degeneracy monitors |
 | Compute cost explosion | repair loops, low top-K, premise pruning, dedup, state merging |
-| Long-run drift | resumable transactions, drift detection, per-lemma commits |
+| Long-run drift | resumable transactions, drift detection, per-lemma artifacts + hash chain |
 | Benchmark contamination | held-out + novel targets |
 | Low hit rate on open problems | batch throughput over curated corpus; publish partial lemmas |
 | Mathlib dependency drift | pinned toolchain + isolated workspaces |

@@ -1,14 +1,14 @@
-// Development digest + per-lemma commit (build_order.md §2.3, §7.4).
+// Development digest + per-lemma artifacts (build_order.md §2.3, §7.4).
 // The DoD tail: every blueprint completion writes the development writeup + audit + hash chain
-// and commits per-lemma to a scratch repo.
+// and writes per-lemma artifacts (statement + proof + audit) into the workdir. The hash chain
+// in the digest is the publication record.
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { assembleDevelopmentDigest, writeDevelopmentDigest, renderDevelopmentWriteup } from '../digest/development.js';
-import { commitLemma, commitDevelopment, writeLemmaArtifacts, formatLemmaCommitMessage } from '../growth/commit.js';
+import { writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
 import { verifyHashChain } from '../core/hasher.js';
 
@@ -95,30 +95,26 @@ test('development digest carries the §5.9 patch stream as transformation histor
     assert.ok(md.includes('rfl'));
 });
 
-test('commitLemma writes artifacts and commits with the statement hash in the message', () => {
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-'));
+test('writeLemmaArtifacts writes statement.lean + proof.lean + audit into the workdir', () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifacts-'));
     const stmt = 'lemma l1 : True := by sorry';
     const id = hashStatement(stmt);
-    writeLemmaArtifacts({ repoDir, lemmaId: id, statementHash: id, statement: stmt, proofScript: 'rfl' });
-    const commit = commitLemma({ lemmaId: id, statementHash: id, repoDir });
-    assert.ok(commit);
-    // second commit of an unchanged tree is a no-op (nothing staged)
-    const again = commitLemma({ lemmaId: id, statementHash: id, repoDir });
-    assert.strictEqual(again, null);
-
-    const log = execFileSync('git', ['log', '--format=%s'], { cwd: repoDir }).toString();
-    assert.ok(log.includes(formatLemmaCommitMessage(id, id).slice(0, 20)));
-    assert.ok(log.includes(id));
+    const dir = writeLemmaArtifacts({ workDir, lemmaId: id, statementHash: id, statement: stmt, proofScript: 'rfl' });
+    assert.ok(dir.startsWith(workDir));
+    assert.ok(fs.existsSync(path.join(dir, 'statement.lean')));
+    assert.ok(fs.existsSync(path.join(dir, 'proof.lean')));
+    assert.ok(fs.readFileSync(path.join(dir, 'proof.lean'), 'utf8').includes('rfl'));
+    assert.ok(fs.readFileSync(path.join(dir, 'statement.lean'), 'utf8').includes(id));
 });
 
-test('commitDevelopment writes the closing development commit', () => {
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-dev-'));
-    // The dev commit captures the digest, so write it into the repo first (as runBlueprintTheorem does).
-    const digest = assembleDevelopmentDigest({
-        theorem: 'theorem t : True := by sorry',
-        refined: makeRefined([mkLemma('l1', 'rfl')])
+test('writeLemmaArtifacts with an audit pack persists audit.json', () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifacts-audit-'));
+    const stmt = 'lemma l2 : True := by sorry';
+    const id = hashStatement(stmt);
+    const dir = writeLemmaArtifacts({
+        workDir, lemmaId: id, statementHash: id, statement: stmt, proofScript: 'trivial',
+        auditPack: { guardrails: 'ok' }
     });
-    writeDevelopmentDigest(digest, repoDir);
-    const devCommit = commitDevelopment({ developmentId: 'dev1', statementHash: 'abc', repoDir });
-    assert.ok(devCommit);
+    const audit = JSON.parse(fs.readFileSync(path.join(dir, 'audit.json'), 'utf8'));
+    assert.strictEqual(audit.guardrails, 'ok');
 });

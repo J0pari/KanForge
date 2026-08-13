@@ -110,7 +110,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 
 ### 1.3 Query API (deferred, architecture.md §8)
 - A signed, rate-limited `/proof/*` query API is not part of the system. The correctness surface
-  is the development digest (`digest/development.js`) + per-lemma commits (`growth/commit.js`).
+  is the development digest (`digest/development.js`) + per-lemma artifacts (`growth/commit.js`).
 - **Re-entry condition (P7):** a real consumer (operator dashboard) that the API serves; if
   re-added, `/integrity/verify` must run a real `verifyHashChain` over the run's chain.
 
@@ -131,11 +131,12 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance:** kill the process mid-search, restart with `--resume <runId>`, verify that
   cached lemmas are not re-proved and dependents continue.
 
-### 2.3 Git growth
-- `growth/commit.js` commits each verified lemma to a scratch repo with the
-  statement hash in the commit message.
-- **Acceptance:** after a run, `git log` shows one commit per verified lemma; `core/hasher.js`
-  audit reproduces the run's event hash chain.
+### 2.3 Artifact growth
+- `growth/commit.js` writes each verified lemma's artifacts (statement.lean + proof.lean +
+  audit.json) into the problem workdir; the development digest's hash chain is the publication
+  record.
+- **Acceptance:** after a run, the workdir holds one artifact directory per verified lemma and
+  `core/hasher.js` audit reproduces the run's event hash chain.
 
 ---
 
@@ -239,7 +240,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   are produced by `bench/ablation.js` (§5.1 status): a `--premises=on|off` axis wraps the llm in
   `PremiseAugmentingLLM` (retrieve top-k from a curated corpus, inject "Premises (theorems you
   may use)"; `--premise-locked=on` restricts the generator to them; `--corpus=full|no-mul-add`
-  is the lock-enforcement control). The P0.1 Mathlib repl build that was the gate is **done**;
+  is the lock-enforcement control). The P0.1 Mathlib repl build is **done**;
   the real smoke-set numbers are the current open item.
 - **Tactic-menu axis (coverage-before-RL).** The §5.1 run's `tauto_elim` gap proved the model's
   proposal distribution can be blind to imported tactics the solver needs. Fix: an import-verified
@@ -336,10 +337,10 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   cell); MCGS wins the two `imp_trans`/`modus_tollens` decomposition problems bestofn misses,
   and bestofn wins `or_elim`/`and_intro_chain`/`mul_comm_rw` MCGS misses — union across all
   four cells is 7/10, and `or_comm`, `distrib_twice`, `square_expand` are unsolved by every
-  cell. The greedy-vs-searcher divide §5.4 was built to expose is real: the two recipes solve
-  *disjoint* problem sets, so a cost model that routes per-problem (menu-off bestofn for
-  rw-tiers, MCGS for decomposition) would beat either recipe alone. This is the pass@1/cost
-  data the P6 gate (§6) is judged on.
+  cell. The greedy-vs-searcher divide §5.4 exists because the two recipes solve *disjoint*
+  problem sets: a cost model that routes per-problem (menu-off bestofn for rw-tiers, MCGS for
+  decomposition) beats either recipe alone. This is the pass@1/cost data the P6 gate (§6) is
+  judged on.
 - **Premises axis (step tier).** `bench/premisesCorpus.js` now ships a step-tier corpus:
   `PREMS_STEP_1` (19 kernel-verified premises: `Or.inl/inr/elim`, `And.intro/left/right`,
   `Eq.refl/symm/trans`, `Nat.mul_add/add_mul/mul_comm/add_assoc/add_comm/mul_assoc/zero_add/
@@ -349,14 +350,11 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   golden-chain premise into its top-8 (quality floor pinned by `test/premises.test.js`, 14
   tests, incl. 3 new). `--set=step` now defaults `--corpus=step`; `--corpus=step-no-rw` is the
   rewrite-lock control.
-- **Crash fixed.** The §5.4 locked control surfaced a real bug: `GoalEGraph.isSolved` recursed
-  through `tactic.subgoalClasses.every(...)` with no cycle guard, and a tactic whose subgoal
-  hashes back to an ancestor class (e.g. `rw [Nat.mul_comm]` twice on `b*a = c` re-attaches the
-  ROOT class as a child) overflowed the stack (`Maximum call stack size exceeded`, llm=0).
-  `isSolved` now carries a path-visited set that treats an on-path class as not-yet-solved
-  (regression test `test/egraph.test.js` "isSolved terminates on a goal-class cycle"; verified
-  end-to-end on the real path: premise-locked MCGS on `mul_comm_rw` completes and solves in 1
-  rollout).
+- **Cycle guard in `GoalEGraph.isSolved`.** A tactic whose subgoal hashes back to an ancestor
+  class (e.g. `rw [Nat.mul_comm]` twice on `b*a = c` re-attaches the ROOT class as a child)
+  would recurse without bound. `isSolved` carries a path-visited set that treats an on-path
+  class as not-yet-solved (regression test `test/egraph.test.js` "isSolved terminates on a
+  goal-class cycle"; premise-locked MCGS on `mul_comm_rw` completes and solves in 1 rollout).
 - **Premise lock is prompt-level only in the ablation drivers.** `findPremiseLockViolations`
   is enforced only inside `TacticLoop`; `bench/ablation.js` wraps the llm in
   `PremiseAugmentingLLM` but never post-hoc rejects a proposal that names a non-retrieved
@@ -370,34 +368,30 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   solved in 1 call on an earlier run, missed within 4–7 here); premise augmentation roughly
   doubles per-call wall time (~75 s vs ~35 s). A `locked` cell re-run hung in repl worker
   startup (both rows timed out at 600 s with 0 llm/0 kernel — a worker flake, not the crash).
-  **Confinded by a model switch mid-experiment**: cells here ran under `opencode/big-pickle`;
-  the session LLM is now `deepseek-v4-flash`, so further cells must be re-measured on a single
+  **Confounded by a model switch mid-experiment**: cells here ran under `opencode/big-pickle`;
+  the session LLM is `deepseek-v4-flash`, so further cells must be re-measured on a single
   consistent model before the with/without/locked table is written.
 - **Open item:** re-run the three cells (off / on / locked) on one consistent model with a
   higher `--row-timeout-ms`, and wire `findPremiseLockViolations` into `bench/ablation.js` so
   the locked control is enforced (not just prompted).
 
-### 5.5 Live-surface discipline (dead-code audit)
+### 5.5 Live-surface discipline
 **Rule:** every module/member is either (a) live — reachable from a run entry point — or (b)
 explicitly deferred in `architecture.md` (P6/P7), or (c) absent. No dead code and no doc claim
 about dead code.
-- **Lessons from the audit:**
-  - Decorative abstraction is a cost: `core/pipeline.js` (`Pipeline.compose`) described the loop
-    as a composed monadic pipeline, but nothing called it — the loop is a class, and the stage
-    combinator is not part of the system (`architecture.md` §4, §2.7).
-  - The lazy family (`core/{functor,promise,cache,context,fix,lazify,serialize,stream,template}.js`)
-    existed only for each other and `core.test.js`; the live path used only `core/lazy` (via
-    `PullGraph`). `core/lazy` + `core/hasher` are the foundations (§9).
-  - The patch algebra lesson: the loop's core operation IS a typed graph mutation, and the audit's
-    "condense OR wire" rule should have been applied as *wire*. The patch lives in `core/patch.js`
-    (`patchFromEvent`) as a projection over the live event stream, captured per lemma into the
-    retrieval index + digest (§2.7, §5.9).
-  - `query/` is not part of the system; `architecture.md` §8 names the digest + commit as the
-    correctness surface.
-  - `PullGraph` exposes only `register`/`dependsOn`/`nodes`/`edges`/`serialize`/`invalidate`/
-    `computation` (`core/pullgraph.js`).
-  - `lean/pin.js` hashes whitespace-collapsed canonical text; it does not perform `#print`
-    normalization (§3).
+- The loop is a class (`TacticLoop`, `agent/loop.js`); the stage combinator has no place in the
+  system (`architecture.md` §4, §2.7).
+- The live foundations are `core/lazy` (via `PullGraph`) and `core/hasher` (§9).
+- The loop's core operation is a typed graph mutation: `core/patch.js` carries the `Patch` record
+  (`patchFromEvent`), captured per lemma into the retrieval index + digest (§2.7, §5.9). The
+  e-graph's single mutation entry point is `applyPatch` — a tactic is a `Patch({op:'tactic', ...})`,
+  never a raw tuple.
+- `query/` is not part of the system; `architecture.md` §8 names the digest + commit as the
+  correctness surface.
+- `PullGraph` exposes only `register`/`dependsOn`/`nodes`/`edges`/`serialize`/`invalidate`/
+  `computation` (`core/pullgraph.js`).
+- `lean/pin.js` hashes whitespace-collapsed canonical text; it does not perform `#print`
+  normalization (§3).
 - **Acceptance:** every non-test JS file imports only live or explicitly-deferred modules; the full
   non-live suite passes.
 

@@ -11,6 +11,7 @@
 import { buildTacticPrompt } from '../agent/prompts.js';
 import { sanitizeTacticText } from '../agent/llm.js';
 import { tacticHead } from '../optimization/causal.js';
+import { computeRepulsionPenalty } from './repulsion.js';
 
 export class MCGS {
     constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4, repulsion = false, predictors = null } = {}) {
@@ -51,11 +52,18 @@ export class MCGS {
         const goal = egraph.currentGoal(goalClass.id);
         const attempted = this.repulsion ? new Set() : null;
         const history = [];
+        // Diversity penalty (Goedel-style): duplicates drawn in this expansion discount the
+        // backprop reward, so a class the LLM keeps repeating on is deprioritized — the scored
+        // form of the exact-duplicate rejection below.
+        let penalty = 0;
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const response = await this.llm.complete(buildTacticPrompt(goal, attempt, this.maxTacticsPerGoal));
             const tactic = sanitizeTacticText(response.text);
             if (!tactic) continue;
-            if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
+            if (attempted && attempted.has(tactic)) {
+                penalty += computeRepulsionPenalty(tactic, [...attempted]);
+                continue; // repulsion: no duplicate re-checks
+            }
             attempted?.add(tactic);
             if (this.predictors?.rejects(tacticHead(tactic), history)) {
                 this.skipped++;
@@ -65,7 +73,8 @@ export class MCGS {
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
             egraph.applyTactic(goalClass.id, tactic, result.newGoals);
-            return result.newGoals.length === 0 ? 1 : 0.5; // solved vs. progress
+            const reward = result.newGoals.length === 0 ? 1 : 0.5; // solved vs. progress
+            return Math.max(0, reward - penalty);
         }
         return 0;
     }

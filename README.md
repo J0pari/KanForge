@@ -108,9 +108,9 @@ node blueprint/run.js "<same theorem>" --out-dir=runs/my_target_rerun
 ```
 
 The run writes `development.md` / `development.html` / `development.json` (writeup + audit pack +
-hash chain) and commits each verified lemma to the scratch repo with its statement hash in the
-commit message. Missions additionally record the corpus entry + shortlist + human selection in
-the digest's provenance.
+hash chain) and per-lemma artifact files (`lemmas/<id>/statement.lean` + `proof.lean` +
+`audit.json`) into the workdir. The digest's hash chain is the publication record. Missions
+additionally record the corpus entry + shortlist + human selection in the digest's provenance.
 
 ### Running the component ablation graph
 
@@ -207,7 +207,7 @@ kanforge/
 ├── growth/             # Persistence for the growth loop
 │   ├── lemmaStore.js   # Content-addressed lemma store (write-through JSON)
 │   ├── dataset.js      # Append-only training samples + held-out split
-│   ├── commit.js       # Per-lemma git commits to a scratch repo
+│   ├── commit.js       # Per-lemma artifact writer (statement.lean + proof.lean + audit.json)
 │   └── multibody.js    # Multi-agent lemma-ownership lanes + coherence checks (P7)
 ├── digest/             # Publication units
 │   ├── writeup.js      # Markdown/HTML proof writeups
@@ -287,7 +287,7 @@ Mathlib-enabled repl in `lean-project`):
 - **`kanforge/runs/`** — older entries are audit packs from **mock-backend test runs** (e.g.
   `P → Q` "proved" by `intro h; omega`) that are **not** kernel-verified; do not cite them as
   evidence. Newer runs from `blueprint/run.js` write a kernel-verified development digest
-  (writeup + audit + hash chain) plus per-lemma commits; those are real.
+  (writeup + audit + hash chain) plus per-lemma artifact files; those are real.
 - **CI** — no CI configuration; `npm test` runs locally only. The `*.live.test.js` suites (real
   repl binary) skip automatically when the binary/project is unavailable.
 - **Single-agent-workspace lock** (`core/guardrails.js` backlog) — the multibody coordinator
@@ -354,9 +354,9 @@ captured per lemma into the retrieval index + development digest as the transfor
       loop, re-splits stuck stubs (adds children, never edits statements), drift-checked each round
 - [x] **Growth persistence** — `growth/lemmaStore.js` (content-addressed, write-through) and
       `growth/dataset.js` (append-only JSONL, held-out split, contamination check)
-- [x] **Development digest + per-lemma commits** — `blueprint/run.js` writes the whole-development
-      writeup/audit/hash-chain (`digest/development.js`) and commits each verified lemma to a
-      scratch repo (`growth/commit.js`); every run emits a reproducible publication artifact.
+- [x] **Development digest + per-lemma artifacts** — `blueprint/run.js` writes the
+      whole-development writeup/audit/hash-chain (`digest/development.js`) and per-lemma
+      artifact files (`growth/commit.js`); every run emits a reproducible publication artifact.
 - [x] **Mathlib-enabled REPL** — P0.1 build in `lean-project` (`lake exe cache get && lake build repl`);
       unblocks learned premise retrieval and the miniF2F corpus. Live suite exercises `Mathlib.Data.Real.Basic`
       via the `LEAN_PATH` the backend reconstructs from `KANFORGE_LEAN_PROJECT`.

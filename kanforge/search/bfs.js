@@ -11,6 +11,7 @@
 import { buildTacticPrompt } from '../agent/prompts.js';
 import { sanitizeTacticText } from '../agent/llm.js';
 import { tacticHead } from '../optimization/causal.js';
+import { computeRepulsionPenalty } from './repulsion.js';
 
 export class BestFirstSearch {
     constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false, predictors = null } = {}) {
@@ -21,10 +22,14 @@ export class BestFirstSearch {
         this.repulsion = repulsion;
         this.predictors = predictors; // compiled matcher (§5.3)
         this.skipped = 0;
+        this._penalties = new Map(); // classId → accumulated diversity penalty
     }
 
     _score(goalClass) {
-        return [goalClass.stats.visits, -goalClass.stats.value];
+        const penalty = this._penalties.get(goalClass.id) ?? 0;
+        // Fewest visits first, then highest value; a class the LLM repeats tactics on carries
+        // a penalty that deprioritizes it.
+        return [goalClass.stats.visits, -(goalClass.stats.value - penalty)];
     }
 
     async _propose(goal, attempt) {
@@ -37,10 +42,14 @@ export class BestFirstSearch {
         const goal = egraph.currentGoal(classId);
         const attempted = this.repulsion ? new Set() : null;
         const history = [];
+        let penalty = 0;
         for (let attempt = 1; attempt <= this.maxTacticsPerGoal; attempt++) {
             const tactic = await this._propose(goal, attempt);
             if (!tactic) continue;
-            if (attempted && attempted.has(tactic)) continue; // repulsion: no duplicate re-checks
+            if (attempted && attempted.has(tactic)) {
+                penalty += computeRepulsionPenalty(tactic, [...attempted]);
+                continue; // repulsion: no duplicate re-checks
+            }
             attempted?.add(tactic);
             if (this.predictors?.rejects(tacticHead(tactic), history)) {
                 this.skipped++;
@@ -50,6 +59,7 @@ export class BestFirstSearch {
             const result = await this.backend.applyTactic(goal, tactic);
             if (result.status !== 'ok') continue;
             egraph.applyTactic(classId, tactic, result.newGoals);
+            if (penalty > 0) this._penalties.set(classId, (this._penalties.get(classId) ?? 0) + penalty);
             return true;
         }
         return false;
