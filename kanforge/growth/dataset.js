@@ -4,6 +4,15 @@
 // always lands in the same split and later samples cannot retro-contaminate the train set.
 // The problem corpus records self-generated problems (from the target list) so the
 // contamination check can report overlap against benchmark splits per release.
+//
+// Outcome vocabulary (§6.2): 'verified' (lemma proved), 'failed' (lemma exhausted),
+// 'progress' (tactic applied with subgoals — the accepted-but-not-closed signal). All are
+// projected from events the loop already emits; nothing is synthesized.
+//
+// Preference records (preferences.jsonl, §6.2): swiss tournament pairwise judgments
+// { goalShape, tacticA, tacticB, winner } — DPO-shaped pairs persisted at zero extra LLM
+// cost (the judgments were already computed for ranking). Same deterministic split by hash
+// of the (goal, A, B) triple.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,22 +31,39 @@ export class TrainingDataset {
         this.split = split;
         this.samples = [];
         this.problems = [];
+        this.preferences = [];
         this.corrupt = [];
         this._load();
     }
 
-    addSample(state, tactic, outcome) {
+    addSample(state, tactic, outcome, trajectory = null) {
         const sample = {
             id: `s${this.samples.length}`,
             state,
             tactic,
             outcome,
+            trajectory, // [{ tactic, failed }] — the lemma's tactic attempts, mineable across runs
             timestamp: Date.now(),
             split: hashBucket(state, this.split)
         };
         this.samples.push(sample);
         this._append('samples.jsonl', sample);
         return sample;
+    }
+
+    addPreference({ goalShape, tacticA, tacticB, winner }) {
+        const record = {
+            id: `p${this.preferences.length}`,
+            goalShape,
+            tacticA,
+            tacticB,
+            winner, // 'a' | 'b' | 'equal'
+            timestamp: Date.now(),
+            split: hashBucket({ goalShape, tacticA, tacticB }, this.split)
+        };
+        this.preferences.push(record);
+        this._append('preferences.jsonl', record);
+        return record;
     }
 
     recordProblem(statement, { source = null, generatedBy = null } = {}) {
@@ -55,7 +81,7 @@ export class TrainingDataset {
     }
 
     exportJson() {
-        return JSON.stringify({ meta: { split: this.split, sampleCount: this.samples.length, problemCount: this.problems.length }, samples: this.samples, problems: this.problems }, null, 2);
+        return JSON.stringify({ meta: { split: this.split, sampleCount: this.samples.length, problemCount: this.problems.length, preferenceCount: this.preferences.length }, samples: this.samples, problems: this.problems, preferences: this.preferences }, null, 2);
     }
 
     trainSplit() {
@@ -94,8 +120,9 @@ export class TrainingDataset {
     _load() {
         this.samples = [];
         this.problems = [];
+        this.preferences = [];
         this.corrupt = [];
-        for (const [file, target] of [['samples.jsonl', 'samples'], ['problems.jsonl', 'problems']]) {
+        for (const [file, target] of [['samples.jsonl', 'samples'], ['problems.jsonl', 'problems'], ['preferences.jsonl', 'preferences']]) {
             const p = path.join(this.dir, file);
             if (!fs.existsSync(p)) continue;
             let line = 0;

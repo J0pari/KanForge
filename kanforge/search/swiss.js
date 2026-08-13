@@ -70,6 +70,8 @@ export function swissSchedule(n) {
 
 // Run the tournament and return candidates sorted by descending Bradley-Terry rating.
 // judge(tacticA, tacticB) -> Promise<'a' | 'b' | 'equal' | null>.
+// opts.onOutcome({ tacticA, tacticB, result }) is called for every judged pair — the
+// preference-pair hook: each judgment is a preference record for the dataset.
 export async function swissRank(candidates, judge, opts = {}) {
     const n = candidates.length;
     const outcomes = [];
@@ -82,6 +84,7 @@ export async function swissRank(candidates, judge, opts = {}) {
         }
         if (result === 'a' || result === 'b' || result === 'equal') {
             outcomes.push({ a: i, b: j, result });
+            opts.onOutcome?.({ tacticA: candidates[i], tacticB: candidates[j], result });
         }
     }
     const ratings = bradleyTerryRank(outcomes, n, opts);

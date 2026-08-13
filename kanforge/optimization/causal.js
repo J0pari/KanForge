@@ -225,8 +225,12 @@ export class CausalAnalyzer {
 // Rejection has a feedback loop (observed failure → reject → future success impossible), so a
 // pattern with tiny support or near-1.0 confidence (the overfit case) must not gate the kernel.
 // Defaults: minSupport 2 (never configurable below 2 for the reject path), confidence ceiling
-// 0.95. Held-out evidence is the miner's responsibility (a pattern mined and used on the same
-// stream is a hypothesis, not a gate); the gate here is the floor/ceiling.
+// 0.95. Held-out evidence is the miner's responsibility, and the two mining paths differ in it:
+// the live loop mines from the GLOBAL dataset at run start (only prior runs'/cycles' samples —
+// temporal held-out by construction), while the ablation harness mines and applies within one
+// run. A pattern mined and applied on the same stream is a hypothesis, not a validated gate —
+// that is the overfitting risk this floor/ceiling guards against; the live path's temporal
+// separation is what upgrades hypotheses toward gates.
 export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 0.95 } = {}) {
     const active = [];
     let inert = 0;
@@ -253,4 +257,40 @@ export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 
             return false;
         }
     };
+}
+
+// The per-lemma tactic trajectory, in emit order: [{ tactic, failed }]. The same filter
+// actionStreams applies — kernel-checked outcome events only. Used by the dataset's failed
+// samples so prior runs' failures are mineable (temporal held-out predictor mining, §6.2).
+export function lemmaTrajectory(events, lemmaId) {
+    const stream = actionStreams(events).find(([id]) => id === lemmaId);
+    if (!stream) return [];
+    return stream[1].map(a => ({ tactic: a.head, failed: a.failed }));
+}
+
+// Temporal held-out predictor mining (§6.2): build a synthetic event stream from the GLOBAL
+// dataset's samples — every sample was appended by a PRIOR run or prior cycle, so patterns
+// mined here can never be contaminated by the current cycle's outcomes — and compile the
+// failure predictors through the same floor/ceiling gate as the live stream.
+export function eventsFromDatasetSamples(samples = []) {
+    const events = [];
+    let id = 0;
+    for (const s of samples) {
+        for (const step of s.trajectory ?? []) {
+            if (!step?.tactic) continue;
+            events.push({
+                id: `ds${id++}`,
+                type: step.failed ? 'tactic_failed' : 'tactic_applied',
+                tactic: step.tactic,
+                lemmaId: s.id ?? `sample${id}`
+            });
+        }
+    }
+    return events;
+}
+
+export function compilePredictorsFromDataset(samples = [], { window = 3, minSupport = 2, minConfidence = 0.5, maxConfidence = 0.95 } = {}) {
+    const analyzer = new CausalAnalyzer(eventsFromDatasetSamples(samples));
+    const mined = analyzer.getFailurePredictors({ window, minSupport, minConfidence });
+    return compilePredictors(mined, { minSupport, maxConfidence });
 }

@@ -54,6 +54,7 @@ export function assembleDevelopmentDigest({ theorem, refined, statementHash = nu
         assumptions,
         rounds: refined.rounds,
         stored: refined.stored,
+        grpo: refined.grpo ?? null, // §6.2: per-run GRPO record (episodes + group advantages; loss needs a trainer's policy)
         hashChain: chain,
         hashChainHash: chain.length ? chain[chain.length - 1].hash : null,
         timestamp: new Date().toISOString()
@@ -129,6 +130,17 @@ export function renderDevelopmentWriteup(digest) {
     }
     lines.push('```');
     if (digest.hashChainHash) lines.push(`\nChain head: \`${digest.hashChainHash}\``);
+    if (digest.grpo) {
+        lines.push('');
+        lines.push('## GRPO record');
+        lines.push('');
+        lines.push(`- Episodes: ${digest.grpo.episodes} (${digest.grpo.solved} solved)`);
+        lines.push(`- Group-relative advantages: computed per episode over this run's group`);
+        for (const a of digest.grpo.advantages) {
+            lines.push(`  - ${a.lemmaId.slice(0, 12)}… solved=${a.solved} advantage=${a.advantage.toFixed(3)}`);
+        }
+        lines.push(`- Loss: ${digest.grpo.loss ?? 'null'}${digest.grpo.lossReason ? ` (${digest.grpo.lossReason})` : ''}`);
+    }
     return lines.join('\n');
 }
 

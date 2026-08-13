@@ -14,6 +14,8 @@ import { hashStatement } from '../lean/pin.js';
 import { buildLemmaIndex } from '../growth/lemmaStore.js';
 import { Patch, patchStreamFromEvents } from '../core/patch.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
+import { lemmaTrajectory } from '../optimization/causal.js';
+import { trajectoriesFromEvents, groupAdvantages } from '../optimization/grpo.js';
 
 export class BlueprintRefiner {
     constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 200, lemmaStore = null, dataset = null, checkpoint = null } = {}) {
@@ -29,6 +31,7 @@ export class BlueprintRefiner {
         this.lemmaStore = lemmaStore ?? null;
         this.dataset = dataset ?? null;
         this.checkpoint = checkpoint ?? (outDir ? new RunCheckpoint(outDir) : null);
+        this.grpTrajectories = []; // per-lemma episodes across the run — the GRPO group (§6.2)
     }
 
     async refine(blueprint) {
@@ -125,6 +128,19 @@ export class BlueprintRefiner {
 
         if (this.outDir && ok) this._write(working);
 
+        // GRPO record (§6.2): the run's episodes as one group — group-relative advantages are
+        // meaningful over the run's lemmas, not within a single lemma. The loss needs policy
+        // probabilities a trainer would supply; this system has no trainable policy, so it is
+        // recorded as null with the reason. Computed, never applied.
+        const advantages = groupAdvantages(this.grpTrajectories);
+        const grpo = {
+            episodes: this.grpTrajectories.length,
+            solved: this.grpTrajectories.filter(t => t.solved).length,
+            advantages: advantages.map(t => ({ lemmaId: t.lemmaId, solved: t.solved, advantage: t.advantage })),
+            loss: null,
+            lossReason: 'no trainable policy in this system — a gradient step is outside the project'
+        };
+
         return {
             ok,
             refined: working,
@@ -132,6 +148,7 @@ export class BlueprintRefiner {
             unproved,
             rounds,
             hashChain,
+            grpo,
             maxRoundsReached: guard >= this.maxRounds && unproved.length > 0,
             stored: {
                 lemmas: this.lemmaStore?.size ?? 0,
@@ -160,6 +177,7 @@ export class BlueprintRefiner {
             llm: this.llm,
             ...this.loopOptions,
             lemmaStore: this.lemmaStore ?? this.loopOptions.lemmaStore ?? null,
+            dataset: this.dataset ?? this.loopOptions.dataset ?? null,
             onEvent: e => {
                 this._currentStub = stub;
                 lemmaEvents.push(e);
@@ -170,6 +188,9 @@ export class BlueprintRefiner {
         });
         loop.addLemma(stub.statement);
         const outcome = await loop.proveAll();
+        // GRPO episode collection (§6.2): every lemma attempt contributes its tactic
+        // trajectories to the run's group — the group is the run, not the lemma.
+        this.grpTrajectories.push(...trajectoriesFromEvents(loop.events()));
 
         if (outcome.ok) {
             const verified = loop.events().filter(e => e.type === 'lemma_verified').pop();
@@ -234,10 +255,27 @@ export class BlueprintRefiner {
                 }));
             }
             if (this.dataset) {
-                this.dataset.addSample({ lemma: statement }, event.proofScript ?? '', 'verified');
+                this.dataset.addSample(
+                    { lemma: statement },
+                    event.proofScript ?? '',
+                    'verified',
+                    lemmaTrajectory(lemmaEvents, event.lemmaId)
+                );
             }
         } else if (event.type === 'lemma_failed' && this.dataset) {
-            this.dataset.addSample({ lemma: statement }, null, 'failed');
+            // The failed trajectory IS the sample's mineable content (§6.2): prior cycles'
+            // failures become the predictor-mining source for later cycles.
+            this.dataset.addSample(
+                { lemma: statement },
+                null,
+                'failed',
+                lemmaTrajectory(lemmaEvents, event.lemmaId)
+            );
+        } else if (event.type === 'tactic_applied' && this.dataset && (event.newGoalCount ?? 1) > 0) {
+            // Progress samples: kernel-accepted tactic with subgoals — the accepted-but-not-
+            // closed reward channel (§6.2). The closing tactic (0 subgoals) belongs to the
+            // lemma's verified record, not to progress.
+            this.dataset.addSample({ lemma: statement, goalType: event.goalType ?? null }, event.tactic, 'progress');
         }
     }
 

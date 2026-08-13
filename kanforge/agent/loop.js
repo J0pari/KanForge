@@ -55,7 +55,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -81,6 +81,7 @@ export class TacticLoop {
         this.ttrlPolicy = this.ttrl ? new TestTimePolicy() : null;
         this.grpoHarness = this.grpo ? new GRPOHarness() : null;
         this.lemmaStore = lemmaStore ?? null;
+        this.dataset = dataset ?? null;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -282,14 +283,14 @@ export class TacticLoop {
 
                             const patch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: tactic, scope: 'goal', meta: { attempt, newGoals: result.newGoals } });
                             const record = egraph.applyPatch(patch);
-                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic }, lemmaId);
+                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic, goalType: goal.type, newGoalCount: result.newGoals?.length ?? 0 }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                             }
 
                             if (isGoalSolved(result)) {
                                 solved = true;
-                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal' }, lemmaId);
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal', goalType: goal.type }, lemmaId);
                                 break;
                             }
 
@@ -305,14 +306,14 @@ export class TacticLoop {
                         if (pick.ok) {
                             const dpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: pick.tactic, scope: 'goal', meta: { via: pick.via, newGoals: pick.result.newGoals } });
                             const record = egraph.applyPatch(dpatch);
-                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via }, lemmaId);
+                            this._emit({ type: 'tactic_applied', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via, goalType: goal.type, newGoalCount: pick.result.newGoals?.length ?? 0 }, lemmaId);
                             for (const subgoal of record.created) {
                                 this._emit({ type: 'subgoal_created', lemmaId, subgoal }, lemmaId);
                             }
                             solved = true;
                             lastResult = pick.result;
                             if (isGoalSolved(pick.result)) {
-                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via }, lemmaId);
+                                this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via, goalType: goal.type }, lemmaId);
                             }
                         } else {
                             lastResult = { error: { message: pick.lastError ?? 'no tactic proposed' } };
@@ -370,7 +371,7 @@ export class TacticLoop {
                                 lastResult = repairResult;
 
                                 if (isGoalSolved(repairResult)) {
-                                    this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair' }, lemmaId);
+                                    this._emit({ type: 'goal_solved', lemmaId, goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair', goalType: goal.type }, lemmaId);
                                 }
                             } else {
                                 console.log(`[${ts()}] [loop]   repair failed: ${String(repairResult.error?.message ?? 'no message').slice(0, 150)}`);
@@ -562,6 +563,11 @@ export class TacticLoop {
         const countedLLM = this._countingLLM(this.llm);
         const countedBackend = this._countingBackend(this.backend);
         const N = this.swissN > 1 ? this.swissN : this.maxTacticsPerGoal;
+        // Preference-pair hook (§6.2): every judged pair is a preference record — persisted to
+        // the dataset at zero extra LLM cost (the judgment was already computed for ranking).
+        const onOutcome = ({ tacticA, tacticB, result }) => {
+            this.dataset?.addPreference({ goalShape: goal.type, tacticA, tacticB, winner: result });
+        };
 
         if (this.searchRecipe === 'bestofn') {
             const pick = await bestOfN(goal, countedBackend, countedLLM, N, this.predictors);
@@ -570,7 +576,7 @@ export class TacticLoop {
 
         if (this.searchRecipe === 'swiss') {
             this._emit({ type: 'swiss_tournament_start', lemmaId, goalClassId, N }, lemmaId);
-            const swissResult = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors: this.predictors });
+            const swissResult = await bestOfNWithSwiss(goal, countedBackend, countedLLM, { N, predictors: this.predictors, onOutcome });
             if (swissResult.ok) {
                 this._emit({ type: 'swiss_tournament_complete', lemmaId, goalClassId, winner: swissResult.tactic, rankingSize: swissResult.ranking.length }, lemmaId);
                 return { ...swissResult, via: 'swiss', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: null };
@@ -597,7 +603,7 @@ export class TacticLoop {
             return { ok: false, via: 'swiss+repulsion', llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'no candidates sampled' };
         }
         const judge = buildPairwiseJudge(goal, { llm: countedLLM });
-        const ranking = await swissRank(candidates, judge);
+        const ranking = await swissRank(candidates, judge, { onOutcome });
         let skipped = 0;
         const history = [];
         for (const { candidate } of ranking) {

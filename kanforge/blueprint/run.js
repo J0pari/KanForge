@@ -20,6 +20,7 @@ import { assembleDevelopmentDigest, writeDevelopmentDigest } from '../digest/dev
 import { writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
+import { compilePredictorsFromDataset } from '../optimization/causal.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,6 +34,16 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // else (checkpoint, blueprint, events, digest) is scoped to this problem's workDir.
     const lemmaStore = new LemmaStore({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'lemma-store') });
     const dataset = new TrainingDataset({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'training-dataset') });
+
+    // Temporal held-out predictor mining (§6.2): compile failure predictors from the GLOBAL
+    // dataset at run start. Every sample in it was appended by a prior run or prior cycle, so
+    // the reject gate cannot be contaminated by this cycle's outcomes. The compiled matcher is
+    // subject to the §6 support/confidence gates; without enough prior data it is inert.
+    const heldOutPredictors = compilePredictorsFromDataset(dataset.samples);
+    if (heldOutPredictors.count > 0) {
+        console.log(`[blueprint] predictors mined from prior data: ${heldOutPredictors.count} active (${heldOutPredictors.inert} inert)`);
+    }
+    if (heldOutPredictors.count > 0) loopOptions.predictors = heldOutPredictors;
 
     // Incremental event log: every loop event (goal_selected, tactic_proposed, tactic_failed,
     // etc.) is appended to events.jsonl as it happens, so a crashed run leaves the full

@@ -908,10 +908,45 @@ The learning/adaptation modules are all toggleable on the live loop and pure whe
 error clusters, same-failure cycles, repair loops, stuck proposals, guardrail spikes,
 degradation, and budget exhaustion; `ttrl.js` (`ttrl: true`) escalates the tactic budget of a
 goal class after repeated failures — within-run adaptation from the run's own outcomes; `grpo.js`
-(`grpo: true`) records episode batches and computes the clipped-surrogate update quantities a
-trainer would apply (group-relative advantages, loss, clip rate), but does not fake a training
-run — applying a gradient step is the offline trainer's job; `exporter.js` (`exportTo: <file>`)
-persists the causal stream and KPI summary. The observer never calls the backend or LLM.
+computes the clipped-surrogate update quantities a trainer would apply (group-relative
+advantages, loss, clip rate); `exporter.js` (`exportTo: <file>`) persists the causal stream and
+KPI summary. The observer never calls the backend or LLM.
+
+### 6.2 The learning stack shapes search and records data — it never trains
+
+The LLM is a hosted model reached through the opencode CLI (`agent/llm.js`). The policy has no
+trainable weights in this system, and no gradient step is applied anywhere: a locally
+weight-adjustable model would be a different system. The learning stack therefore does exactly
+two things — shape *which branches get search budget*, and *record data a trainer could consume*.
+
+**Failure-predictor mining is temporal held-out in the live path.** At run start,
+`blueprint/run.js` compiles failure predictors from the GLOBAL dataset
+(`runs/training-dataset`): every sample in it was appended by a prior run or a prior cycle, so
+the reject gate can never be contaminated by the current cycle's outcomes. The mining is a pure
+function over prior samples (`optimization/causal.js`), and the compiled matcher is subject to
+the §6 support/confidence gates. The ablation harness (`bench/ablation.js`) mines and applies
+within one run — there the mined patterns are hypotheses, not gates, exactly as the
+`compilePredictors` contract states. The two paths share one gate; they differ in held-out
+discipline, and the live path has it.
+
+**Preference pairs are recorded, not discarded.** Every swiss tournament computes pairwise
+tactic judgments (`A ≻ B` for one goal) to rank candidates; those judgments are preference data.
+The loop persists them into the global dataset (`preferences.jsonl`) at zero extra LLM cost —
+the judgments were already computed for ranking. A trainer consuming this dataset gets
+DPO-shaped pairs (goal shape, tactic A, tactic B, winner) with the same deterministic
+held-out split as samples.
+
+**Reward channel has three levels.** The dataset's outcome vocabulary is `verified` (lemma
+proved), `failed` (lemma exhausted), and `progress` (tactic applied with subgoals — the
+accepted-but-not-closed signal). All three are projected from events the loop already emits;
+nothing is synthesized. The per-step `progress` records carry the goal type so a reward model
+can condition on state, not just outcome.
+
+**GRPO records are per-run trainer-consumable data.** `grpo.js` computes trajectories,
+group-relative advantages, and the clipped-surrogate loss over each run's episodes; the refiner
+aggregates them and the development digest persists them (`development.json` + writeup). The
+loss is recorded with the policy probabilities a trainer must supply — the harness computes the
+update quantities, never applies them.
 
 ---
 
