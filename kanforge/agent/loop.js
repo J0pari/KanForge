@@ -23,6 +23,9 @@ import { PullGraph } from '../core/pullgraph.js';
 import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 import { isLemmaProved } from './solve.js';
 import { GoalTranspositionGraph, lexicalNormalize } from '../core/transpositionGraph.js';
+import { GoalEGraph, DEFAULT_EGRAPH_RULES } from '../core/egraph.js';
+import { createDefEqOracle } from '../lean/defEqOracle.js';
+import { assertGoalStateGraph } from '../core/goalStateGraph.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
 import { runCommitGate } from './commitGate.js';
@@ -42,7 +45,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02 } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition' } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -77,6 +80,15 @@ export class TacticLoop {
         this.repair = repair !== false; // error-driven repair toggle (registry component)
         this.predictorSkips = 0; // kernel-budget saved by the predictor pre-filter (per lemma, summed)
         this.predictorExploration = predictorExploration; // §6: counterfactual re-tests of rejected tactics
+        // searchStructure (registry component, build_order.md §5.12): the Level-2 goal-state
+        // structure — 'transposition' (incumbent, syntactic identity) or 'egraph' (congruence
+        // closure + kernel-confirmed rule unions). Ablation decides the default.
+        this.searchStructure = searchStructure === 'egraph' ? 'egraph' : 'transposition';
+        // The egraph's def-eq oracle is backend-grounded: `rfl` checks only. A backend without
+        // check() (e.g. a minimal mock) degrades to congruence-only unions — never unverified.
+        this.egraphOracle = this.searchStructure === 'egraph' && typeof backend?.check === 'function'
+            ? createDefEqOracle(backend)
+            : null;
 
         this.bus = bus ?? new EventBus();
         this.store = store ?? new EventStore();
@@ -186,9 +198,17 @@ export class TacticLoop {
         };
 
         try {
-            // Level 2: goal-state graph behind the contract (structure selection is C2/C3 —
-            // the transposition graph is the incumbent default).
-            const graph = new GoalTranspositionGraph({ normalizer: lexicalNormalize });
+            // Level 2: goal-state graph behind the contract — structure selection is the
+            // searchStructure component (§5.12); the loop depends on the contract only.
+            const graph = this.searchStructure === 'egraph'
+                ? assertGoalStateGraph(new GoalEGraph({
+                    oracle: this.egraphOracle,
+                    rules: DEFAULT_EGRAPH_RULES,
+                    onUnion: (a, b, reason, confirmed) => {
+                        this._emit({ type: 'egraph_union', lemmaId, reason, confirmed, classA: a, classB: b }, lemmaId);
+                    }
+                }), { label: 'GoalEGraph' })
+                : new GoalTranspositionGraph({ normalizer: lexicalNormalize });
 
             // ProofSession (§4): extractGoals opens the backend proof session (leased worker).
             let rootGoals;

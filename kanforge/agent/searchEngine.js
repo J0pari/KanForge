@@ -115,6 +115,11 @@ export class SearchEngine {
             const searchResult = await searcher.search(graph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
             goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
             predictorSkips += searcher.skipped ?? 0;
+            // Delegated searchers expand classes without the structure's own saturation hook —
+            // run it on the root once the search settles (opportunistic, never fatal).
+            if (typeof graph.saturateGoalClass === 'function' && graph.rootId) {
+                try { await graph.saturateGoalClass(graph.rootId); } catch { /* opportunistic */ }
+            }
             emit({ type: 'search_complete', recipe: this.searchRecipe, solved: graph.isRootSolved(), llmCalls: proposal.llmCalls, tacticCalls, skipped: searcher.skipped ?? 0 });
             if (!graph.isRootSolved()) {
                 wrappedFail(`search recipe ${this.searchRecipe} exhausted budget ${this.maxGoalsPerLemma} without solving`);
@@ -200,7 +205,7 @@ export class SearchEngine {
                     }
 
                     const patch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: tactic, scope: 'goal', meta: { attempt, newGoals: result.newGoals } });
-                    const record = graph.applyPatch(patch);
+                    const record = await this._applyPatch(graph, patch);
                     emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic, goalType: goal.type, newGoalCount: result.newGoals?.length ?? 0 });
                     for (const subgoal of record.created) {
                         emit({ type: 'subgoal_created', subgoal });
@@ -223,7 +228,7 @@ export class SearchEngine {
 
                 if (pick.ok) {
                     const dpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: pick.tactic, scope: 'goal', meta: { via: pick.via, newGoals: pick.result.newGoals } });
-                    const record = graph.applyPatch(dpatch);
+                    const record = await this._applyPatch(graph, dpatch);
                     emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic: pick.tactic, via: pick.via, goalType: goal.type, newGoalCount: pick.result.newGoals?.length ?? 0 });
                     for (const subgoal of record.created) {
                         emit({ type: 'subgoal_created', subgoal });
@@ -278,7 +283,7 @@ export class SearchEngine {
 
                     if (repairResult.status === 'ok') {
                         const rpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: repairedTactic, scope: 'goal', meta: { via: 'repair', newGoals: repairResult.newGoals } });
-                        const record = graph.applyPatch(rpatch);
+                        const record = await this._applyPatch(graph, rpatch);
                         emit({ type: 'repair_applied', goalClassId: currentGoalClass.id, tactic: repairedTactic });
                         for (const subgoal of record.created) {
                             emit({ type: 'subgoal_created', subgoal });
@@ -329,6 +334,23 @@ export class SearchEngine {
         }
 
         return snapshot();
+    }
+
+    // Apply a tactic patch through the contract, then run the structure's own saturation hook
+    // when present (the e-graph's kernel-confirmed rule unions; the transposition graph has
+    // none). Saturation is opportunistic: a failure never fails the tactic application.
+    async _applyPatch(graph, patch) {
+        const record = graph.applyPatch(patch);
+        if (typeof graph.saturateGoalClass === 'function') {
+            for (const id of [patch.node, ...record.subgoalClasses]) {
+                try {
+                    await graph.saturateGoalClass(id);
+                } catch {
+                    // saturation is an optimization, never a correctness requirement
+                }
+            }
+        }
+        return record;
     }
 
     // Per-goal delegated recipes (architecture.md §5): pick a tactic for the current goal via

@@ -100,6 +100,7 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         ttrl: overrides.ttrl ?? false,
         monitor: overrides.monitor ?? false,
         repair: overrides.repair ?? true,
+        searchStructure: overrides.searchStructure ?? 'transposition',
         writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
         onEvent: () => {}
     });
@@ -570,11 +571,12 @@ export function recommendRecipe(report) {
 // (config/registry.js) plus the `search` axis (recipe: bestofn vs mcgs).
 //
 // Recognized component names (others are rejected loudly):
-//   tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search
+//   tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search,
+//   searchStructure (transposition graph vs e-graph)
 // 'on' nodes that need external config (premises corpus, predictor file) are skipped when that
 // config is absent. The base node (all toggles off) is always included.
 export function buildAblationGraph(comps, { premiseConfig = null, predictors = null } = {}) {
-    const known = ['tacticMenu', 'premises', 'predictors', 'repulsion', 'exemplars', 'ttrl', 'monitor', 'repair', 'search'];
+    const known = ['tacticMenu', 'premises', 'predictors', 'repulsion', 'exemplars', 'ttrl', 'monitor', 'repair', 'search', 'searchStructure'];
     const unknown = comps.filter(c => !known.includes(c));
     if (unknown.length) {
         throw new Error(`unknown ablation component(s): ${unknown.join(', ')}; known: ${known.join(', ')}`);
@@ -599,7 +601,9 @@ export function buildAblationGraph(comps, { premiseConfig = null, predictors = n
                 exemplars: !!components.exemplars,
                 ttrl: !!components.ttrl,
                 monitor: !!components.monitor,
-                repair: !!components.repair
+                repair: !!components.repair,
+                // searchStructure 'on' = the e-graph; 'off' = the transposition graph.
+                searchStructure: components.searchStructure ? 'egraph' : 'transposition'
             },
             premises: components.premises ? premiseConfig : null,
             predictors: components.predictors ? predictors : null

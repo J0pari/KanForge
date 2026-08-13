@@ -23,7 +23,8 @@ export const COMPONENTS = {
     exemplars: { kind: 'toggle', default: false, recommended: null, label: 'Proven-lemma exemplars' },
     ttrl: { kind: 'toggle', default: false, recommended: null, label: 'Test-time budget escalation' },
     monitor: { kind: 'toggle', default: false, recommended: null, label: 'Degeneracy monitors' },
-    repair: { kind: 'toggle', default: true, recommended: null, label: 'Error-driven repair' }
+    repair: { kind: 'toggle', default: true, recommended: null, label: 'Error-driven repair' },
+    searchStructure: { kind: 'dropdown', options: ['transposition', 'egraph'], default: 'transposition', recommended: null, label: 'Goal-state search structure' }
 };
 
 export function componentNames() {

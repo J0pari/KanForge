@@ -130,3 +130,19 @@ test('TacticLoop hash chain stays intact across multiple verified lemmas', async
     assert.strictEqual(loop.hashChain[1].prevHash, loop.hashChain[0].hash);
     assert.deepStrictEqual(verifyHashChain(loop.hashChain), { ok: true });
 });
+
+test('TacticLoop runs the e-graph behind the contract (searchStructure: egraph)', async () => {
+    const backend = new MockBackend();
+    const llm = new MockLLM(['intro h', 'omega']);
+    const loop = new TacticLoop({ backend, llm, maxTacticsPerGoal: 2, searchStructure: 'egraph' });
+
+    const lemmaId = loop.addLemma('example (P Q : Prop) : P → Q := by sorry');
+    const outcome = await loop.proveAll();
+
+    // The same search flow must solve through the e-graph (mock oracle confirms nothing, so
+    // unions are congruence-only here — the real def-eq oracle is exercised by defEqOracle tests
+    // and the live suite).
+    assert.strictEqual(outcome.ok, true);
+    assert.strictEqual(loop.hashChain.length, 1);
+    assert.ok(loop.store.events.some(e => e.type === 'lemma_verified' && e.lemmaId === lemmaId));
+});

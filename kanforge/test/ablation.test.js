@@ -411,3 +411,11 @@ test('ablation graph enumerates the full factorial and computes main effects + i
 test('ablation graph rejects unknown components loudly', () => {
     assert.throws(() => buildAblationGraph(['tacticMenu', 'nonsense'], {}), /unknown ablation component/);
 });
+
+test('ablation graph includes the searchStructure axis (transposition vs egraph)', () => {
+    const nodes = buildAblationGraph(['searchStructure'], {});
+    assert.strictEqual(nodes.length, 2);
+    assert.strictEqual(nodes[0].overrides.searchStructure, 'transposition');
+    assert.strictEqual(nodes[1].overrides.searchStructure, 'egraph');
+    assert.deepStrictEqual(nodes[1].components, { searchStructure: true });
+});
