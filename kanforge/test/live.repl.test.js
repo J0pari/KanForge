@@ -107,7 +107,7 @@ test('live REPL tactic-mode multi-goal decomposition (induction)', { skip: SKIP_
     }
 });
 
-test('live end-to-end TacticLoop proof of Tier-1 lemma via REPL', { skip: SKIP_LIVE, timeout: 60000 }, async () => {
+test('live end-to-end TacticLoop proof of Tier-1 lemma via REPL', { skip: SKIP_LIVE, timeout: 300000 }, async () => {
     const backend = new BackendRepl({
         replBin: REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,

@@ -1,5 +1,5 @@
 // Blueprint CLI: theorem → skeleton (typechecked, pinned, audited) → refine (bottom-up fill,
-// re-split) → refined blueprint + LemmaStore/TrainingDataset capture.
+// re-split) → refined blueprint + effectiveStore/TrainingDataset capture.
 //
 // CLI: node blueprint/run.js '<theorem>' [--out-dir=<dir>] [--max-rounds=<n>]
 //      [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--statement-file=<path>]
@@ -25,7 +25,7 @@ import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, provenance = null } = {}) {
+export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, provenance = null, lemmaStore = null, dataset = null } = {}) {
     if (!backend || !llm) throw new Error('runBlueprintTheorem requires a real backend and a real llm client');
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
@@ -33,14 +33,15 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // GLOBAL accumulated knowledge (§2.8): the lemma store and training dataset are shared
     // across ALL problems — a lemma proved for problem A is reusable for problem B. Everything
     // else (checkpoint, blueprint, events, digest) is scoped to this problem's workDir.
-    const lemmaStore = new LemmaStore({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'lemma-store') });
-    const dataset = new TrainingDataset({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'training-dataset') });
+    // Tests inject isolated stores (mock-verified lemmas must never pollute the live globals).
+    const effectiveStore = lemmaStore ?? new LemmaStore({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'lemma-store') });
+    const effectiveDataset = dataset ?? new TrainingDataset({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'training-dataset') });
 
     // Temporal held-out predictor mining (§6.2): compile failure predictors from the GLOBAL
     // dataset at run start. Every sample in it was appended by a prior run or prior cycle, so
     // the reject gate cannot be contaminated by this cycle's outcomes. The compiled matcher is
     // subject to the §6 support/confidence gates; without enough prior data it is inert.
-    const heldOutPredictors = compilePredictorsFromDataset(dataset.samples);
+    const heldOutPredictors = compilePredictorsFromDataset(effectiveDataset.samples);
     if (heldOutPredictors.count > 0) {
         console.log(`[blueprint] predictors mined from prior data: ${heldOutPredictors.count} active (${heldOutPredictors.inert} inert)`);
     }
@@ -96,8 +97,8 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         outDir: workDir,
         loopOptions,
         maxRounds,
-        lemmaStore,
-        dataset
+        lemmaStore: effectiveStore,
+        dataset: effectiveDataset
     });
     const refined = await refiner.refine(generated.blueprint);
 

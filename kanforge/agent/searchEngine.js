@@ -18,7 +18,6 @@ import { MCGS } from '../search/mcgs.js';
 import { RepulsionSampler } from '../search/repulsion.js';
 import { tacticHead } from '../optimization/causal.js';
 import { buildPremisePrompt } from '../search/premises.js';
-import { extractLemmaName } from './reuseEngine.js';
 
 // Timestamped log prefix.
 export function ts() {
@@ -166,12 +165,13 @@ export class SearchEngine {
                     if (signal?.aborted) break;
                     if (proposal.budgetExhausted) break;
 
-                    // Lemma-store lookup: if a previously-proven lemma's conclusion matches
-                    // the current goal type (after semantic normalization), skip the LLM
-                    // entirely and use `exact <lemma>`. A store hit costs zero LLM calls.
+                    // Lemma-store lookup: if a previously-proven NAMED lemma's conclusion matches
+                    // the current goal type (after semantic normalization), skip the LLM entirely
+                    // and use `exact <lemma>`. Anonymous entries (examples) are never referenced
+                    // by name — a store hit without a name falls through to a real proposal.
                     const stored = this.lemmaStore?.findByGoal(goal.type);
-                    const proposed = stored
-                        ? { tactic: `exact ${extractLemmaName(stored.statement)}`, llmMs: 0, promptTokens: 0, completionTokens: 0 }
+                    const proposed = stored?.lemmaName
+                        ? { tactic: `exact ${stored.lemmaName}`, llmMs: 0, promptTokens: 0, completionTokens: 0 }
                         : await proposal.propose(this._buildTacticPrompt(goal, attempt, lemmaId, currentGoalClass.id, predictorHistory));
                     const tactic = proposed?.tactic;
                     if (!tactic) {

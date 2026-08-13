@@ -7,6 +7,8 @@ import path from 'node:path';
 import { runBlueprintTheorem } from '../blueprint/run.js';
 import { normalizeStub } from '../blueprint/skeleton.js';
 import { hashStatement } from '../lean/pin.js';
+import { LemmaStore } from '../growth/lemmaStore.js';
+import { TrainingDataset } from '../growth/dataset.js';
 
 const THM = 'theorem thm : P := by sorry';
 const H1 = 'theorem h1 : P := by sorry';
@@ -49,13 +51,19 @@ class LLM {
 
 test('runBlueprintTheorem drives skeleton → refine and persists everything', async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-run-'));
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-store-'));
     try {
+        // ISOLATED store + dataset: mock-verified lemmas must never pollute the live globals.
+        const lemmaStore = new LemmaStore({ dir: path.join(storeDir, 'lemma-store') });
+        const dataset = new TrainingDataset({ dir: path.join(storeDir, 'training-dataset') });
         const r = await runBlueprintTheorem({
             backend: new MockBackend(),
             llm: new LLM(),
             theorem: THM,
             outDir,
-            loopOptions: { maxTacticsPerGoal: 1 }
+            loopOptions: { maxTacticsPerGoal: 1 },
+            lemmaStore,
+            dataset
         });
 
         assert.strictEqual(r.ok, true);
@@ -69,9 +77,9 @@ test('runBlueprintTheorem drives skeleton → refine and persists everything', a
         assert.ok(fs.existsSync(path.join(outDir, 'blueprint.json')));
         assert.ok(fs.existsSync(path.join(outDir, 'blueprint.md')));
         assert.ok(fs.existsSync(path.join(outDir, 'refined.json')));
-        // lemma store + training dataset are GLOBAL (shared across problems), not per-workdir
-        assert.ok(fs.existsSync(path.join('runs', 'lemma-store', 'lemmas')));
-        assert.ok(fs.existsSync(path.join('runs', 'training-dataset', 'samples.jsonl')));
+        // the injected (isolated) stores are written, not the live globals
+        assert.ok(fs.existsSync(path.join(storeDir, 'lemma-store', 'lemmas')));
+        assert.ok(fs.existsSync(path.join(storeDir, 'training-dataset', 'samples.jsonl')));
 
         // the on-disk blueprint pins and DAGs match the refined result
         const blueprint = JSON.parse(fs.readFileSync(path.join(outDir, 'blueprint.json'), 'utf8'));
@@ -79,5 +87,6 @@ test('runBlueprintTheorem drives skeleton → refine and persists everything', a
         assert.strictEqual(blueprint.lemmas.length, 2);
     } finally {
         fs.rmSync(outDir, { recursive: true, force: true });
+        fs.rmSync(storeDir, { recursive: true, force: true });
     }
 });

@@ -43,14 +43,10 @@ export async function runCommitGate({
     const proofScript = directProof ?? straighten(proofTree).script;
     const source = buildProofSource(statement, proofScript);
 
-    // Pre-flight check: syntactically and type-level valid before the full kernel verify.
-    // Catches bullet misalignment, unclosed goals, and variable shadowing — compose errors
-    // that straighten missed.
-    const preflight = await backend.check(source, { useWarmEnv: false });
-    if (preflight.status !== 'verified') {
-        const perr = preflight.error?.message ?? 'pre-flight check failed';
-        return { ok: false, kind: 'preflight_failed', message: `proof composition invalid: ${String(perr).slice(0, 200)}`, proofScript, source, sourceHead: source.slice(0, 400), preflightError: perr };
-    }
+    // Whole-source kernel verification — ONE call on the leased session worker. (An extra
+    // stateless `check` here would need a second pool worker while the session holds its
+    // lease — a self-inflicted pool block on single-worker configurations. The verify result
+    // carries the compose errors just as well; the source head is logged with any failure.)
     const verification = await backend.verifyProof(source, lemmaId);
 
     // Premise-lock gate (build_order.md §5.2): when locked, the proof may only reference

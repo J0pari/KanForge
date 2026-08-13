@@ -94,6 +94,10 @@ export function buildLemmaIndex({ statementHash, statement, proofScript, deps = 
         statementHash,
         statement,
         proofScript,
+        // The declaration name, or null for anonymous statements (`example …`). Reuse-by-name
+        // (`exact <name>`) is only valid for NAMED entries — the reuse paths skip nulls, never
+        // reference a fallback placeholder.
+        lemmaName: statement ? extractLemmaName(statement) : null,
         normalizedGoalShape: statement ? extractGoalShape(statement) : null,
         freeVariables: statement ? extractFreeVariables(statement) : [],
         imports: imports ?? (statement ? extractImports(statement) : []),
@@ -105,6 +109,12 @@ export function buildLemmaIndex({ statementHash, statement, proofScript, deps = 
         patchStream: patchStream ?? [], // §5.9: the typed transformation history (per-lemma patches)
         timestamp: Date.now()
     };
+}
+
+// The declaration name from a statement (`theorem`/`lemma`), or null when anonymous.
+export function extractLemmaName(statement) {
+    const m = String(statement ?? '').match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/);
+    return m ? m[1] : null;
 }
 
 export class LemmaStore {
@@ -181,7 +191,7 @@ export class LemmaStore {
         if (!hash) return null;
         const entry = this.store.get(hash);
         if (!entry) return null;
-        return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement };
+        return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null };
     }
 
     _load() {

@@ -288,11 +288,6 @@ export class TacticLoop {
                     this._emit({ type: 'guardrail_trip', lemmaId, violation: v }, lemmaId);
                     fail('guardrails rejected the commit: PREMISE_LOCK_VIOLATION');
                 }
-                if (gate.kind === 'preflight_failed') {
-                    console.log(`[${ts()}] [loop] pre-flight failed lemma ${lemmaId.slice(0, 10)}… error: ${String(gate.preflightError ?? gate.message).slice(0, 300)}`);
-                    console.log(`[${ts()}] [loop] assembled source:\n${(gate.sourceHead ?? '').slice(0, 600)}`);
-                    fail(gate.message, { sourceHead: gate.sourceHead, preflightError: gate.preflightError });
-                }
                 if (gate.kind === 'guardrails') {
                     for (const v of gate.violations) {
                         if (v.type === 'STATEMENT_WEAKENED') {
