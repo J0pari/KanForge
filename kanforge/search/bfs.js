@@ -14,14 +14,17 @@ import { tacticHead } from '../optimization/causal.js';
 import { computeRepulsionPenalty } from './repulsion.js';
 
 export class BestFirstSearch {
-    constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false, predictors = null } = {}) {
+    constructor({ backend, llm, maxTacticsPerGoal = 8, repulsion = false, predictors = null, predictorExploration = 0 } = {}) {
         if (!backend || !llm) throw new Error('BestFirstSearch requires a backend and an llm');
         this.backend = backend;
         this.llm = llm;
         this.maxTacticsPerGoal = maxTacticsPerGoal;
         this.repulsion = repulsion;
         this.predictors = predictors; // compiled matcher (§5.3)
+        // §6 exploration valve: predicted-failure tactics are occasionally re-tested (counterfactual).
+        this.predictorExploration = predictorExploration;
         this.skipped = 0;
+        this.explored = 0;
         this._penalties = new Map(); // classId → accumulated diversity penalty
     }
 
@@ -52,8 +55,13 @@ export class BestFirstSearch {
             }
             attempted?.add(tactic);
             if (this.predictors?.rejects(tacticHead(tactic), history)) {
-                this.skipped++;
-                continue; // §5.3: no kernel budget on a known-failing window
+                // §6: rejection is not permanent — occasionally re-test the counterfactual.
+                if (this.predictorExploration > 0 && Math.random() < this.predictorExploration) {
+                    this.explored++;
+                } else {
+                    this.skipped++;
+                    continue; // §5.3: no kernel budget on a known-failing window
+                }
             }
             history.push(tacticHead(tactic));
             const result = await this.backend.applyTactic(goal, tactic);

@@ -109,12 +109,15 @@ export class SearchEngine {
             // gate. LLM calls flow through the proposal engine (counted + budget-walled).
             const countedBackend = this._countingBackend(this.backend, () => tacticCalls++);
             const searcher = this.searchRecipe === 'mcgs'
-                ? new MCGS({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors })
-                : new BestFirstSearch({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors });
+                ? new MCGS({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors, predictorExploration: this.predictorExploration })
+                : new BestFirstSearch({ backend: countedBackend, llm: proposal.llm, maxTacticsPerGoal: this.maxTacticsPerGoal, repulsion: this.repulsion, predictors: this.predictors, predictorExploration: this.predictorExploration });
             emit({ type: 'search_start', recipe: this.searchRecipe, budget: this.maxGoalsPerLemma });
             const searchResult = await searcher.search(graph, this.searchRecipe === 'mcgs' ? { rollouts: this.maxGoalsPerLemma } : { maxExpansions: this.maxGoalsPerLemma });
             goalCount = searchResult.expansions ?? searchResult.rollouts ?? 0;
             predictorSkips += searcher.skipped ?? 0;
+            if ((searcher.explored ?? 0) > 0) {
+                emit({ type: 'predictor_explored', recipe: this.searchRecipe, count: searcher.explored });
+            }
             // Delegated searchers expand classes without the structure's own saturation hook —
             // run it on the root once the search settles (opportunistic, never fatal).
             if (typeof graph.saturateGoalClass === 'function' && graph.rootId) {
@@ -407,8 +410,13 @@ export class SearchEngine {
         const history = [];
         for (const { candidate } of ranking) {
             if (this.predictors?.rejects(tacticHead(candidate), history)) {
-                skipped++;
-                continue;
+                // §6: rejection is not permanent — occasionally re-test the counterfactual.
+                if (this.predictorExploration > 0 && Math.random() < this.predictorExploration) {
+                    emit({ type: 'predictor_explored', goalClassId, tactic: candidate, via: 'swiss+repulsion' });
+                } else {
+                    skipped++;
+                    continue;
+                }
             }
             history.push(tacticHead(candidate));
             const result = await countedBackend.applyTactic(goal, candidate);

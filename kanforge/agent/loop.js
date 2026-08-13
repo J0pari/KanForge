@@ -197,6 +197,12 @@ export class TacticLoop {
             throw err;
         };
 
+        // Predictor provenance (§6): version the matcher in the event stream so audits can
+        // distinguish a fresh prior-run mining from a stale one.
+        if (this.predictors) {
+            this._emit({ type: 'predictor_compiled', lemmaId, count: this.predictors.count ?? null, inert: this.predictors.inert ?? null, source: this.predictors.source ?? null, minedAt: this.predictors.minedAt ?? null }, lemmaId);
+        }
+
         try {
             // Level 2: goal-state graph behind the contract — structure selection is the
             // searchStructure component (§5.12); the loop depends on the contract only.

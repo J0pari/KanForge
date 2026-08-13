@@ -231,7 +231,7 @@ export class CausalAnalyzer {
 // run. A pattern mined and applied on the same stream is a hypothesis, not a validated gate —
 // that is the overfitting risk this floor/ceiling guards against; the live path's temporal
 // separation is what upgrades hypotheses toward gates.
-export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 0.95 } = {}) {
+export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 0.95, source = null, minedAt = null } = {}) {
     const active = [];
     let inert = 0;
     for (const p of predictors ?? []) {
@@ -244,6 +244,11 @@ export function compilePredictors(predictors, { minSupport = 2, maxConfidence = 
     return {
         count: active.length,
         inert, // patterns that failed the safety gate (reported, never used for rejection)
+        // Version/provenance metadata (§6): where and when the patterns were mined. The live
+        // path mines per run start from prior-run samples only (temporal held-out) — the
+        // timestamp is how downstream audits distinguish a fresh prior from a stale one.
+        minedAt: minedAt ?? new Date().toISOString(),
+        source: source ?? 'unknown',
         rejects(head, history = []) {
             const h = String(head ?? '');
             for (const pattern of active) {
@@ -307,5 +312,5 @@ export function eventsFromDatasetSamples(samples = []) {
 export function compilePredictorsFromDataset(samples = [], { window = 3, minSupport = 2, minConfidence = 0.5, maxConfidence = 0.95 } = {}) {
     const analyzer = new CausalAnalyzer(eventsFromDatasetSamples(samples));
     const mined = analyzer.getFailurePredictors({ window, minSupport, minConfidence });
-    return compilePredictors(mined, { minSupport, maxConfidence });
+    return compilePredictors(mined, { minSupport, maxConfidence, source: 'dataset' });
 }

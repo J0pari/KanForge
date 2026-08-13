@@ -14,7 +14,7 @@ import { tacticHead } from '../optimization/causal.js';
 import { computeRepulsionPenalty } from './repulsion.js';
 
 export class MCGS {
-    constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4, repulsion = false, predictors = null } = {}) {
+    constructor({ backend, llm, exploration = Math.SQRT2, maxTacticsPerGoal = 4, repulsion = false, predictors = null, predictorExploration = 0 } = {}) {
         if (!backend || !llm) throw new Error('MCGS requires a backend and an llm');
         this.backend = backend;
         this.llm = llm;
@@ -22,7 +22,11 @@ export class MCGS {
         this.maxTacticsPerGoal = maxTacticsPerGoal;
         this.repulsion = repulsion;
         this.predictors = predictors; // compiled matcher (§5.3): reject known-failing windows pre-verification
+        // §6 exploration valve: with probability `predictorExploration` a predicted-failure tactic
+        // is applied anyway — counterfactual evidence keeps the predictor from self-confirming.
+        this.predictorExploration = predictorExploration;
         this.skipped = 0;
+        this.explored = 0;
     }
 
     _ucb(goalClass, parentVisits) {
@@ -66,8 +70,13 @@ export class MCGS {
             }
             attempted?.add(tactic);
             if (this.predictors?.rejects(tacticHead(tactic), history)) {
-                this.skipped++;
-                continue; // §5.3: do not spend kernel budget on a known-failing window
+                // §6: rejection is not permanent — occasionally re-test the counterfactual.
+                if (this.predictorExploration > 0 && Math.random() < this.predictorExploration) {
+                    this.explored++;
+                } else {
+                    this.skipped++;
+                    continue; // §5.3: do not spend kernel budget on a known-failing window
+                }
             }
             history.push(tacticHead(tactic));
             const result = await this.backend.applyTactic(goal, tactic);
