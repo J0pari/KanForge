@@ -38,13 +38,14 @@ class ScriptedLLM {
 }
 
 class MockCheckBackend {
-    constructor({ bad = [] } = {}) {
+    constructor({ bad = [], badSubstrings = [] } = {}) {
         this.bad = new Set(bad);
+        this.badSubstrings = badSubstrings;
         this.checks = [];
     }
     async check(statement) {
         this.checks.push(statement);
-        if (this.bad.has(statement)) {
+        if (this.bad.has(statement) || this.badSubstrings.some(s => statement.includes(s))) {
             return { status: 'error', error: { message: 'syntax error' } };
         }
         return { status: 'verified', goals: [] };
@@ -102,11 +103,10 @@ test('non-typechecking helper is dropped with a warning, blueprint stays valid',
         rootDeps: ['good']
     })]);
     // _tryCheck tries the warm env (stripped imports) FIRST and falls back to the full
-    // statement (with imports) on ANY warm failure — the mock's bad set must hold BOTH forms
-    // so the broken lemma fails both gates.
-    const brokenStmt = stripImports(stubOf('lemma broken : does not parse'));
-    const brokenFull = stubOf('lemma broken : does not parse');
-    const backend = new MockCheckBackend({ bad: [brokenStmt, brokenFull] });
+    // statement (with imports) on ANY warm failure — the mock rejects the broken lemma by
+    // CONTENT (either gate), not by an exact-string guess that would break when the stub's
+    // whitespace shape changes.
+    const backend = new MockCheckBackend({ badSubstrings: ['does not parse'] });
     const gen = new SkeletonGenerator({ llm, backend });
     const result = await gen.generate(THM);
     assert.strictEqual(result.ok, true);
