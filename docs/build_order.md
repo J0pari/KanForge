@@ -550,6 +550,25 @@ a measured effect; retrieval never bypasses kernel verification.
   proves unrelated goals do not merge; `egraph_collision` events appear in telemetry when a
   collision is forced.
 
+### 5.11 Proposal-unit constraint schema (architecture.md §4.1)
+- **Purpose:** the proposal granularity — one tactic atom per response — is a *constraint with a
+  measured rationale* (sample efficiency: one call = one branch), not an architectural necessity.
+  The constraint now lives as data (`PROPOSAL_SPEC = { maxAtoms: 1 }` in `agent/prompts.js`), and
+  the invariant that makes it swappable is stated: any proposal is consumed **atom-wise** through
+  `backend.applyTactic` with canonical state capture, so a multi-atom proposal is a pre-verified
+  e-graph path — never a black-box script application (which would discard intermediate classes,
+  merging, and the patch stream).
+- **Staged deliverables (P6):**
+  1. `maxAtoms: 1..k` on `PROPOSAL_SPEC` with the loop applying a k-atom response sequentially
+     (each intermediate state a canonical class; the verified prefix commits on failure);
+  2. failure-position repair — a macro failing at atom k repairs from k with the prefix as edges;
+  3. the ablation axis `atomsPerProposal` measured at equal budget via the existing cost counters
+     (`llmCalls` vs `tacticCalls` per cell), so the granularity default is itself an
+     ablation-decided value.
+- **Acceptance (provisional):** a k-atom cell run solves at least the same problem subset as the
+  1-atom cell at equal budget on the step tier with a reported cost table; every intermediate
+  macro state appears as an e-graph class (telemetry-verifiable, not asserted).
+
 ---
 
 ## Phase 6 — RL optimization

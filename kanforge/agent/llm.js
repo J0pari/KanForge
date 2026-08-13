@@ -153,12 +153,20 @@ export function normalizeMessages(messages) {
 
 // Pure: extract a usable tactic from a raw LLM response. The opencode model free-form answers
 // with markdown fences, backticks, and explanatory prose around the tactic; the kernel needs the
-// bare tactic. This is the same sanitization the TacticLoop applies (loop.js), shared so the
-// ablation/search drivers get it too. A response that STARTS with a backtick is treated as
-// `tactic` prose: everything after the matching close is dropped ('`ring` (a tautology)' -> ring).
+// bare tactic. This is the single response contract for the live loop AND the search recipes —
+// the same sanitization every proposal path applies (architecture.md §4.1). Extraction order:
+// (1) the first markdown fence block wins (prose around it is dropped), (2) else edge fences are
+// stripped, (3) a leading backtick quote is cut at its closing backtick ('`ring` (a tautology)'
+// -> 'ring'), a trailing backtick is dropped. Multi-line content without fences passes through
+// untouched — the repair path consumes whole scripts verbatim.
 export function sanitizeTacticText(text) {
     let t = String(text ?? '').trim();
-    t = t.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+    const fence = t.match(/```\s*(?:lean4?|lean\s*4)?\s*[\r\n]*([\s\S]*?)```/i);
+    if (fence) {
+        t = fence[1].trim();
+    } else {
+        t = t.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
+    }
     if (t.startsWith('`')) {
         const close = t.indexOf('`', 1);
         if (close !== -1) t = t.slice(1, close);

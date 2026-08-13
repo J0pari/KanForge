@@ -765,6 +765,42 @@ causal DAG that `causal.js` consumes.
 
 Stopping rule (`solve.js`): a goal is *solved* iff `applyTactic(goal, tactic)` returns zero subgoals. A lemma is *proved* iff all goal equivalence classes in its e-graph are solved **and** `statement.hash === pinned.hash` (the composed proof script verifies the full statement).
 
+### 4.1 Proposal-unit constraint (granularity schema)
+
+The loop asks the LLM for a **proposal** bounded by `PROPOSAL_SPEC` (`agent/prompts.js`) and
+enforces it atom-wise. The schema is data, not prose: `{ maxAtoms: 1 }` — one response may
+propose one kernel-applicable tactic for one goal — and every prompt path (the loop's,
+`bestofn`'s, `bfs`'s, `mcgs`'s, `swiss`'s) renders it from that one source.
+
+**The invariant that makes granularity swappable: atom-wise application with canonical state
+capture.** A proposal, whatever its granularity, is consumed by applying each tactic atom
+through `backend.applyTactic`; every intermediate goal state gets a canonical key and merges
+into the e-graph as an ordinary class, and every atom is a `Patch({op:'tactic'})` in the patch
+stream. A multi-atom proposal is therefore a pre-committed, kernel-verified *path* — it feeds
+the e-graph (more material for transposition merging and shared statistics), never bypasses it.
+The contra-indicated variant is black-box script application (kernel checks the whole script and
+returns only the final state): that discards intermediate classes, merging, and the patch
+stream, and is out of contract.
+
+**Two granularities are already live.** The proposal path runs at 1 atom; the repair path runs
+at whole-script granularity — a multi-line repair response is verified as complete source
+(`isMultiLineProof` → `backend.check` → the root class carries `_directProof`) and skips
+per-goal application. Multi-step replay through the e-graph frontier is likewise already
+exercised by `bench/verifyStepSet.js`'s golden chains (`replayChain` over `GoalEGraph`/`open[0]`),
+so the atom-wise act machinery has no single-atom assumption.
+
+**The default stays 1 atom for search — deliberately, for sample efficiency.** One LLM call is
+one branch; a k-atom macro commits k atoms down one branch where k single-atom calls explore k
+branches. The frontier systems run both granularities in different phases (coarse sketch to
+seed, fine tactic search to refine); the schema makes that phase choice a configuration, not an
+architecture change. The staged axis (`build_order.md` §5.11) is `maxAtoms: 1..k` measured at
+equal budget via the existing cost counters (`llmCalls` vs `tacticCalls` per cell), with
+failure-position repair (a macro failing at atom k commits its verified prefix as e-graph edges
+and repairs from the failure point — strictly richer feedback than single-atom failure). The
+DAG (Level 1) is untouched by any of this: its proposal unit — a whole lemma decomposition —
+is already coarse-grained via the skeleton, and the schema generalizes the same idea to
+Level 2.
+
 ---
 
 ## 5. Search

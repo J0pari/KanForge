@@ -7,7 +7,7 @@
 // For each lemma, the loop works backwards from the target goal to simpler subgoals:
 // 1. Pick the first open goal equivalence class from the e-graph (frontier order — the repl
 //    tactic API attacks the head goal of a proof state)
-// 2. Ask the LLM for ONE tactic
+// 2. Ask the LLM for a proposal bounded by PROPOSAL_SPEC (one tactic atom; §4.1)
 // 3. Apply it via backend.applyTactic(goal, tactic) on the goal's proofState
 // 4. Get zero or more new goal equivalence classes
 // 5. Repeat until the root goal class is solved (lemma proved) or budget exhausted
@@ -34,7 +34,8 @@ import { EventStore } from '../optimization/store.js';
 import { computeMetrics } from '../optimization/metrics.js';
 import { assembleAuditPack, writeAuditPack } from '../digest/auditPack.js';
 import { classifyError, buildRepairPrompt } from './repair.js';
-import { formatGoalPrompt } from './prompts.js';
+import { formatGoalPrompt, buildTacticPrompt } from './prompts.js';
+import { sanitizeTacticText } from './llm.js';
 import { bestOfNWithSwiss, buildPairwiseJudge, swissRank } from '../search/swiss.js';
 import { bestOfN } from '../search/bestofn.js';
 import { BestFirstSearch } from '../search/bfs.js';
@@ -642,8 +643,9 @@ export class TacticLoop {
         return { ok: false, via: 'swiss+repulsion', skipped, llmCalls: countedLLM.llmCalls, tacticCalls: countedBackend.tacticCalls, lastError: 'all ranked candidates failed kernel' };
     }
 
-    // Counting proxies (mirror bench/ablation.js): make delegated strategies' LLM/backend cost
-    // visible to the loop's metrics and audit without touching their interfaces.
+    // Counting proxies: make delegated strategies' LLM/backend cost visible to the loop's
+    // counters without touching their interfaces. The ablation harness reads these counters
+    // (architecture.md §0.4), so delegated costs must accumulate on the loop.
     _countingLLM(llm) {
         const counted = { ...llm };
         counted.llmCalls = 0;
@@ -674,20 +676,11 @@ export class TacticLoop {
             const response = await llm.complete(prompt);
             const llmMs = Date.now() - t0;
             if (llmMs > 20000) console.log(`[${ts()}] [loop] slow LLM call: ${(llmMs/1000).toFixed(1)}s`);
-            let tactic = response.text?.trim();
-            if (tactic) {
-                // Extract the first Lean code-fence block (the LLM sometimes wraps output in
-                // markdown with explanations — the first ``` lean ... ``` is the tactic text).
-                const fence = tactic.match(/```\s*(?:lean4?|lean\s*4)?\s*[\r\n]*([\s\S]*?)```/i);
-                if (fence) {
-                    tactic = fence[1].trim();
-                } else {
-                    tactic = tactic.replace(/^```(?:lean)?\s*/i, '').replace(/```\s*$/, '').trim();
-                }
-                tactic = tactic.replace(/^`|`$/g, '').trim();
-            }
+            // Single response contract (§4.1): the shared sanitizer extracts the tactic from
+            // fences/prose; multi-line scripts pass through untouched for the repair path.
+            const tactic = sanitizeTacticText(response.text) || null;
             return {
-                tactic: tactic || null,
+                tactic,
                 llmMs,
                 promptTokens: response.usage?.promptTokens ?? null,
                 completionTokens: response.usage?.completionTokens ?? null
@@ -707,20 +700,7 @@ export class TacticLoop {
             return hints ? splicePrompt(prompt, hints) : prompt;
         }
 
-        const contextStr = goal.context?.length > 0
-            ? `\nContext:\n${goal.context.map(c => `  ${c.name} : ${c.type}`).join('\n')}`
-            : '';
-
-        const prompt = [
-            {
-                role: 'system',
-                content: 'You are a Lean 4 proof assistant. Given a goal, propose ONE tactic to make progress. Reply with ONLY the tactic, no explanation or markdown formatting. Examples: "intro h", "omega", "simp [h]", "apply foo", "cases h".'
-            },
-            {
-                role: 'user',
-                content: `Goal:\n  ${goal.type}${contextStr}\n\nPropose ONE tactic (attempt ${attempt}/${this.maxTacticsPerGoal}):`
-            }
-        ];
+        const prompt = buildTacticPrompt(goal, attempt, this.maxTacticsPerGoal);
         return hints ? splicePrompt(prompt, hints) : prompt;
     }
 

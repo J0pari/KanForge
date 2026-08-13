@@ -335,7 +335,12 @@ captured per lemma into the retrieval index + development digest as the transfor
 
 ## Limitations
 
-- **Single-tactic proposals**: The LLM proposes one tactic at a time — no proof sketching or multi-step planning. This is a deliberate design decision, not a missing feature.
+- **Single-tactic proposals**: The LLM proposes one tactic atom at a time by default — a
+  deliberate constraint with a measured rationale (sample efficiency), expressed as data
+  (`PROPOSAL_SPEC`, architecture.md §4.1) and staged as an ablable axis (`maxAtoms`,
+  build_order.md §5.11). The repair path already consumes whole proof scripts, and the
+  atom-wise application invariant makes granularity swappable without touching the e-graph or
+  the DAG.
 - **Mathlib-dependent tactics**: `ring`, `linarith`, `norm_num`, `tauto`, etc. are available with
   the Mathlib-enabled repl (P0.1, built in `lean-project` and exercised by the live suite). Each
   statement must `import` the Mathlib module that provides the tactic/symbol — a full
