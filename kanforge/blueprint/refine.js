@@ -46,6 +46,7 @@ export class BlueprintRefiner {
         let hashChain = [];
         let guard = 0;
         let idleCount = 0;
+        const stalledRetried = new Set(); // per-cycle deadlock-release retry budget (one per lemma)
 
         // Resume from checkpoint: mark proved lemmas, restore rounds, continue hash chain.
         const loaded = this.checkpoint?.load();
@@ -88,12 +89,15 @@ export class BlueprintRefiner {
                     // blocked, and the only READY lemmas are stalled ones. A stalled lemma is
                     // the only path forward (its deps are proved; a fresh attempt may succeed).
                     // This is NOT the anti-waste case — that rule forbids re-attempting stalled
-                    // lemmas while other work exists. Retry one per round; a failed attempt
-                    // re-stalls it and the round cap bounds the spend.
+                    // lemmas while other work exists. The retry budget is ONE attempt per lemma
+                    // per refine cycle; a failed attempt re-stalls it and further cycles decide
+                    // again.
                     const stalledReady = working.lemmas.find(l => !l.proof && l.stalled
+                        && !stalledRetried.has(l.id)
                         && (l.deps ?? []).every(d => provenIds.has(d)));
                     if (stalledReady) {
                         stalledReady.stalled = false;
+                        stalledRetried.add(stalledReady.id);
                         continue; // next iteration picks it as `next`
                     }
                     this.stopReason = 'no-ready-lemma';
