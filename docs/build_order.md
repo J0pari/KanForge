@@ -607,6 +607,21 @@ a measured effect; retrieval never bypasses kernel verification.
   default to `runs/defaults.json` — the structure is an evidence-decided component, not an
   inherited label.
 
+### 5.13 Environment-metadata axiom inspection (staged)
+- **Current enforcement:** invariant 3 scans the COMPLETE assembled source (statement + proof) at
+  commit and in the run-end sweep. Kernel validity and project trust policy are different
+  things — the source scan catches lexical leakage, not semantic dependency on trusted axioms.
+- **Staged mechanism:** name the lemma during verification and query Lean's environment metadata
+  (`#print axioms <name>`) through the repl, so a proof depending on an axiom outside the
+  allowed set trips invariant 3 even when no forbidden token appears in the source. Requires a
+  backend primitive (`axiomsOf(source)` — the repl protocol's command mode must support
+  `#print`); until the primitive exists, the source scan is the enforcement and the gap is
+  recorded here rather than papered over.
+- **Acceptance:** a synthetic proof that silently depends on an axiom (no forbidden token in
+  the source) is rejected by the environment-metadata gate when the backend exposes the
+  primitive; otherwise the gap is reported in the guardrail sweep as unenforceable, never
+  claimed enforced.
+
 ---
 
 ## Phase 6 — RL optimization

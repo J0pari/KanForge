@@ -385,7 +385,8 @@ export class TacticLoop {
         return [...this.store.events];
     }
 
-    // Resume from checkpoint (P2.2): load serialized graph state, mark cached lemmas as CACHED
+    // Resume from checkpoint (P2.2): load serialized graph state, mark cached lemmas as CACHED,
+    // and restore the causal event stream so parent links resolve across the resume boundary.
     resume(checkpointPath) {
         if (!fs.existsSync(checkpointPath)) {
             throw new Error(`checkpoint not found: ${checkpointPath}`);
@@ -400,6 +401,27 @@ export class TacticLoop {
                 node.value = obj.value;
                 node.pullCount = obj.pullCount;
             }
+        }
+
+        // Restore the durable event stream (written by the recorder alongside state.json) so
+        // causal chains continue across the resume boundary.
+        const dir = path.dirname(checkpointPath);
+        const streamPath = path.join(dir, 'events.ndjson');
+        if (fs.existsSync(streamPath)) {
+            let restored = 0;
+            for (const raw of fs.readFileSync(streamPath, 'utf8').split(/\r?\n/)) {
+                if (!raw.trim()) continue;
+                try {
+                    const ev = JSON.parse(raw);
+                    this.store.append(ev);
+                    const last = this._chains.get(ev.lemmaId);
+                    if (!last || (ev.id !== last)) this._chains.set(ev.lemmaId, ev.id);
+                    restored++;
+                } catch {
+                    // malformed line: skip — the audit pack re-derives chains from the graph
+                }
+            }
+            this._emit({ type: 'resumed_event_stream', checkpointPath, restored });
         }
 
         this._emit({ type: 'resumed_from_checkpoint', checkpointPath, cachedCount: serialized.objects.length });

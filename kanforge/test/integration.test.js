@@ -2,6 +2,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { TacticLoop } from '../agent/loop.js';
 import { MockBackend, MockLLM } from './architectural.test.js';
 import { EventBus } from '../optimization/bus.js';
@@ -158,4 +161,28 @@ test('TacticLoop runs the end-of-run invariant sweep (checkAll enforcement point
     assert.strictEqual(outcome.ok, true);
     assert.ok(outcome.guardrailSweep, 'the sweep report rides the outcome');
     assert.strictEqual(outcome.guardrailSweep.ok, true, JSON.stringify(outcome.guardrailSweep.violations));
+});
+
+test('checkpoint resume restores the causal event stream (parent links survive)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-events-'));
+    const backend = new MockBackend();
+    const llm = new MockLLM(['intro h', 'omega']);
+    const loop = new TacticLoop({ backend, llm, maxTacticsPerGoal: 2, checkpointDir: dir });
+
+    const lemmaId = loop.addLemma('example (P Q : Prop) : P → Q := by sorry');
+    const outcome = await loop.proveAll();
+    assert.strictEqual(outcome.ok, true);
+
+    // A fresh loop (fresh store) resumes the checkpoint: cached node + durable event stream.
+    const backend2 = new MockBackend();
+    const llm2 = new MockLLM(['intro h', 'omega']);
+    const resumed = new TacticLoop({ backend: backend2, llm: llm2, maxTacticsPerGoal: 2, checkpointDir: dir });
+    resumed.addLemma('example (P Q : Prop) : P → Q := by sorry');
+    resumed.resume(path.join(dir, 'state.json'));
+
+    const lemmaEvents = resumed.store.events.filter(e => e.lemmaId === lemmaId);
+    assert.ok(lemmaEvents.length >= 4, 'event stream restored');
+    for (let i = 1; i < lemmaEvents.length; i++) {
+        assert.strictEqual(lemmaEvents[i].parent, lemmaEvents[i - 1].id, 'parent links intact after resume');
+    }
 });

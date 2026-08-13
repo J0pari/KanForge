@@ -45,6 +45,12 @@ export class RunRecorder {
             const checkpointPath = path.join(this.checkpointDir, 'state.json');
             const serialized = this.graph.serialize();
             fs.writeFileSync(checkpointPath, JSON.stringify(serialized, null, 2));
+            // Causal-chain durability (§4/§7): append this lemma's events to the checkpoint's
+            // JSONL stream so a resume restores parent links, not just cached nodes. The
+            // in-memory store remains a bounded index; this file is the durable record.
+            const streamPath = path.join(this.checkpointDir, 'events.ndjson');
+            const lemmaEvents = this.store.events.filter(e => e.lemmaId === lemmaId);
+            fs.appendFileSync(streamPath, lemmaEvents.map(e => JSON.stringify(e)).join('\n') + (lemmaEvents.length ? '\n' : ''));
             this.emit({ type: 'checkpoint_written', lemmaId, checkpointPath }, lemmaId);
         }
     }
