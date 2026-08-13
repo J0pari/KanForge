@@ -98,6 +98,19 @@ test('checkInvalidationLocality checks invalidation touches only descendants', (
     assert.deepStrictEqual(fail.unrelated, ['D']);
 });
 
+test('pullgraph.invalidate returns the locality audit (live enforcement point)', () => {
+    const graph = new PullGraph();
+    graph.register('A', () => 'A');
+    graph.register('B', () => 'B');
+    graph.register('C', () => 'C');
+    graph.dependsOn('B', 'A'); // B depends on A
+    graph.dependsOn('C', 'A'); // C depends on A
+
+    const audit = graph.invalidate('A');
+    assert.deepStrictEqual([...audit.invalidatedIds].sort(), ['A', 'B', 'C']);
+    assert.strictEqual(audit.locality.ok, true, JSON.stringify(audit.locality));
+});
+
 test('checkAll verifies hash chain integrity', () => {
     const e1Hash = hashChainEntry(null, 'h1', 'p1', 'ok');
     const e2Hash = hashChainEntry(e1Hash, 'h2', 'p2', 'ok');

@@ -5,6 +5,7 @@
 // identities/compositions/compose/pull/subgraph/diff members were removed (nothing read them).
 
 import { Lazy } from './lazy.js';
+import { Guardrails } from './guardrails.js';
 
 export class PullGraph {
     constructor() {
@@ -75,17 +76,24 @@ export class PullGraph {
     }
 
     // Transitive re-verification of dependents (architecture.md §2.3, §2.5 invariant 6).
+    // Enforcement point: the invalidation sweep is audited against checkInvalidationLocality
+    // here — the ONLY place invalidation happens in the live path. The audit result is returned
+    // so callers surface a violation instead of silently clearing unrelated cache.
     invalidate(nodeId) {
-        const node = this.objects.get(nodeId);
-        if (node) {
+        const invalidatedIds = [];
+        const walk = (id) => {
+            const node = this.objects.get(id);
+            if (!node) return;
             node.cached = false;
             node.computation.reset();
-            for (const [id, deps] of this.edges) {
-                if (deps.has(nodeId)) {
-                    this.invalidate(id);
-                }
+            invalidatedIds.push(id);
+            for (const [dependentId, deps] of this.edges) {
+                if (deps.has(id)) walk(dependentId);
             }
-        }
+        };
+        walk(nodeId);
+        const locality = Guardrails.checkInvalidationLocality(this, [nodeId], invalidatedIds);
+        return { invalidatedIds, locality };
     }
 
     serialize() {

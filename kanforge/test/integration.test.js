@@ -146,3 +146,16 @@ test('TacticLoop runs the e-graph behind the contract (searchStructure: egraph)'
     assert.strictEqual(loop.hashChain.length, 1);
     assert.ok(loop.store.events.some(e => e.type === 'lemma_verified' && e.lemmaId === lemmaId));
 });
+
+test('TacticLoop runs the end-of-run invariant sweep (checkAll enforcement point)', async () => {
+    const backend = new MockBackend();
+    const llm = new MockLLM(['intro h', 'omega']);
+    const loop = new TacticLoop({ backend, llm, maxTacticsPerGoal: 2 });
+
+    loop.addLemma('example (P Q : Prop) : P → Q := by sorry');
+    const outcome = await loop.proveAll();
+
+    assert.strictEqual(outcome.ok, true);
+    assert.ok(outcome.guardrailSweep, 'the sweep report rides the outcome');
+    assert.strictEqual(outcome.guardrailSweep.ok, true, JSON.stringify(outcome.guardrailSweep.violations));
+});

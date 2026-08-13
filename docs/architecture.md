@@ -618,6 +618,23 @@ checkAll(graph, ctx) -> { ok, violations[] }
 The planner checks every proposed move against these before acting (guardrails-as-logic, not a
 rule list). `optimization/patterns.js` feeds degeneracy observations here.
 
+**Enforcement points (explicitly named — each invariant has one authority).** The invariants are
+enforced where the relevant mutation happens, and the sweep verifies at run end:
+
+- **Commit gate** (`assertLemmaCommit`, commitGate.js): invariants 1–3 at every lemma commit —
+  pin unchanged, kernel accepted the full source, the ASSEMBLED source (statement + proof) is
+  free of forbidden tokens. Permissions never apply here.
+- **Dispatch gate** (`core/scheduler.js`): invariant 4's dependency-completeness — a node
+  dispatches only when every dependency is VERIFIED/CACHED; a failed dependency fails its
+  dependents without dispatch.
+- **Invalidation audit** (`core/pullgraph.js` `invalidate()`): invariant 6 — the invalidation
+  sweep is checked against `checkInvalidationLocality` at the only mutation point and the audit
+  is returned to the caller.
+- **Run-end sweep** (`checkAll`, wired into `TacticLoop.proveAll`): invariants 1, 2, 3, 4
+  (acyclicity), 5, and 7 over the whole graph — pins, kernel evidence, assembled-source
+  leakage, checkpoint coverage, hash chain, and permission grants — every violation emitted as
+  a `guardrail_trip` and carried in `outcome.guardrailSweep`.
+
 **Permission model (scoped relaxation, not an off-switch).** Invariants are tiered so the agent
 is not paralyzed by its own guardrails:
 

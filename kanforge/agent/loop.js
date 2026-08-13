@@ -29,6 +29,7 @@ import { assertGoalStateGraph } from '../core/goalStateGraph.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
 import { runCommitGate } from './commitGate.js';
+import { Guardrails } from '../core/guardrails.js';
 import { ProofSession } from './proofSession.js';
 import { ReuseEngine } from './reuseEngine.js';
 import { SearchEngine } from './searchEngine.js';
@@ -357,6 +358,16 @@ export class TacticLoop {
         const outcome = await scheduler.run();
         this.lastOutcome = outcome;
         this._emit({ type: 'loop_finished', ok: outcome.ok, stopped: outcome.stopped, failures: [...outcome.failures.keys()] });
+
+        // Invariant sweep (§2.5 enforcement points): checkAll audits the whole graph at run end
+        // — statement pins, kernel evidence, leakage over ASSEMBLED sources, acyclicity,
+        // checkpoint coverage, and the hash chain. Every violation is emitted as a guardrail
+        // trip; the sweep report rides the outcome for the digest/ablation layers.
+        const sweep = Guardrails.checkAll(this.graph, { pins: this.pins, hashChain: this.hashChain });
+        for (const v of sweep.violations) {
+            this._emit({ type: 'guardrail_trip', lemmaId: null, violation: v }, null);
+        }
+        outcome.guardrailSweep = sweep;
 
         // RunRecorder (§4): audit packs, hermeticity, KPI summary + provenance, monitors, GRPO,
         // export — the whole finalization tail.
