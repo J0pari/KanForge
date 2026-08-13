@@ -112,6 +112,8 @@ The run writes `development.md` / `development.html` / `development.json` (write
 hash chain) and per-lemma artifact files (`lemmas/<id>/statement.lean` + `proof.lean` +
 `audit.json`) into the workdir. The digest's hash chain is the publication record. Missions
 additionally record the corpus entry + shortlist + human selection in the digest's provenance.
+Run logs stay with the run: redirect console output into the workdir
+(`... > runs/<problem>/run.log`), never into the package root.
 
 ### Running the component ablation graph
 

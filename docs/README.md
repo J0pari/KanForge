@@ -4,6 +4,9 @@ Single source of truth per concern. Anything not listed here belongs in exactly 
 you need a fact, look it up here first. Do not restate a fact from one doc in another — reference
 it instead.
 
+The root `README.md` is the entry point (install, usage, status); it points here rather than
+restating design facts.
+
 | Document | Owns | Depends on |
 |---|---|---|
 | `architecture.md` | repo layout, module/file names, API contracts, wire formats, event vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, module inventory | — |

@@ -1,6 +1,6 @@
 // Environment loader: parse the package-local .env (git-ignored) into process.env.
 // Existing process.env values win — real environment variables always override the file.
-// Shared by bench/, query/, and the live test suites so there is exactly one place that
+// Shared by bench/, blueprint/, and the live test suites so there is exactly one place that
 // knows where configuration lives.
 
 import fs from 'node:fs';

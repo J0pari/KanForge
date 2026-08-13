@@ -23,5 +23,8 @@ Thumbs.db
 kanforge/bench/validate_*.log
 kanforge/corpus/shortlist/
 
+# Run logs: redirect into runs/<problem>/run.log, never the package root
+kanforge/*.log
+
 # Derived symbol→module index (built by bench/buildSymbolIndex.js from the pinned mathlib)
 kanforge/lean-project/symbol-index.json

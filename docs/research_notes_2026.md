@@ -29,6 +29,7 @@ derive constraints from it. Module paths do not belong here (see `architecture.m
 | LeanMarathon | open | paper-level autoformalization, 258 lemmas, 0 `sorry` | durable, resumable harness; blueprint DAG; drift detection |
 | APOLLO | open | 84.9% miniF2F at sub-8B scale | modular repair loop; sample complexity 25,600 → hundreds |
 | ALA | open | 52% autoformalization on 400-thm benchmark | two-model orchestration (generalist + Lean-tuned) |
+| Open Proof Corpus | Meta (open) | +17% over naive best-of-n (26%→43% vs 26%→36%) | Swiss-tournament best-of-n with pairwise LLM judgment, Bradley-Terry ranking *(load-bearing: `search/swiss.js` follows arXiv:2506.21621 §5.5)* |
 
 **Infrastructure**: Lean REPL (`leanprover-community/repl`), Lean Copilot, LeanDojo/LeanDojo-v2
 (premise retrieval, data extraction), `lean4web` (server-side Lean, Apache-2.0, TypeScript),
@@ -40,10 +41,18 @@ Kimina Lean Server (FastAPI verifier), mathlib4 (~100k declarations).
    the roles, but only in Phase 7; the single-agent loop (P0–P6) is the same machinery without the
    orchestration.
 2. **The reward loop is central.** Every frontier system trains the policy against kernel
-   verification. We therefore build telemetry, reward, and search biasing from P1 onward, not as a
-   bolt-on.
+   verification. This system's boundary is different: the policy is a hosted LLM with no
+   trainable weights here, so the same loop exists in its record-not-train form — preference
+   pairs, held-out failure predictors, and GRPO records that a trainer consumes
+   (`architecture.md` §6.2). Telemetry, reward, and search biasing are first-class from P1, not
+   a bolt-on; a gradient step is out of scope by decree.
 3. **Open-problem hit rate is low even for DeepMind.** Targets the corpus as curated,
    formalizable, auditable, and throughput-batched; expect partial results, not miracles.
+4. **Comparisons are made on a fixed corpus at equal cost.** OPC's tournament methodology and
+   the frontier papers' ablations converge on the same discipline: pass rate alone is an
+   anecdote; the measured quantity is pass@k *at normalized LLM + kernel cost*. This is the
+   design behind the ablation harness's fixed corpora, shared budget, and per-recipe cost
+   tables (`architecture.md` §5.7).
 
 ---
 
@@ -114,6 +123,7 @@ All tricks below apply at the **tactic level** (Level 2, `architecture.md` §2.2
 - APOLLO (open).
 - ALA (open).
 - AxiomProver (Axiom Math).
+- Open Proof Corpus (Meta, open; arXiv:2506.21621 — Swiss-tournament best-of-n methodology).
 - Repos: github.com/leanprover-community/repl, github.com/leanprover-community/lean4web,
   github.com/lean-dojo/LeanDojo, mathlib4.
 
