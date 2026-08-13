@@ -433,8 +433,9 @@ about dead code.
    `performanceBeforeAfterPredictor`, `heldOutImprovement`), economic quality
    (`secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`), and
    compression quality (research_notes §5, architecture §0.5/§6.1): `proofDescriptionLength`,
-   `libraryRelativeDescriptionLength`, `amortizedCostCurve` — the direct measurements of the
-   compression claims, staged with the same no-fabrication rule. Emit `null`
+   `libraryRelativeDescriptionLength`, `reuseCount`, `amortizedCostPoint` — SHIPPED as
+   event-derived metrics with the same no-fabrication rule (the cross-run amortized-cost curve
+   aggregates the per-run points at digest level). Emit `null`
    (with a documented reason) for any metric the current event stream cannot produce, rather than
    fabricating a number. **Instrumentation backlog** (loop must emit to un-null these):
   - per-proposal LLM latency and token counts (`tactic_proposed`);
@@ -606,6 +607,19 @@ a measured effect; retrieval never bypasses kernel verification.
   pair; an ablation run reports main effect + cost for `searchStructure` and writes the winning
   default to `runs/defaults.json` — the structure is an evidence-decided component, not an
   inherited label.
+- **Status (built).** All five deliverables ship: `lean/termParse.js` (conservative term
+  parser with round-trip printer; opaque-leaf fallback), `core/egraph.js` (e-nodes, hashcons,
+  union-find, congruence closure + rebuild, oracle-gated rule unions recorded as replayable
+  evidence, goal plumbing behind the GoalStateGraph contract with alternative expansions
+  retained, collision-safe re-keying), `lean/defEqOracle.js` (rfl checks under the canonical
+  telescope, memoized), the rule registry (algebraic identities, subterm saturation), and the
+  wiring (loop `searchStructure` option, registry dropdown, ablation axis, saturation hooks in
+  the SearchEngine). First live axis run (core, `trans_lt` + `and_comm`, N=2, budget 10):
+  transposition 2/2 and egraph 2/2 at equal budget — main effect 0.0pp on these
+  single-closer problems, so the default stays `transposition` (below the 5pp decision
+  threshold; no recommendation written). Remaining: saturating delegated-recipe expansions at
+  selection time (currently root-level after search settles), deeper rule coverage, and the
+  multi-step tier measurement where structural merging has room to matter.
 
 ### 5.13 Environment-metadata axiom inspection (staged)
 - **Current enforcement:** invariant 3 scans the COMPLETE assembled source (statement + proof) at

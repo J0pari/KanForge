@@ -363,6 +363,17 @@ captured per lemma into the retrieval index + development digest as the transfor
 
 ## Roadmap
 
+- [x] **Genuine equality-saturation e-graph** — `core/egraph.js`: e-nodes, hashcons, union-find,
+      congruence closure, and kernel-confirmed rewrite unions (`lean/defEqOracle.js` — `rfl`
+      checks, memoized, recorded for replay; unconfirmed unions never happen). Goal identity
+      parses goal types via `lean/termParse.js` (opaque-leaf fallback for unparseable goals).
+      The loop's `searchStructure` option selects it behind the GoalStateGraph contract; the
+      ablation axis measures it against the incumbent transposition graph at equal budget and
+      the winning default is written to `runs/defaults.json`.
+- [x] **Compression-quality metrics** — `proofDescriptionLength`,
+      `libraryRelativeDescriptionLength` (MDL residual), `reuseCount`, and the per-run
+      `amortizedCostPoint`, event-derived in `optimization/metrics.js` behind the
+      `compressionMetrics` registry toggle.
 - [x] **Swiss-tournament best-of-n selection** — `search/swiss.js`, faithful to the Open Proof Corpus
       methodology (arXiv:2506.21621, §5.5 / App. B): round-robin tournament judged pairwise by the LLM,
       Bradley-Terry ratings fit by MLE, candidates applied in rating order. OPC reports this strategy

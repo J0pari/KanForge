@@ -147,11 +147,12 @@ of large regularities that can be mechanically re-expanded into proofs" — not 
 
 **The four compression claims, mapped to mechanisms (all live):**
 
-1. **Search compresses by state equivalence** — the goal-state transposition graph (`core/transpositionGraph.js`,
-   `architecture.md` §2.2): different tactic histories that reach the same normalized state share
-   one equivalence class and its statistics. This is quotienting — the question "which differences
-   in the history of thought are irrelevant to the future" — and it is why the identity semantics
-   are syntactic: merging states that are not provably interchangeable would corrupt the quotient.
+1. **Search compresses by state equivalence** — the goal-state structures (`core/transpositionGraph.js` with
+   syntactic identity; `core/egraph.js` with congruence closure + kernel-confirmed rewrite unions,
+   `architecture.md` §2.2): different tactic histories that reach the same state share
+   one class and its statistics. This is quotienting — the question "which differences
+   in the history of thought are irrelevant to the future" — and it is why every union beyond
+   pure structure is kernel-confirmed: merging states that are not provably interchangeable would corrupt the quotient.
 2. **Knowledge compresses by reusable lemmas** — the blueprint DAG and the lemma store: a theorem
    family described through a few reusable lemmas has a much shorter description than the same
    proofs stated independently (the MDL intuition: `L(model) + L(data | model)`). The store is the

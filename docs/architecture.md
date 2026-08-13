@@ -349,10 +349,10 @@ is stated here once and the mechanisms are named where they live (the conceptual
    valve against over-compression.
 
 Kernel accountability is the unifying constraint: a compressed representation counts only when
-it re-expands into a kernel-verified artifact. The direct measurement of compression itself —
-proof description length, library-relative description length, and the amortized-cost curve
-across accumulated lemmas — is staged in the §6.1 metrics backlog, not fabricated before the
-instrumentation exists.
+it re-expands into a kernel-verified artifact. The direct measurement of compression — proof
+description length, library-relative description length, the per-run amortized-cost point, and
+the cross-run amortized-cost curve — ships in the §6.1 metrics catalog (event-derived; the
+curve aggregates the per-run points at digest level).
 
 
 ---
@@ -465,7 +465,7 @@ KanForge operates on two distinct but related structures:
 - Each lemma has a pinned statement and a proof (initially null, built from Level 2 search)
 
 **Level 2: Goal transposition graph** (within each lemma — the incumbent structure; the genuine
-e-graph is the staged `searchStructure` alternative, build_order.md §5.12)
+e-graph is the built `searchStructure` alternative, build_order.md §5.12)
 - Root = the lemma's initial goal (the statement's type + empty context)
 - Nodes = equivalence classes of goals (identical under the syntactic normalization of §2.2)
 - Edges = tactic applications that transform one equivalence class into zero or more subgoal classes
@@ -546,14 +546,18 @@ where the kernel re-verifies every match — it is never class identity. Parent 
 carried-over siblings do not), so MCGS backpropagation walks real ancestry through
 transposition merges.
 
-The genuine equality-saturation e-graph — `core/egraph.js`: e-nodes over the goal term
-structure, union-find classes, congruence closure, and rewrite rules whose every union is
-confirmed by the Lean backend (definitional-equality check, memoized) — is the staged
-`searchStructure: 'egraph'` alternative (build_order.md §5.12). It merges goals the
-transposition graph cannot (e.g. `0 + x = y` with `x = y` when Lean confirms the identity),
-retains alternative successful expansions per class, and is measured against the incumbent at
-equal budget — the winning default is written to `runs/defaults.json` like any other
-component.
+The genuine equality-saturation e-graph — `core/egraph.js` — is built and wired as the
+`searchStructure: 'egraph'` alternative: e-nodes over the parsed goal term structure
+(`lean/termParse.js`, conservative — unparseable goals become opaque leaves), hashconsed
+nodes, union-find classes, congruence closure with rebuild, and rewrite rules (the algebraic
+identities) whose every union is confirmed by the kernel oracle (`lean/defEqOracle.js` — an
+`rfl` check under the goal's canonical binder telescope, memoized and recorded for replay).
+Confirmed unions are replayable evidence; unconfirmed unions never happen. The e-graph also
+RETAINS alternative successful expansions per class — branching is a property of the
+structure, not of a search policy. Both structures implement the GoalStateGraph contract
+(`core/goalStateGraph.js`) and run the same conformance scenarios; the ablation axis
+`searchStructure` measures them at equal budget and writes the winning default to
+`runs/defaults.json` like any other component.
 
 **Class identity is collision-safe (correctness, not just cache efficiency).** The class id is
 `sha256(normalizedGoalType + normalizedContext)` — the canonical serialized key is the identity,
@@ -978,9 +982,9 @@ and every comparison cost-normalized:
   - Each **node** is a full configuration: a subset of the registry's component names —
     `{tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search}` —
     where `search` is the recipe axis (bestofn vs mcgs) and `repulsion` composes with it. The
-    goal-state search structure itself becomes an axis when both exist: `searchStructure`
-    (transposition graph vs e-graph, build_order.md §5.12) is measured like any other
-    component — the kernel is the only non-ablated infrastructure.
+    goal-state search structure is a measured axis: `searchStructure` (transposition graph vs
+    e-graph) runs as a factorial component like any other — the kernel is the only non-ablated
+    infrastructure.
   - Each **edge** connects two configurations differing in exactly ONE toggle — the graph is the
     Boolean hypercube of configurations, not a fixed linear order.
   - The report gives, per node, the same per-cell table; and per component, its **main effect**
@@ -1018,10 +1022,12 @@ consumers:
   CLI flags override.
 
 Components: `recipe` (dropdown: `loop`/`bestofn`/`swiss`/`swiss+repulsion`/`bfs`/`mcgs`),
-`maxTacticsPerGoal`, `maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`,
-`premiseLocked`, `premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`,
-`repair` (toggles). A component's `recommended` is `null` until evidence sets it; `default` is
-the safe initial. Components absent from the registry are not configurable by any consumer.
+`searchStructure` (dropdown: `transposition`/`egraph`), `maxTacticsPerGoal`,
+`maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`, `premiseLocked`,
+`premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`, `repair`,
+`compressionMetrics` (toggles). A component's `recommended` is `null` until evidence sets it;
+`default` is the safe initial. Components absent from the registry are not configurable by any
+consumer.
 
 ---
 
@@ -1108,13 +1114,13 @@ in hand cannot produce it (it needs instrumentation the loop does not yet emit �
   `heldOutImprovement`
 - **Economic quality** — wall / compute cost:
   `secondsPerTheorem`, `llmLatencyPerTheorem`, `kernelCallsPerSuccessfulProof`
-- **Compression quality** — the §0.5 quantities, measured directly (staged; `null` with a
-  documented reason until instrumented):
-  `proofDescriptionLength` (the final proof script's length under the canonical `state.js`
-  layout), `libraryRelativeDescriptionLength` (the residual description once referenced stored
-  lemmas are taken as dictionary entries), `amortizedCostCurve` (cost to solve problem `T_i` as
-  a function of the verified lemma library accumulated from `T_1..T_{i−1}` — the falling curve
-  is the claim "knowledge is being compressed into reusable mathematics" made measurable)
+- **Compression quality** — the §0.5 quantities, measured directly from the event stream
+  (registry toggle `compressionMetrics`; `null` with a documented reason when the events cannot
+  produce them): `proofDescriptionLength` (the final proof scripts' lengths under the canonical
+  `state.js` layout), `libraryRelativeDescriptionLength` (the MDL residual — reused lemmas
+  contribute zero, their content already being a dictionary entry), `reuseCount`, and the
+  per-run `amortizedCostPoint` (cost vs accumulated library; the curve across runs aggregates
+  these points at digest level)
 
 The metrics module's contract: pure function of the event stream; never calls the backend or LLM;
 every emitted value is derivable from events (or `null` with a documented reason).
@@ -1242,10 +1248,10 @@ for the stated reason; do not re-add without revisiting the reason.
 - **E-graph as a synchronized third representation** (Wave2 §3/§6). **Adopted in two parts.**
   The goal transposition graph is the incumbent Level 2 search structure (§2.2) — not a third
   synchronized representation alongside AST and script (we keep tree↔script duality, state.js,
-  for extraction). The genuine equality-saturation e-graph is the staged `searchStructure`
-  alternative (core/egraph.js, build_order.md §5.12): e-nodes, congruence closure, and
-  Lean-confirmed rewrite rules — the structure the Research vision describes, measured against
-  the incumbent at equal budget.
+  for extraction). The genuine equality-saturation e-graph is built and wired as the
+  `searchStructure` alternative (core/egraph.js): e-nodes, congruence closure, and
+  kernel-confirmed rewrite unions — the structure the Research vision describes, measured
+  against the incumbent at equal budget.
 - **GPU/CUDA graph filtering** (whitepaper diagram; Wave2 §9). The kernel is CPU-bound; the
   useful core is **structural dedup** (hash candidates/goals before dispatch), done on CPU now.
   GPU revisit only if CPU dedup measurably saturates.
