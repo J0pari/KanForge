@@ -217,7 +217,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   ships in `bench/mathlibSmoke.js` (`--set=mathlib`; 12 problems exercising ring, linarith,
   norm_num, decide, positivity, field_simp, tauto over Real/Int/`Nat.Prime`, each verified
   solvable by its family tactic through the real kernel). Two harness fixes made Mathlib runs
-  viable: the drivers now release every proof session (`endLemma`), and `workerPerProblem` gives
+  viable: every proof session is released after its lemma (`endLemma` — owned by the loop), and
+  `workerPerProblem` gives
   each problem a fresh repl process — the repl keeps every environment snapshot forever and a
   reused worker dies with `INTERNAL PANIC: out of memory` after ~9 heavy imports. The measured
   comparison (`--set=mathlib`) can now run; prefer `--problems=<subset>` to bound wall time
@@ -238,10 +239,12 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   (refuses duplicate re-proposals, steers with a "do not repeat" prompt note); `MCGS`/
   `BestFirstSearch` accept a `repulsion` flag that skips duplicate kernel re-checks. Premise
   retrieval is the lexical BM25 baseline wired into `TacticLoop`. The with/without ablation logs
-  are produced by `bench/ablation.js` (§5.1 status): a `--premises=on|off` axis wraps the llm in
-  `PremiseAugmentingLLM` (retrieve top-k from a curated corpus, inject "Premises (theorems you
-  may use)"; `--premise-locked=on` restricts the generator to them; `--corpus=full|no-mul-add`
-  is the lock-enforcement control). The P0.1 Mathlib repl build is **done**;
+  are produced by `bench/ablation.js` (§5.1 status): the premises axis is the loop's own
+  `premises`/`premiseLocked`/`premiseTopK` options (top-k from a curated corpus injected into
+  the proposal prompt; `premiseLocked` restricts the generator to them — a commit-time
+  guardrail, not just a prompt note). The historical `--premises=on|off` measurements below were
+  taken by an earlier wrapper-based harness; the current instrument drives the loop options
+  directly (`architecture.md` §0.4). The P0.1 Mathlib repl build is **done**;
   the real smoke-set numbers are the current open item.
 - **Tactic-menu axis (coverage-before-RL).** The §5.1 run's `tauto_elim` gap proved the model's
   proposal distribution can be blind to imported tactics the solver needs. Fix: an import-verified
@@ -262,8 +265,9 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   increases.
 - **Status:** `optimization/causal.js` ships (transition matrix, failure predictors, bottlenecks,
   anomalies, critical path; `compilePredictors` turns predictors into a reject matcher). The
-  search entry points (`bestofn`, `swiss`, `bfs`, `mcgs`) and the ablation drivers consult the
-  matcher BEFORE kernel verification, and the ablation report logs `predictor-skips` per recipe.
+  search entry points (`bestofn`, `swiss`, `bfs`, `mcgs`) consult the compiled matcher BEFORE
+  kernel verification through the loop, and the ablation report logs `predictor-skips` per recipe
+  (read from the loop's own counter).
   Unit tests cover the analyzer and the budget-shift claim (`test/causal.test.js`). The trainer
   (`bench/trainPredictors.js`) runs the REAL loop over a problem set and mines the event store;
   its report is self-audited (`reportAudit.js`: terminal coverage, predictor support/fails/
@@ -311,7 +315,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
     `mul_comm_rw`, `func_compose`, `eq_trans_chain`.
   - Each problem carries a golden `chain`; `validateSmokeSet` rejects malformed chains.
 - **Full-paces harness** (`bench/verifyStepSet.js`): every stub must typecheck, the golden chain
-  must replay through the SAME `GoalEGraph`/`open[0]` frontier discipline as the ablation drivers
+  must replay through the SAME `GoalEGraph`/`open[0]` frontier discipline the live loop uses
   (`replayChain`) AND re-verify once assembled via `assembleProofSource`, and each of the trivial
   closers `rfl`, `simp`, `omega`, `decide`, `assumption` must FAIL on the root goal. CLI:
   `node bench/verifyStepSet.js [--set=step] [--problems=id,...] [--out=dir]` → report.json/report.md.
@@ -356,13 +360,13 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   would recurse without bound. `isSolved` carries a path-visited set that treats an on-path
   class as not-yet-solved (regression test `test/egraph.test.js` "isSolved terminates on a
   goal-class cycle"; premise-locked MCGS on `mul_comm_rw` completes and solves in 1 rollout).
-- **Premise lock is prompt-level only in the ablation drivers.** `findPremiseLockViolations`
-  is enforced only inside `TacticLoop`; `bench/ablation.js` wraps the llm in
-  `PremiseAugmentingLLM` but never post-hoc rejects a proposal that names a non-retrieved
-  theorem. Evidence: with `--corpus=step-no-rw` (no `Nat.mul_comm`) a `bestofn` row still
-  solved `mul_comm_rw` — the generator emitted the rewrite from its own knowledge. For a
-  verifiable "locked" claim the ablation driver must call `findPremiseLockViolations` on each
-  proposal; until then the control measures prompt-level influence only.
+- **Premise lock, past and present.** The historical wrapper-based harness only influenced the
+  prompt — `findPremiseLockViolations` is enforced inside `TacticLoop`, and the wrapper never
+  post-hoc rejected a proposal naming a non-retrieved theorem. Evidence: with `--corpus=step-no-rw`
+  (no `Nat.mul_comm`) a `bestofn` row still solved `mul_comm_rw` — the generator emitted the
+  rewrite from its own knowledge. Since the orthogonalization (`architecture.md` §0.4) the
+  premises axis is the loop's own options (`premises`/`premiseLocked`), so a locked cell now
+  gets the loop's commit-time enforcement without any harness wiring.
 - **Measured (real kernel, single sample per cell, N=4, budget 12, `mul_comm_rw`, bestofn).**
   Cells `ablation_premises_off_r2` (0/1, 4 llm / 4 kernel), `ablation_premises_on_r2` (0/1,
   7 llm / 7 kernel) — pass@1 delta masked by LLM nondeterminism at N=4 (this same problem
@@ -373,8 +377,8 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   the session LLM is `deepseek-v4-flash`, so further cells must be re-measured on a single
   consistent model before the with/without/locked table is written.
 - **Open item:** re-run the three cells (off / on / locked) on one consistent model with a
-  higher `--row-timeout-ms`, and wire `findPremiseLockViolations` into `bench/ablation.js` so
-  the locked control is enforced (not just prompted).
+  higher `--row-timeout-ms`; with the loop-native premises axis the locked control now gets
+  commit-time enforcement for free.
 
 ### 5.5 Live-surface discipline
 **Rule:** every module/member is either (a) live — reachable from a run entry point — or (b)
@@ -393,6 +397,11 @@ about dead code.
   `computation` (`core/pullgraph.js`).
 - `lean/pin.js` hashes whitespace-collapsed canonical text; it does not perform `#print`
   normalization (§3).
+- **The measurement layer is orthogonal (architecture.md §0.4).** `bench/ablation.js` contains
+  no proof machinery — it constructs the live `TacticLoop` with each cell's options and reads
+  the loop's counters; the loop is the only implementation. The component registry
+  (`config/registry.js`) is the only component catalog; ablation axes, GUI widgets, and
+  live-path flags all key on its names (§5.8).
 - **Acceptance:** every non-test JS file imports only live or explicitly-deferred modules; the full
   non-live suite passes.
 
@@ -466,7 +475,9 @@ a measured effect; retrieval never bypasses kernel verification.
      `solved/total` per recipe when `problems.length ≥ 2`; the report audit checks the interval
      is present and non-degenerate.
   2. **Ablation graph (`--ablate=<comps>`)** — the full factorial over the named component toggles
-     (`repair`, `tactic menu`, `premises`, `egraph`, `search strategy`, `causal predictor`) runs
+     (`tacticMenu`, `premises`, `predictors`, `repulsion`, `exemplars`, `ttrl`, `monitor`,
+     `repair`, `search` — registry names, `architecture.md` §0.4/§5.8; the egraph and the kernel
+     are infrastructure, never ablation axes) runs
      on the fixed corpus at equal budget, one ablation pass per node. Report per node: the same
      per-cell table; per component: **main effect** (mean pass rate on − off over all
      configurations holding the rest fixed) and **pairwise interactions** (does A's effect change
@@ -481,6 +492,21 @@ a measured effect; retrieval never bypasses kernel verification.
      acceptance already demands this) and be extended as components land: the ablation graph's
      live smoke, blueprint re-run reuse (Stage-2 lemma store), and the digest's provenance
      round-trip.
+- **Recommendations (the graph's output surface).** `recommendFromGraph` maps measured main
+  effects to component recommendations (5pp decision threshold — below it the effect is noise,
+  not a default) and `recommendRecipe` picks the cheapest recipe among those solving within
+  margin of the best pass rate; both write `runs/defaults.json` (`config/registry.js`,
+  provenance attached, never hand-edited). `blueprint/run.js` applies the file at startup; CLI
+  flags override.
+- **Status (built).** The harness is the orthogonal instrument of `architecture.md` §0.4:
+  `driveCell` constructs the real `TacticLoop` per (recipe, problem, component-mask) cell and
+  rows read the loop's own counters (`llmCalls`/`tacticCalls`/`predictorSkips`); the graph runs
+  per node and writes the recommendations. First live graph run (core, `trans_lt` + `and_comm`,
+  tacticMenu axis, N=1, budget 8): menu-off solved 1/2 (the `trans_lt` row failed its pre-flight
+  check — the model proposed `lt_trans` without the importing module), menu-on solved 2/2 →
+  main effect +50pp, `{"tacticMenu": true}` written to `runs/defaults.json`. That is the
+  evidence → default → live-path loop working end to end; further components need measured runs,
+  not expectations.
 - **Acceptance:** a published comparison is a fixed-corpus run with CI, per-node results, main
   effects + interaction terms per component, and a complete provenance block that replays the
   run; the live suites run green against the real repl binary in CI; no comparison reports success
@@ -537,8 +563,12 @@ a measured effect; retrieval never bypasses kernel verification.
 - `optimization/reward.js`: initial defaults per `architecture.md` §6 (tune, don't trust).
 - `optimization/grpo.js`: GRPO over trajectories sampled by the search layer, with Lean
   verification as the outcome oracle.
-- **Deliverable:** training harness (single GPU fine-tune on Goedel-Prover-7B or
-  DeepSeek-Prover-V2-7B style base); W&B/Prometheus metric export via `optimization/exporter.js`.
+- **Deliverable:** the system's output surface for a trainer — the global dataset
+  (`runs/training-dataset`: verified/failed/progress samples, DPO-shaped preference pairs) plus
+  per-run GRPO records (trajectories, group-relative advantages, clipped loss, `loss: null` +
+  reason) persisted in the development digest. Applying a gradient step is the job of an
+  external trainer consuming that data, never of this system (`architecture.md` §6.2) — the
+  policy is a hosted LLM with no trainable weights in this codebase.
 
 ### 6.2 Guardrails (anti-reward-hacking)
 - Enforce the invariant spec in `core/guardrails.js` (per `architecture.md` §2.5): pinned
@@ -718,9 +748,10 @@ a measured effect; retrieval never bypasses kernel verification.
 
 ### 7.4 Full digestion + audit
 - Auto-generate per-target writeups with assumption accounts; assemble a research summary doc.
-  `core/hasher.js` audit + git history = reproducibility pack.
+  `core/hasher.js` audit + per-lemma artifact files (statement.lean + proof.lean + audit.json)
+  = reproducibility pack.
 - **Acceptance:** for every claimed result: Lean source, blueprint JSON, writeup, audit hash, and
-  git commits all consistent; the development digest's hash chain verifies end-to-end
+  per-lemma artifacts all consistent; the development digest's hash chain verifies end-to-end
   (`verifyHashChain`).
 
 ### 7.5 Ongoing RL loop

@@ -11,7 +11,7 @@ KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM
 - **REPL integration**: Direct interaction with the Lean kernel via `leanprover-community/repl`
 - **Causal telemetry**: Every event (tactic proposal, application, goal solving) is traced with parent links
 - **Guardrails enforcement**: Statement pinning prevents weakening; kernel verification ensures correctness
-- **Checkpoint/resume**: Verified lemmas are serialized to `state.json` and can be resumed from any checkpoint
+- **Checkpoint/resume**: Each refine round is saved to `runs/<problem>/checkpoint.json`; a re-run with `--problem=<id>` resumes automatically (proved lemmas skipped, stalled lemmas restored)
 - **Error-driven repair**: Failed tactics are classified and retried through a repair prompt before giving up
 
 ## Architecture
@@ -101,10 +101,11 @@ harness statement with a known proof, shown to exercise the machinery:
 node blueprint/run.js "import Mathlib.Data.Nat.Basic
 
 example (a b c d : Nat) (hab : a ≤ b) (hcd : c ≤ d) : a * c ≤ b * d := by sorry" \
-  --out-dir=runs/my_target --repo-dir=runs/my_target_repo
+  --problem=my_target
 
-# A re-run of an already-proven development reuses the stored proofs (zero LLM/kernel spend)
-node blueprint/run.js "<same theorem>" --out-dir=runs/my_target_rerun
+# A re-run resumes the checkpoint (proved lemmas re-verified from the lemma store, zero
+# LLM/kernel spend for them); --fresh archives the old workdir and starts over
+node blueprint/run.js --problem=my_target
 ```
 
 The run writes `development.md` / `development.html` / `development.json` (writeup + audit pack +
@@ -116,7 +117,7 @@ additionally record the corpus entry + shortlist + human selection in the digest
 
 ```bash
 # Full factorial over component toggles: main effects + pairwise interactions at equal budget
-node bench/ablation.js --set=core --ablate=menu,premises,predictors --max-llm-calls=60
+node bench/ablation.js --set=core --ablate=tacticMenu,premises,predictors --max-llm-calls=60
 ```
 
 ### Running the smoke harness
@@ -213,6 +214,9 @@ kanforge/
 │   ├── writeup.js      # Markdown/HTML proof writeups
 │   ├── auditPack.js    # Per-lemma audit pack
 │   └── development.js  # Whole-development digest (writeup + audit + hash chain)
+├── config/             # Component registry (architecture.md §5.8)
+│   └── registry.js     # One catalog for every toggle/slider/dropdown; runs/defaults.json
+│                       # is the ablation graph's evidence-written output surface
 ├── search/             # Search strategies — every one is a toggleable live-loop recipe
 │   ├── swiss.js        # Swiss-tournament best-of-n (OPC App. B) — searchRecipe 'swiss'
 │   ├── bestofn.js      # Naive best-of-n baseline — searchRecipe 'bestofn'
@@ -226,10 +230,12 @@ kanforge/
 │   ├── smoke.js        # 23-problem smoke set (tiers 1–5)
 │   └── ...
 ├── test/               # Test suite (node:test)
-└── runs/               # Per-lemma audit output and checkpoints
-    └── run_<timestamp>/
-        ├── state.json  # Checkpoint (resumable)
-        └── <lemma>/    # audit.json, proof.md, proof.html
+└── runs/               # Per-problem workdirs + global knowledge
+    ├── <problem>/      # checkpoint.json, blueprint, events, development digest
+    │   └── lemmas/<id>/# statement.lean + proof.lean + audit.json per verified lemma
+    ├── lemma-store/    # GLOBAL: content-addressed proven lemmas (cross-problem reuse)
+    ├── training-dataset/ # GLOBAL: append-only training samples + preferences
+    └── defaults.json   # registry recommendations written by the ablation graph
 ```
 
 ## Current Status
@@ -269,13 +275,21 @@ Mathlib-enabled repl in `lean-project`):
   goal; `TacticLoop` injects the top-k premises into the prompt, and premise-locked mode makes
   `premise-locked` commit-time guardrail tripping a kernel-verified proof that cites an unretrieved
   premise. The lexical baseline is the bar any learned retriever must beat.
-- Search ablation harness (`bench/ablation.js`): runs the smoke set through every recipe —
-  `bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion` — under a
-  shared LLM-call budget and writes per-recipe + per-problem comparison tables (pass rate + Wilson
-  CI + cost), implementing the "compare, then decide" acceptance of `build_order.md` §5.1.
+- Search ablation harness (`bench/ablation.js`): the orthogonal measurement instrument
+  (architecture.md §0.4) — no proof machinery of its own; each cell constructs the live
+  `TacticLoop` with the cell's options (recipe name → `searchRecipe` + `repulsion`; component
+  mask → loop toggles), runs it under a shared LLM-call budget, and reads the loop's counters.
+  Writes per-recipe + per-problem comparison tables (pass rate + Wilson CI + cost),
+  implementing the "compare, then decide" acceptance of `build_order.md` §5.1.
 - Component ablation **graph** (`bench/ablation.js --ablate=<comps>`, build_order.md §5.8): full
-  factorial over component toggles with per-configuration pass rates, component **main effects**,
-  and **pairwise interactions** — the additivity/commutativity test, with no assumed rung order.
+  factorial over the registry's component names with per-configuration pass rates, component
+  **main effects**, and **pairwise interactions** — the additivity/commutativity test, with no
+  assumed rung order. Its output surface is `runs/defaults.json` (recommendations with
+  provenance), which `blueprint/run.js` applies at startup — the evidence → default →
+  live-path loop, exercised end-to-end on a live core run.
+- Component registry (`config/registry.js`, architecture.md §5.8): the single catalog of every
+  toggleable component (widget shape, safe default, measured recommendation) consumed by the
+  GUI, the ablation graph, and the live path.
 - Metrics catalog (`optimization/metrics.js`, architecture.md §6.1): search efficiency/quality,
   planning, learning, and economic KPIs from the event stream; values the stream cannot produce
   are `null`, never fabricated.
@@ -315,7 +329,7 @@ captured per lemma into the retrieval index + development digest as the transfor
 
 5. **Guardrails enforcement**: Statement pins prevent weakening; forbidden tokens (`sorry`, `admit`, `unsafe`) are rejected.
 
-6. **Resumability**: Each verified lemma is serialized as a checkpoint (`state.json`). Long proofs can be interrupted and resumed.
+6. **Resumability**: Every refine round is serialized as `runs/<problem>/checkpoint.json` (lemmas, rounds, hash chain). A run can be interrupted and resumed with `--problem=<id>`.
 
 ## Limitations
 
@@ -379,6 +393,11 @@ captured per lemma into the retrieval index + development digest as the transfor
       full factorial over component toggles with main effects + pairwise interactions
       (build_order.md §5.8); every report carries a full provenance block (toolchain, model,
       corpus, policy, resource usage).
+- [x] **Orthogonal measurement layer + component registry** — `bench/ablation.js` owns no proof
+      machinery: it drives the live `TacticLoop` (system under test) and reads its counters
+      (architecture.md §0.4). `config/registry.js` is the single component catalog; the graph
+      writes measured recommendations to `runs/defaults.json` and `blueprint/run.js` applies
+      them at startup (CLI flags override).
 - [x] **Metrics catalog** — `optimization/metrics.js` emits the §6.1 KPI catalog
       (search efficiency/quality, planning, learning, economic) from the event stream; loop
       instruments llm latency/tokens + first-success rank.

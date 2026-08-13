@@ -309,6 +309,27 @@ keyed on build states; and corpus-tag domain presets for starter imports. The pa
 live as the mutation interface; the loop proposes tactics, which are the tactic-level patch
 operator.
 
+### 0.4 Measurement layer — role separation
+
+Three roles, one implementation each; no component exists twice:
+
+- **The live path is the only implementation.** Every proof step — proposal, kernel check,
+  repair, search, learning — executes inside `TacticLoop` (`agent/loop.js`), driven by
+  `blueprint/run.js`. There is no second tactic loop, no parallel search driver, and no
+  re-implemented LLM or backend anywhere in the repo; `bench/` contains no proof machinery.
+- **The registry is the only component catalog.** `config/registry.js` names every toggleable
+  component (recipe, budgets, repulsion, premises, tacticMenu, predictors, exemplars, ttrl,
+  monitor, repair) with its widget shape, safe default, and measured recommendation. The GUI,
+  the ablation graph, and `blueprint/run.js`'s flags all key on these names (§5.8).
+- **The ablation harness is a measurement instrument, not a second system.** It treats the live
+  loop as the system under test: each experimental configuration (recipe + component mask) is
+  mapped onto the loop's own constructor options, run, and the loop's own counters
+  (`llmCalls`, `tacticCalls`, `predictorSkips`) are read back. The instrument's only machinery
+  is experimental design (full factorial over the component toggles at equal budget),
+  statistics (Wilson CI, main effects, pairwise interactions), and record-keeping (reports,
+  provenance). Its output surface is `runs/defaults.json` — recommendations the live path and
+  the GUI consume, never the loop's behavior (§5.7).
+
 
 ---
 
@@ -382,8 +403,10 @@ kanforge/
     lemmaStore.js            # content-addressed lemma store → retrieval index (§2.8): statementHash, goal shape, imports, deps, proof length, tactic trajectory, difficulty
     dataset.js               # append-only JSONL training samples + deterministic held-out split + contamination check
     multibody.js             # multi-agent lemma-ownership lanes (P7)
+  config/
+    registry.js              # canonical component registry (§5.8): widget shapes, safe defaults, measured recommendations; runs/defaults.json is its evidence-written output surface
   bench/
-    ablation.js              # search-strategy ablation harness: smoke set × every recipe
+    ablation.js              # measurement instrument (§0.4): drives the live TacticLoop across recipe × component-mask cells; factorial graph + recommendations
     mathlibSmoke.js          # mathlib-backed smoke set (imports take 5-35s cold)
     premisesCorpus.js        # premise corpus for retrieval experiments
     run.js                   # benchmark run driver
@@ -770,23 +793,28 @@ The e-graph structure enables **transposition merging** (research_notes trick 4)
   take a `repulsion` flag that skips duplicate kernel re-checks.
 - `premises.js`: relevance scoring over mathlib; `premiseLocked: true` restricts the generator to retrieved premises only.
 - `swiss.js`: Swiss-tournament best-of-n selection (faithful to Open Proof Corpus methodology, arXiv:2506.21621 §5.5): round-robin tournament judged pairwise by the LLM, Bradley-Terry ratings fit by MLE, candidates applied in rating order with kernel-grounded fallthrough. OPC reports +17% improvement over naive best-of-n (26%→43% vs 26%→36%).
-- `bench/ablation.js`: strategy-ablation harness that runs the smoke set through every recipe
-  (`bestofn`, `swiss`, `swiss+repulsion`, `bfs`, `bfs+repulsion`, `mcgs`, `mcgs+repulsion`) under a
-  shared LLM-call budget and reports pass rate AND cost per recipe. It is the measurement apparatus
-  for the §5 acceptance criteria — "compare, then decide" — and is what turns "swiss is the best
-  choice" or "MCGS beats best-of-N" into a *measured* claim at normalized LLM + kernel cost, not a
-  solved-any-problem anecdote.
+- `bench/ablation.js`: the measurement instrument for §5.7. It has no proof machinery of its
+  own: each cell constructs a real `TacticLoop` with the cell's options (the recipe name maps
+  onto the loop's `searchRecipe` + `repulsion`; the component mask maps onto
+  `menu`/`exemplars`/`ttrl`/`monitor`/`repair`/`predictors`/`premises`), runs it under a shared
+  LLM-call budget (`maxLlmCalls`), and reads the loop's own counters. The report carries pass
+  rate + cost per recipe; the `--ablate=<comps>` graph adds main effects + interactions and
+  writes recommended defaults to `runs/defaults.json`.
 
 **Integration contract (what is in the live path).** The live loop (`agent/loop.js`) is fully
 ablatable: every strategy is a toggle, not a one-way gate. The loop accepts a `searchRecipe`
 option naming which strategy handles per-lemma goal selection and proposal —
 `loop` (default inline single-tactic), `bestofn`, `bfs`, `mcgs`, or `swiss` — plus orthogonal
-toggles for `repulsion`, `premises`, `tacticMenu`, and `predictors`. The open-problem pipeline
-(`blueprint/refine.js`) passes the configured recipe through, so a mission runs under whatever
-strategy combination is selected, and the ablation graph (`bench/ablation.js --ablate`) measures
-the same toggles the loop can take. This makes "compare, then decide" (build_order.md §5.1) a
-runtime switch, not a rebuild: a strategy with a measured advantage is enabled by configuration,
-and one without is disabled — both without code change.
+toggles for `repulsion`, `premises`, `menu` (tactic capability menu), `exemplars`, `predictors`,
+`ttrl`, `monitor`, and `repair`, and a per-lemma LLM-call budget (`maxLlmCalls`). The
+open-problem pipeline (`blueprint/refine.js`) passes the configured recipe through, so a mission
+runs under whatever strategy combination is selected, and the ablation graph
+(`bench/ablation.js --ablate`) measures the same toggles the loop can take. The registry
+(`config/registry.js`, §5.8) is the single catalog of these components; the graph writes its
+measured recommendations to `runs/defaults.json`, which `blueprint/run.js` applies at startup
+(CLI flags override). This makes "compare, then decide" (build_order.md §5.1) a runtime switch,
+not a rebuild: a strategy with a measured advantage is enabled by configuration, and one without
+is disabled — both without code change.
 
 ### 5.7 Benchmark discipline (fixed corpus, ablation graph, provenance)
 
@@ -803,9 +831,10 @@ and every comparison cost-normalized:
   known hierarchy of merit among components, and component effects are neither assumed additive
   nor assumed commutative — the experiment must *measure* that. So the design is a factorial graph
   over component toggles:
-  - Each **node** is a full configuration: a subset of `{repair, tactic menu, premises, egraph,
-    search strategy (bestofn/bfs/mcgs/swiss), causal predictor}` on the fixed corpus at equal
-    budget.
+  - Each **node** is a full configuration: a subset of the registry's component names —
+    `{tacticMenu, premises, predictors, repulsion, exemplars, ttrl, monitor, repair, search}` —
+    where `search` is the recipe axis (bestofn vs mcgs) and `repulsion` composes with it. The
+    goal e-graph and the kernel are infrastructure — always on, never an ablation axis.
   - Each **edge** connects two configurations differing in exactly ONE toggle — the graph is the
     Boolean hypercube of configurations, not a fixed linear order.
   - The report gives, per node, the same per-cell table; and per component, its **main effect**
@@ -813,6 +842,13 @@ and every comparison cost-normalized:
     fixed), plus **pairwise interactions** (does the effect of A change when B is on?). A
     component with no measured main effect is reported as such. The additivity/commutativity
     question is answered by the interaction terms — never assumed away by a rung ordering.
+- **Recommendations are the graph's output surface.** `recommendFromGraph` turns measured main
+  effects into component recommendations (a 5-percentage-point decision threshold — below it, a
+  component's measured effect is noise, not a default), and `recommendRecipe` picks the cheapest
+  recipe among those solving within margin of the best pass rate. Both are written to
+  `runs/defaults.json` by `config/registry.js` with provenance; `blueprint/run.js` applies them
+  at startup and CLI flags override. The file is written only by the ablation harness, never
+  hand-edited.
 - **Provenance is a first-class research feature.** Every run's report config carries:
   `theorem/statement hash, toolchain + mathlib pin, model + version, prompt version, search
   policy (recipes, N, budget, component mask), proof trace + dependency graph (development
@@ -820,6 +856,26 @@ and every comparison cost-normalized:
   status`. The development digest (`digest/development.js`) already carries the hash chain; the
   ablation report config carries the run parameters. A result is reproducible iff the report
   config + digest + commit hash can be replayed — that is the acceptance bar.
+
+### 5.8 Component registry (`config/registry.js`)
+
+One catalog for every toggleable, slidable, or selectable component of the live loop, with three
+consumers:
+
+- **GUI** — each entry declares its widget (toggle / slider / dropdown) with range, current
+  value, and label; the GUI reads `effectiveDefaults()` for initial state and
+  `recommended` for the measured value.
+- **Ablation graph** — the factorial components are registry names (§5.7); a measured run
+  updates `recommended` via `runs/defaults.json`.
+- **Live path** — `blueprint/run.js` loads `runs/defaults.json` at startup
+  (`applyRecommendations`) and resolves `effectiveValue(name)` = `recommended ?? default`;
+  CLI flags override.
+
+Components: `recipe` (dropdown: `loop`/`bestofn`/`swiss`/`swiss+repulsion`/`bfs`/`mcgs`),
+`maxTacticsPerGoal`, `maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`,
+`premiseLocked`, `premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`,
+`repair` (toggles). A component's `recommended` is `null` until evidence sets it; `default` is
+the safe initial. Components absent from the registry are not configurable by any consumer.
 
 ---
 

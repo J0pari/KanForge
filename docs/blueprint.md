@@ -28,12 +28,14 @@ A general agentic loop that:
 7. **sharpens** itself — telemetry → causal analysis → RL signal → better search,
 8. **digests** results into human-readable, peer-reviewable writeups.
 
-**Status of this vision (what works today vs planned).** The tactic-level loop (steps 4–6) is
-implemented and kernel-verified against core Lean + Std (`agent/loop.js`). Step 3 (blueprint
-skeleton → refine, P4) is implemented and live-kernel-tested. The rest is planned work tracked
-in `build_order.md`: step 1 intake, 2 (autoformalization, P7), 7 (RL, P6), 8 (digestion, P4.3/P7).
-The Mathlib-enabled
-repl that steps 2–3 need is not built in this checkout. See README "Current Status".
+**Status of this vision (what works today vs planned).** Steps 4–6 (tactic loop + repair) and
+step 3 (blueprint skeleton → refine) are implemented and kernel-verified, against core Lean + Std
+and the Mathlib-enabled repl built in `lean-project` (v4.33.0-rc1). Steps 1–2 (intake corpus,
+autoformalization) are built and validated on Erdős candidates (`build_order.md` §7.0–7.1).
+Step 7 exists in its record-not-train form: the learning stack (preference pairs, held-out
+failure predictors, GRPO records) shapes search and records trainer-consumable data, with no
+gradient step anywhere in the system (`architecture.md` §6.2). Step 8 (digestion) ships
+per-lemma artifact files + the development digest. See README "Current Status".
 
 ### 1.2 Non-goals
 - A Lean language server. (We *consume* lean4web/REPL/LSP.)
@@ -166,10 +168,15 @@ Detailed contracts: `architecture.md`. This is the shape.
                      Lean Backend: lean4web | REPL | CLI  (kernel = the only truth)
                           │
                           ▼
-                     Sharpening: causal analysis → reward → GRPO / search bias
+                     Learning stack: preferences + held-out predictors + GRPO records
+                     (shapes search, records trainer-consumable data — no gradient step)
                           │
                           ▼
-                     Digestion (writeups) · per-lemma git commits · Hasher audit · development digest
+                     Digestion (writeups) · per-lemma artifact files · Hasher audit · development digest
+
+   Measurement layer (orthogonal): component registry ─▶ ablation graph ─▶ runs/defaults.json
+   ── config/registry.js names every component; bench/ablation.js drives the live loop and
+   ── measures main effects + interactions; recommendations flow back to the live path.
 ```
 
 ### 5.1 Component notes (behavior, not contracts)
@@ -199,6 +206,9 @@ Detailed contracts: `architecture.md`. This is the shape.
   to every loop outcome.
 - **`search/*`** — best-of-N baseline, BFS, UCB-guided graph search (MCGS), repulsion,
   premise retrieval, goal-shape tactic menu.
+- **`config/registry.js`** — the canonical component catalog (widget shapes, safe defaults,
+  measured recommendations); the GUI, the ablation graph, and the live path consume it
+  (`architecture.md` §5.8).
 - **`growth/commit.js`** — per-lemma artifact writer: statement.lean + proof.lean + audit.json
   into the problem workdir; the digest's hash chain is the publication record. Wired into
   `blueprint/run.js`'s DoD tail.
@@ -215,9 +225,10 @@ Detailed contracts: `architecture.md`. This is the shape.
 - **Internal KPIs** (`optimization/metrics.js`): pass@1/k (lemma-level), tactics per verified lemma, tactics per goal, tactic success rate, repair-loop efficiency, lemma reuse rate, guardrail trips. Plus the four Wave2 §15
   dimensions (verification throughput, compilation efficiency, search efficiency, correctness
   preservation) — `build_order.md` "Evaluation dimensions".
-- **Ablations** (log, don't pre-commit): best-of-N vs BFS vs MCGS; no-repair vs repair;
-  no-RL vs GRPO; no-blueprint vs blueprint; no-premise-retrieval vs premise-locked. Each maps to
-  a build-order phase.
+- **Ablations** (log, don't pre-commit): the component ablation graph (`architecture.md` §5.7)
+  measures every registry component — the recipe axis, repair, premises, tacticMenu, predictors,
+  repulsion, exemplars, ttrl, monitor — as main effects + pairwise interactions at equal budget,
+  and writes recommended defaults (`runs/defaults.json`) the live path consumes.
 - **Open-target corpus**: HUMAN-curated Erdős/OEIS problems with *formalizable*, auditable
   statements; start at 20 targets (build_order.md §7.0 — the agent never curates or self-selects;
   it formalizes candidates and the human selects the mission target from the shortlist).
