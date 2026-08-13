@@ -126,10 +126,11 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   hits the cache (cache-hit stats via `optimization/metrics.js`).
 
 ### 2.2 Resumability
-- `PullGraph.serialize()` to `kanforge/runs/<runId>/state.json` after every verified lemma
-  (each lemma is a resumable transaction).
-- **Acceptance:** kill the process mid-search, restart with `--resume <runId>`, verify that
-  cached lemmas are not re-proved and dependents continue.
+- `RunCheckpoint.save()` to `runs/<problemId>/checkpoint.json` after every refine round
+  (proved lemmas, stalled flags, rounds, hash chain — each lemma is a resumable transaction).
+- **Acceptance:** kill the process mid-search, re-run `--problem=<id>` (resume is automatic;
+  `--fresh` archives the old workdir first), verify that proved lemmas are not re-proved,
+  stalled lemmas stay stalled, and dependents continue.
 
 ### 2.3 Artifact growth
 - `growth/commit.js` writes each verified lemma's artifacts (statement.lean + proof.lean +
