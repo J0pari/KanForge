@@ -83,10 +83,28 @@ export class BlueprintRefiner {
             if (!next) {
                 const stillWorkable = working.lemmas.find(l => !l.proof && !l.stalled
                     && (l.deps ?? []).every(d => provenIds.has(d)));
-                if (!stillWorkable) break;
+                if (!stillWorkable) {
+                    // Deadlock-release path: every non-stalled unproved lemma is dependency-
+                    // blocked, and the only READY lemmas are stalled ones. A stalled lemma is
+                    // the only path forward (its deps are proved; a fresh attempt may succeed).
+                    // This is NOT the anti-waste case — that rule forbids re-attempting stalled
+                    // lemmas while other work exists. Retry one per round; a failed attempt
+                    // re-stalls it and the round cap bounds the spend.
+                    const stalledReady = working.lemmas.find(l => !l.proof && l.stalled
+                        && (l.deps ?? []).every(d => provenIds.has(d)));
+                    if (stalledReady) {
+                        stalledReady.stalled = false;
+                        continue; // next iteration picks it as `next`
+                    }
+                    this.stopReason = 'no-ready-lemma';
+                    break;
+                }
                 // A lemma is ready but blocked on deps — idle; don't count as a real round.
                 idleCount++;
-                if (idleCount >= 3) break;
+                if (idleCount >= 3) {
+                    this.stopReason = 'dependency-idle';
+                    break;
+                }
                 continue;
             }
             idleCount = 0;
@@ -151,6 +169,7 @@ export class BlueprintRefiner {
             hashChain,
             grpo,
             maxRoundsReached: guard >= this.maxRounds && unproved.length > 0,
+            stopReason: this.stopReason ?? (guard >= this.maxRounds && unproved.length > 0 ? 'round-cap' : null),
             stored: {
                 lemmas: this.lemmaStore?.size ?? 0,
                 samples: this.dataset?.samples.length ?? 0

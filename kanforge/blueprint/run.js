@@ -144,10 +144,16 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
 
 export function printBlueprintSummary(r) {
     if (!r.ok) {
+        const reason = r.refined?.stopReason ?? null;
+        const unproved = r.refined?.unproved?.length ?? '?';
         const maxRounds = r.refined?.maxRoundsReached === true;
-        const headline = maxRounds
-            ? `===== MISSION INCOMPLETE (round cap reached; resume with --problem=<id> to continue) =====`
-            : `===== BLUEPRINT FAILED (${r.stage ?? 'unknown stage'}) =====`;
+        const headline = reason === 'no-ready-lemma'
+            ? `===== MISSION INCOMPLETE (no ready lemma: ${unproved} unproved, all ready work stalled or dependency-blocked) =====`
+            : reason === 'dependency-idle'
+                ? `===== MISSION INCOMPLETE (dependency idle: ${unproved} unproved, nothing dispatchable) =====`
+                : maxRounds
+                    ? `===== MISSION INCOMPLETE (round cap reached; resume with --problem=<id> to continue) =====`
+                    : `===== BLUEPRINT FAILED (${r.stage ?? 'unknown stage'}) =====`;
         console.log(`\n${headline}`);
         if (r.error) console.log(`error: ${r.error}`);
         for (const e of r.errors ?? []) console.log(`  - ${e}`);
