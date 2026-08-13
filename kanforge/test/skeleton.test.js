@@ -101,10 +101,12 @@ test('non-typechecking helper is dropped with a warning, blueprint stays valid',
         ],
         rootDeps: ['good']
     })]);
-    // _tryCheck validates in the warm env (stripped imports) — the mock's bad set must hold
-    // the STRIPPED statement form.
+    // _tryCheck tries the warm env (stripped imports) FIRST and falls back to the full
+    // statement (with imports) on ANY warm failure — the mock's bad set must hold BOTH forms
+    // so the broken lemma fails both gates.
     const brokenStmt = stripImports(stubOf('lemma broken : does not parse'));
-    const backend = new MockCheckBackend({ bad: [brokenStmt] });
+    const brokenFull = stubOf('lemma broken : does not parse');
+    const backend = new MockCheckBackend({ bad: [brokenStmt, brokenFull] });
     const gen = new SkeletonGenerator({ llm, backend });
     const result = await gen.generate(THM);
     assert.strictEqual(result.ok, true);
