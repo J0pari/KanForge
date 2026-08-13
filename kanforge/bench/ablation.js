@@ -57,7 +57,7 @@ import { compilePredictors } from '../optimization/causal.js';
 import { auditAblationReport } from './reportAudit.js';
 import { saveRecommendedDefaults, loadRecommendedDefaults } from '../config/registry.js';
 
-export const RECIPES = ['bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
+export const RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,7 +68,8 @@ function sha256(text) {
 // Recipe name → TacticLoop options (the recipe dropdown maps 1:1 onto the loop's searchRecipe
 // toggle + repulsion flag — no reimplementation of any strategy lives here).
 function recipeOptions(recipe, N, maxLlmCalls) {
-    const searchRecipe = recipe.startsWith('mcgs') ? 'mcgs'
+    const searchRecipe = recipe === 'loop' ? 'loop'
+        : recipe.startsWith('mcgs') ? 'mcgs'
         : recipe.startsWith('bfs') ? 'bfs'
         : recipe.startsWith('swiss') ? 'swiss'
         : 'bestofn';
@@ -451,8 +452,9 @@ async function main() {
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency: 2,
-        // Mathlib imports take 5-35s cold; the core set is near-instant.
-        timeoutMs: (set === 'mathlib' || set === 'mission') ? 180_000 : 60_000,
+        // Mathlib imports take 5-35s cold (mission statements can take minutes under memory
+        // pressure); the core set is near-instant.
+        timeoutMs: (set === 'mathlib' || set === 'mission') ? 300_000 : 60_000,
         // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
         workerPerProblem: set === 'mathlib' || set === 'mission',
         // A fresh repl takes ~60s to elaborate its first command; warm each worker so the first
@@ -460,6 +462,29 @@ async function main() {
         // out at 60020ms before the LLM was ever called).
         warmupStatement: 'example : True := by trivial'
     });
+    // Mission-shaped targets carry heavy mathlib imports: warm the pool with the problem's
+    // import block (escalating timeouts — the same discipline as blueprint/run.js) so the
+    // first extractGoals does not pay the cold import INSIDE the measured row. The mission
+    // row that timed out at 600s with 0 llm / 0 kernel calls was exactly this.
+    if (set === 'mission' && pool.warm) {
+        const warmStmt = problems[0]?.statement?.split('\n')
+            .filter(l => /^\s*import\s+\S/.test(l)).join('\n')
+            + '\n\nexample : True := by trivial';
+        let warmOk = false;
+        for (const timeout of [300_000, 600_000]) {
+            try {
+                await pool.warm(warmStmt, { timeoutMs: timeout });
+                console.log(`[ablation] mission pool warmed with target imports (${timeout / 1000}s)`);
+                warmOk = true;
+                break;
+            } catch (err) {
+                console.warn(`[ablation] mission warm attempt at ${timeout / 1000}s failed: ${err?.message ?? err}`);
+            }
+        }
+        if (!warmOk) {
+            console.warn('[ablation] mission warm failed; rows may time out on the cold import');
+        }
+    }
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 

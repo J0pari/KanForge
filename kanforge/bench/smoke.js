@@ -91,7 +91,7 @@ export function validateSmokeSet(problems = SMOKE_PROBLEMS) {
         if (!/:= by sorry\s*$/.test(p.statement.trim())) {
             throw new Error(`smoke problem ${p.id} must be a ':= by sorry' stub: ${p.statement}`);
         }
-        if (![1, 2, 3, 4, 5].includes(p.tier)) throw new Error(`smoke problem ${p.id} has invalid tier`);
+        if (![1, 2, 3, 4, 5, 'mission'].includes(p.tier)) throw new Error(`smoke problem ${p.id} has invalid tier`);
         if (p.context !== undefined && typeof p.context !== 'string') {
             throw new Error(`smoke problem ${p.id} context must be a string`);
         }
