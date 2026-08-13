@@ -46,7 +46,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition' } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition', compressionMetrics = true } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -85,6 +85,9 @@ export class TacticLoop {
         // structure — 'transposition' (incumbent, syntactic identity) or 'egraph' (congruence
         // closure + kernel-confirmed rule unions). Ablation decides the default.
         this.searchStructure = searchStructure === 'egraph' ? 'egraph' : 'transposition';
+        // compressionMetrics (registry component): include the §0.5 compression-quality block
+        // in the outcome's KPI catalog.
+        this.compressionMetrics = compressionMetrics !== false;
         // The egraph's def-eq oracle is backend-grounded: `rfl` checks only. A backend without
         // check() (e.g. a minimal mock) degrades to congruence-only unions — never unverified.
         this.egraphOracle = this.searchStructure === 'egraph' && typeof backend?.check === 'function'
@@ -375,7 +378,9 @@ export class TacticLoop {
             runStart: this._runStart,
             llmCalls: this.llmCalls,
             tacticCalls: this.tacticCalls,
-            predictorSkips: this.predictorSkips
+            predictorSkips: this.predictorSkips,
+            librarySize: this.lemmaStore?.size ?? null,
+            compressionMetrics: this.compressionMetrics
         });
 
         return outcome;

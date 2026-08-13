@@ -48,6 +48,32 @@ export function computeMetrics(events = []) {
     // Kernel checks = tactic_applied + tactic_failed (each applied/failed is one kernel round-trip).
     const kernelChecks = applied + failedTactics;
 
+    // --- compression quality (architecture.md §0.5, research_notes §5) ---------------------
+    // proofDescriptionLength: the final proof scripts' lengths under the canonical layout.
+    const verifiedEvents = events.filter(e => (e.type ?? '').toUpperCase() === 'LEMMA_VERIFIED');
+    const proofLengths = verifiedEvents
+        .map(e => String(e.proofScript ?? '').replace(/\s+/g, ' ').trim().length)
+        .filter(n => n > 0);
+    const proofDescriptionLength = proofLengths.length
+        ? { total: proofLengths.reduce((s, n) => s + n, 0), mean: proofLengths.reduce((s, n) => s + n, 0) / proofLengths.length, perLemma: proofLengths }
+        : null;
+    // libraryRelativeDescriptionLength: the residual description once the verified library is
+    // taken as given (MDL: L(data | model)). A reused lemma contributes ZERO residual — its
+    // content is already a dictionary entry, paid for when it was first proved; a fresh proof
+    // contributes its full length.
+    const reuseLemmas = new Set(events.filter(e => (e.type ?? '').toUpperCase() === 'STORE_REUSE').map(e => e.lemmaId).filter(Boolean));
+    const residualLengths = verifiedEvents
+        .map(e => {
+            const len = String(e.proofScript ?? '').replace(/\s+/g, ' ').trim().length;
+            if (!len) return null;
+            return { len: reuseLemmas.has(e.lemmaId) ? 0 : len, reused: reuseLemmas.has(e.lemmaId) };
+        })
+        .filter(Boolean);
+    const libraryRelativeDescriptionLength = residualLengths.length
+        ? { total: residualLengths.reduce((s, r) => s + r.len, 0), mean: residualLengths.reduce((s, r) => s + r.len, 0) / residualLengths.length, reusedCount: residualLengths.filter(r => r.reused).length }
+        : null;
+    const reuseCount = reuseLemmas.size;
+
     const total = verified + failed;
     const successRate = total > 0 ? verified / total : 0;
     const tacticSuccessRate = (applied + failedTactics) > 0 ? applied / (applied + failedTactics) : 0;
@@ -92,6 +118,11 @@ export function computeMetrics(events = []) {
         llmLatencyPerTheorem: verified > 0 ? (llmMsTotal / 1000) / verified : null,
         llmTokensPerTheorem: verified > 0 ? (promptTokensTotal + completionTokensTotal) / verified : null,
         kernelCallsPerSuccessfulProof: verified > 0 ? kernelChecks / verified : null,
+
+        // --- compression quality (architecture.md §0.5, §6.1; event-derived, no fabrication) ---
+        proofDescriptionLength,
+        libraryRelativeDescriptionLength,
+        reuseCount,
 
         // --- raw cost aggregates (help the digest render the catalog) ---
         _raw: {

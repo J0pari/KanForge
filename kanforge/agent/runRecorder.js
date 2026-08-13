@@ -58,7 +58,7 @@ export class RunRecorder {
     // Run finalization: the tail of proveAll — audit packs, hermeticity, KPIs, monitors, GRPO,
     // export. Mutates and returns `outcome`. Counters + wall start come from the loop, which
     // owns them (the recorder only renders them into the outcome).
-    finalize(outcome, { runStart = null, llmCalls = 0, tacticCalls = 0, predictorSkips = 0 } = {}) {
+    finalize(outcome, { runStart = null, llmCalls = 0, tacticCalls = 0, predictorSkips = 0, librarySize = null, compressionMetrics = true } = {}) {
         if (this.writeAuditPacks && (outcome.ok || outcome.results.size > 0)) {
             const runId = `run_${Date.now()}`;
             const runsDir = path.join(process.cwd(), 'runs', runId);
@@ -110,6 +110,24 @@ export class RunRecorder {
             model: this.llm?.getModel?.() ?? null,
             provider: this.llm?.getProvider?.() ?? null
         };
+        // Amortized-cost curve point (research_notes §5): one point per run — cost vs the
+        // accumulated verified library. The CURVE itself aggregates these points across runs
+        // (digest-level); a single run records its own point, never a fabricated curve.
+        outcome.metrics.amortizedCostPoint = {
+            verifiedLemmas: metrics.verifiedLemmas,
+            llmCalls,
+            tacticCalls,
+            predictorSkips,
+            reused: metrics.reuseCount ?? 0,
+            librarySize: librarySize ?? null
+        };
+        // Compression-quality block is a registry toggle (compressionMetrics): off keeps the
+        // outcome to the baseline catalog without the §0.5 quantities.
+        if (!compressionMetrics) {
+            outcome.metrics.proofDescriptionLength = null;
+            outcome.metrics.libraryRelativeDescriptionLength = null;
+            outcome.metrics.reuseCount = null;
+        }
         outcome.hashChain = this.hashChain;
 
         if (this.monitor) {

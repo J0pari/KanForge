@@ -24,7 +24,8 @@ export const COMPONENTS = {
     ttrl: { kind: 'toggle', default: false, recommended: null, label: 'Test-time budget escalation' },
     monitor: { kind: 'toggle', default: false, recommended: null, label: 'Degeneracy monitors' },
     repair: { kind: 'toggle', default: true, recommended: null, label: 'Error-driven repair' },
-    searchStructure: { kind: 'dropdown', options: ['transposition', 'egraph'], default: 'transposition', recommended: null, label: 'Goal-state search structure' }
+    searchStructure: { kind: 'dropdown', options: ['transposition', 'egraph'], default: 'transposition', recommended: null, label: 'Goal-state search structure' },
+    compressionMetrics: { kind: 'toggle', default: true, recommended: null, label: 'Compression-quality metrics' }
 };
 
 export function componentNames() {
