@@ -50,6 +50,7 @@ import { TacticLoop } from '../agent/loop.js';
 import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
 import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
 import { STEP_PROBLEMS } from './stepSmoke.js';
+import { MISSION_PROBLEMS } from './missionSmoke.js';
 import { PremiseRetriever } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { compilePredictors } from '../optimization/causal.js';
@@ -391,9 +392,12 @@ async function main() {
     const ablateArg = process.argv.find(a => a.startsWith('--ablate'));
 
     const set = setArg ? setArg.split('=')[1] : 'core';
-    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS : set === 'step' ? STEP_PROBLEMS : SMOKE_PROBLEMS;
-    if (set !== 'core' && set !== 'mathlib' && set !== 'step') {
-        console.error('unknown problem set; known sets: core, mathlib, step');
+    const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS
+        : set === 'step' ? STEP_PROBLEMS
+        : set === 'mission' ? MISSION_PROBLEMS
+        : SMOKE_PROBLEMS;
+    if (set !== 'core' && set !== 'mathlib' && set !== 'step' && set !== 'mission') {
+        console.error('unknown problem set; known sets: core, mathlib, step, mission');
         process.exit(2);
     }
     const recipes = recipesArg ? recipesArg.split('=')[1].split(',') : RECIPES;
@@ -448,9 +452,9 @@ async function main() {
         leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency: 2,
         // Mathlib imports take 5-35s cold; the core set is near-instant.
-        timeoutMs: set === 'mathlib' ? 180_000 : 60_000,
+        timeoutMs: (set === 'mathlib' || set === 'mission') ? 180_000 : 60_000,
         // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
-        workerPerProblem: set === 'mathlib',
+        workerPerProblem: set === 'mathlib' || set === 'mission',
         // A fresh repl takes ~60s to elaborate its first command; warm each worker so the first
         // row pays that cost off the timer (the failed `or_elim` row was exactly this: it timed
         // out at 60020ms before the LLM was ever called).

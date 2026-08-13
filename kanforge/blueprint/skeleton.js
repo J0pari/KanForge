@@ -96,13 +96,14 @@ export class SkeletonGenerator {
     }
 
     // Fast warm-env check of a stub (strip imports, use the warm session — ~0.4s after warm).
-    // The fresh-env validation is the loop's extractGoals — the skeleton's job is speed, not
-    // authority. A stub that typechecks only in warm env but not fresh (rare: name collisions
-    // with mathlib) is caught by extractGoals and surfaced by the loop's error surfacing.
+    // The warm env is core-only (the pool's warmup statement imports no mathlib), so a
+    // mathlib-heavy stub fails it with "unknown identifier" — ANY warm failure falls back to
+    // the authoritative fresh check WITH the imports. The fresh-env validation's authority is
+    // the loop's extractGoals; the skeleton's check is speed with an honest fallback.
     async _tryCheck(statement) {
         const stripped = stripImports(statement);
         const fast = await this.backend.check(stripped, { useWarmEnv: true });
-        if (fast.status === 'verified' || !/expected token/i.test(fast.error?.message ?? '')) return fast;
+        if (fast.status === 'verified') return fast;
         return this.backend.check(statement);
     }
 

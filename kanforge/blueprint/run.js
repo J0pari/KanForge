@@ -144,7 +144,11 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
 
 export function printBlueprintSummary(r) {
     if (!r.ok) {
-        console.log(`\n===== BLUEPRINT FAILED ($stage) =====`, r.stage);
+        const maxRounds = r.refined?.maxRoundsReached === true;
+        const headline = maxRounds
+            ? `===== MISSION INCOMPLETE (round cap reached; resume with --problem=<id> to continue) =====`
+            : `===== BLUEPRINT FAILED (${r.stage ?? 'unknown stage'}) =====`;
+        console.log(`\n${headline}`);
         if (r.error) console.log(`error: ${r.error}`);
         for (const e of r.errors ?? []) console.log(`  - ${e}`);
         console.log(`workDir: ${r.workDir}`);
