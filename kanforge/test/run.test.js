@@ -69,8 +69,9 @@ test('runBlueprintTheorem drives skeleton → refine and persists everything', a
         assert.ok(fs.existsSync(path.join(outDir, 'blueprint.json')));
         assert.ok(fs.existsSync(path.join(outDir, 'blueprint.md')));
         assert.ok(fs.existsSync(path.join(outDir, 'refined.json')));
-        assert.ok(fs.existsSync(path.join(outDir, 'lemma-store', 'lemmas')));
-        assert.ok(fs.existsSync(path.join(outDir, 'training-dataset', 'samples.jsonl')));
+        // lemma store + training dataset are GLOBAL (shared across problems), not per-workdir
+        assert.ok(fs.existsSync(path.join('runs', 'lemma-store', 'lemmas')));
+        assert.ok(fs.existsSync(path.join('runs', 'training-dataset', 'samples.jsonl')));
 
         // the on-disk blueprint pins and DAGs match the refined result
         const blueprint = JSON.parse(fs.readFileSync(path.join(outDir, 'blueprint.json'), 'utf8'));

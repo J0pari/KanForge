@@ -165,6 +165,31 @@ export class TacticLoop {
             const rootId = egraph.addGoal(rootGoals[0]);
             egraph.setRoot(rootGoals[0]);
 
+            // Lemma-store reuse (§2.8, §0.3): if a previously-proven lemma's conclusion matches
+            // the root goal, inline the lemma's declaration + proof into the source and prove by
+            // `exact <name>` — the kernel re-verifies the whole source, so retrieval never
+            // bypasses verification and cross-problem reuse works in any fresh session.
+            if (this.lemmaStore && !egraph.isRootSolved()) {
+                const stored = this.lemmaStore.findByGoal(rootGoals[0].type);
+                if (stored) {
+                    const storedSource = stored.statement.replace(/:=\s*by\s+sorry\s*$/, `:= ${stored.proofScript}`);
+                    const currentDecl = statement.replace(/:=\s*by\s+sorry\s*$/, `:= by exact ${extractLemmaName(stored.statement)}`);
+                    const combined = `${storedSource}\n\n${currentDecl}`;
+                    const reuseCheck = await this.backend.check(combined, { useWarmEnv: false });
+                    if (reuseCheck.status === 'verified') {
+                        const rootClass = egraph.classes.get(egraph.rootId);
+                        if (rootClass) {
+                            rootClass.state = 'SOLVED';
+                            rootClass._directProof = `by exact ${extractLemmaName(stored.statement)}`;
+                        }
+                        console.log(`[${ts()}] [loop] lemma ${lemmaId.slice(0,10)}… PROVED by store reuse (${extractLemmaName(stored.statement)})`);
+                        this._emit({ type: 'store_reuse', lemmaId, lemma: extractLemmaName(stored.statement) }, lemmaId);
+                    } else {
+                        console.log(`[${ts()}] [loop] store reuse rejected: ${reuseCheck.error?.message?.slice(0,100) ?? 'unknown'}`);
+                    }
+                }
+            }
+
             let goalCount = 0;
             if (this.searchRecipe === 'bfs' || this.searchRecipe === 'mcgs') {
                 // Whole-graph delegation (architecture.md §5 integration contract): the strategy
@@ -354,7 +379,8 @@ export class TacticLoop {
                         }
 
                         if (!solved) {
-                            console.log(`[${ts()}] [loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${maxAttempts} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
+                            const attemptsLabel = this.searchRecipe === 'loop' ? maxAttempts : this.maxTacticsPerGoal;
+                            console.log(`[${ts()}] [loop] goal class ${currentGoalClass.id.slice(0,10)}… UNRESOLVED after ${attemptsLabel} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
                             egraph.markFailed(currentGoalClass.id);
                         }
                     }

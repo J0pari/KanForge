@@ -101,11 +101,21 @@ export class BlueprintRefiner {
             // mid-run loses the stalls that the resume logic needs to skip.
             this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain });
             if (!madeProgress) {
+                // A stalled lemma becomes retryable only when a DEPENDENCY was proved — not when
+                // any unrelated lemma progresses. Marked stalled here; un-stalled below only for
+                // lemmas whose deps were just proved.
                 next.stalled = true;
                 continue;
             }
-            if (round.proved || round.added > 0) {
-                for (const l of working.lemmas) delete l.stalled;
+            if (round.proved) {
+                // Un-stall only the dependents of the just-proved lemma: they are the ones whose
+                // situation changed. Global clearing wasted budget re-attempting unrelated
+                // stalled lemmas (observed: 6 lemmas re-attempted across resume cycles).
+                for (const l of working.lemmas) {
+                    if (l.stalled && (l.deps ?? []).includes(next.id)) {
+                        delete l.stalled;
+                    }
+                }
             }
         }
 
@@ -149,6 +159,7 @@ export class BlueprintRefiner {
             backend: this.backend,
             llm: this.llm,
             ...this.loopOptions,
+            lemmaStore: this.lemmaStore ?? this.loopOptions.lemmaStore ?? null,
             onEvent: e => {
                 this._currentStub = stub;
                 lemmaEvents.push(e);

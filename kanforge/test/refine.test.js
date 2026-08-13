@@ -29,7 +29,7 @@ class RefineMockBackend {
         return [{ type: hard ? 'Q' : 'P', context: [], sessionKey: idOf(statement) }];
     }
     async applyTactic(goal, tactic) {
-        if (goal.type === 'P' && tactic === 'rfl') {
+        if (goal.type === 'P' && (tactic === 'rfl' || /^exact\s+\w/.test(tactic))) {
             return { status: 'ok', newGoals: [] };
         }
         return { status: 'error', newGoals: [], error: { message: 'stuck' } };
@@ -197,7 +197,9 @@ test('verified lemmas are captured into LemmaStore and TrainingDataset via loop 
         assert.strictEqual(lemmaStore.size, 2);
         assert.ok(lemmaStore.has(idOf(H1)));
         assert.ok(lemmaStore.has(idOf(THM)));
-        assert.ok(lemmaStore.get(idOf(THM)).proofScript.includes('rfl'));
+        // Lemma-store lookup (§0.3): THM's goal matches H1's conclusion, so the loop reuses
+        // H1 via `exact h1` instead of re-proposing rfl.
+        assert.ok(lemmaStore.get(idOf(THM)).proofScript.includes('exact h1'));
 
         const verified = dataset.samples.filter(s => s.outcome === 'verified');
         assert.strictEqual(verified.length, 2);

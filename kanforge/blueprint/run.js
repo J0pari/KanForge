@@ -28,8 +28,11 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
     const workDir = outDir ?? path.join(PACKAGE_ROOT, 'runs', `blueprint_${Date.now()}`);
-    const lemmaStore = new LemmaStore({ dir: path.join(workDir, 'lemma-store') });
-    const dataset = new TrainingDataset({ dir: path.join(workDir, 'training-dataset') });
+    // GLOBAL accumulated knowledge (§2.8): the lemma store and training dataset are shared
+    // across ALL problems — a lemma proved for problem A is reusable for problem B. Everything
+    // else (checkpoint, blueprint, events, digest) is scoped to this problem's workDir.
+    const lemmaStore = new LemmaStore({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'lemma-store') });
+    const dataset = new TrainingDataset({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'training-dataset') });
 
     // Incremental event log: every loop event (goal_selected, tactic_proposed, tactic_failed,
     // etc.) is appended to events.jsonl as it happens, so a crashed run leaves the full
@@ -164,13 +167,37 @@ async function main() {
     const ENV = loadEnv();
 
     const args = process.argv.slice(2);
+    const problemId = argValue(args, '--problem=');
+    const fresh = args.includes('--fresh');
+    if (args.includes('--list')) {
+        const runsRoot = path.join(PACKAGE_ROOT, '..', 'runs');
+        console.log('problem | rounds | proved | lemmas | last-save');
+        for (const d of fs.readdirSync(runsRoot, { withFileTypes: true })) {
+            if (!d.isDirectory() || d.name.startsWith('blueprint_')) continue;
+            try {
+                const ck = JSON.parse(fs.readFileSync(path.join(runsRoot, d.name, 'checkpoint.json'), 'utf8'));
+                console.log(`${d.name} | ${ck.rounds?.length ?? 0} | ${ck.lemmas?.filter(l=>l.proof).length ?? 0} | ${ck.lemmas?.length ?? 0} | ${ck.savedAt ?? '?'}`);
+            } catch {
+                console.log(`${d.name} | (no checkpoint)`);
+            }
+        }
+        process.exit(0);
+    }
     const theoremFile = argValue(args, '--statement-file=');
     const theorem = theoremFile ? fs.readFileSync(theoremFile, 'utf8').trim() : args.find(a => !a.startsWith('--'));
     if (!theorem) {
-        console.error('usage: node blueprint/run.js "<theorem>" [--out-dir=<dir>] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--statement-file=<path>] [--recipe=loop|bestofn|swiss|swiss+repulsion|bfs|mcgs] [--use-swiss] [--swiss-n=<n>] [--repulsion] [--repo-dir=<dir>]');
+        console.error('usage: node blueprint/run.js --problem=<id> --statement-file=<path> [--fresh] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--recipe=...] [--check-timeout=<ms>] | --list');
+        console.error('  --problem: resumes runs/<id>/checkpoint.json when it exists (never overwrites); --fresh starts over by archiving the old dir.');
         process.exit(2);
     }
-    const outDir = argValue(args, '--out-dir=');
+    const outDir = argValue(args, '--out-dir=') ?? (problemId ? path.join(PACKAGE_ROOT, '..', 'runs', problemId) : null);
+    if (fresh && outDir) {
+        const backup = `${outDir}.archive.${Date.now()}`;
+        if (fs.existsSync(outDir)) {
+            fs.renameSync(outDir, backup);
+            console.log(`[${new Date().toTimeString().slice(0,8)}] [blueprint] archived existing work -> ${backup}`);
+        }
+    }
     const maxRounds = Number(argValue(args, '--max-rounds=') ?? 200);
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? 8);
     const maxGoals = Number(argValue(args, '--max-goals=') ?? 100);
