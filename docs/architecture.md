@@ -480,6 +480,16 @@ The LLM operates at Level 2: it proposes ONE tactic for ONE goal. The backend ap
 
 The scheduler operates at Level 1: it dispatches lemmas dependency-ordered. Within each lemma, the tactic-level search runs to completion (or budget exhaustion) before the lemma is marked verified or failed.
 
+**The GoalStateGraph contract (`core/goalStateGraph.js`).** The loop, the search recipes, the
+commit gate, and the verifier harnesses consume Level 2 through one interface — `addGoal`,
+`setRoot`, `applyTactic`, `applyPatch`, `markFailed`, `currentGoal`, `getOpenGoals`, `isSolved`,
+`isRootSolved`, `isFullySolved`, `extractProof`, `getStats`, `updateValue`, `serialize`/
+`deserialize`, plus the class shape (`id`, `goals`, `tactics`, `stats`, `parents`, `state`).
+Both structures implement it, and `assertGoalStateGraph` fails loudly at wiring time if a
+structure misses a method. A shared conformance suite (`test/goalStateGraphConformance.js`)
+runs identical scenarios against both, so the structure is a configuration, not a code
+dependency.
+
 This two-level structure is what makes the loop's operations meaningful: a single tactic applied to
 a single goal produces zero or more subgoal equivalence classes; a proof is a tree of such
 applications extracted from the transposition graph. The DAG tracks both levels: lemma dependencies at Level 1,

@@ -1,4 +1,4 @@
-// Goal e-graph frontier semantics (architecture.md Â§2.2).
+// Goal transposition-graph frontier semantics (architecture.md Â§2.2).
 // The repl tactic API reports the FULL remaining frontier after a tactic, not just the
 // subgoals it created. These tests pin the carry-over behavior: closing one branch must not
 // re-attach its still-open siblings under it, or the extracted proof tree double-counts a
@@ -6,7 +6,15 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { GoalTranspositionGraph } from '../core/transpositionGraph.js';
+import { assertGoalStateGraph } from '../core/goalStateGraph.js';
+import { registerGoalStateGraphConformance } from './goalStateGraphConformance.js';
 import { straighten, assertRoundTrip } from '../core/state.js';
+
+test('satisfies the GoalStateGraph contract (loud check)', () => {
+    assertGoalStateGraph(new GoalTranspositionGraph(), { label: 'GoalTranspositionGraph' });
+});
+
+registerGoalStateGraphConformance('transposition', () => new GoalTranspositionGraph());
 
 test('carries over siblings instead of double-attaching them (constructor case)', () => {
     const graph = new GoalTranspositionGraph();
@@ -133,7 +141,7 @@ test('serialize/deserialize preserves the frontier', () => {
 });
 
 
-test('collision-safe identity: canonical-key equality decides the class (build_order.md §5.10)', () => {
+test('collision-safe identity: canonical-key equality decides the class (build_order.md ï¿½5.10)', () => {
     const graph = new GoalTranspositionGraph();
     // Alpha-equivalent goals (renamed binders) share a class.
     const g1 = { type: 'x + y = y + x', context: [{ name: 'x', type: 'Nat' }, { name: 'y', type: 'Nat' }] };
@@ -155,7 +163,7 @@ test('collision resolution: same id + different canonical key ? separate class, 
     // Force a collision by inserting a class with a synthetic id whose canonical key differs.
     const g1 = { type: 'P', context: [] };
     const id1 = graph.addGoal(g1);
-    // Manually craft a second class under the SAME id but a different canonical key — this is
+    // Manually craft a second class under the SAME id but a different canonical key ï¿½ this is
     // what a hash collision looks like after the fact (the injectable seam for testing).
     const collidingKey = graph.canonicalKey({ type: 'Q', context: [] });
     // Recompute: different key, and if it ever produced the same id, addGoal must not merge.
