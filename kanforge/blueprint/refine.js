@@ -18,6 +18,67 @@ import { RunCheckpoint } from '../core/checkpoint.js';
 import { lemmaTrajectory } from '../optimization/causal.js';
 import { trajectoriesFromEvents, groupAdvantages } from '../optimization/grpo.js';
 
+// Cycle repair: repeatedly find a dependency cycle and remove the NEWEST UNPROVED lemma in
+// it (children are appended to the array, so array position is the recency proxy). Proved
+// lemmas are never pruned — only unproved, newest-first. Returns the pruned ids.
+export function repairCycles(lemmas) {
+    const working = lemmas; // mutated in place
+    const pruned = [];
+    const proven = new Set(working.filter(l => l.proof).map(l => l.id));
+    for (let guard = 0; guard < 100; guard++) {
+        const order = topologicalOrder(working);
+        if (order) break;
+        // Find a cycle: walk edges from any node until a repeat.
+        const byId = new Map(working.map(l => [l.id, l]));
+        const cycle = findCycleIds(working);
+        if (!cycle) break;
+        // Newest unproved member of the cycle (highest array index).
+        let victim = null;
+        for (let i = working.length - 1; i >= 0; i--) {
+            if (cycle.includes(working[i].id) && !proven.has(working[i].id)) { victim = working[i]; break; }
+        }
+        if (!victim) break; // cycle of proved lemmas only: cannot repair by pruning
+        const vIdx = working.indexOf(victim);
+        working.splice(vIdx, 1);
+        for (const l of working) {
+            l.deps = (l.deps ?? []).filter(d => d !== victim.id);
+        }
+        pruned.push(victim.id);
+    }
+    return pruned;
+}
+
+function findCycleIds(lemmas) {
+    const byId = new Map(lemmas.map(l => [l.id, l]));
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map();
+    const stack = [];
+    const dfs = (id) => {
+        const st = color.get(id) ?? WHITE;
+        if (st === GRAY) {
+            // cycle: the gray stack segment from the first occurrence of id
+            const start = stack.indexOf(id);
+            return stack.slice(start);
+        }
+        if (st === BLACK) return null;
+        color.set(id, GRAY);
+        stack.push(id);
+        const node = byId.get(id);
+        for (const d of node?.deps ?? []) {
+            const found = dfs(d);
+            if (found) return found;
+        }
+        stack.pop();
+        color.set(id, BLACK);
+        return null;
+    };
+    for (const l of lemmas) {
+        const found = dfs(l.id);
+        if (found) return found;
+    }
+    return null;
+}
+
 export class BlueprintRefiner {
     constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 50000, lemmaStore = null, dataset = null, checkpoint = null } = {}) {
         if (!llm || !backend) {
@@ -65,6 +126,15 @@ export class BlueprintRefiner {
             rounds.push(...(loaded.rounds ?? []));
             hashChain = (loaded.hashChain ?? []).map(e => ({ ...e }));
             console.log(`[refine] resumed ${proved.size} proven + ${stalled.size} stalled from checkpoint (${loaded.rounds?.length ?? 0} rounds, ${loaded.savedAt})`);
+            // Cycle repair (re-split regression): an old checkpoint can carry a dependency
+            // cycle introduced by a pre-guard re-split. Prune the NEWEST unproved lemma in
+            // each cycle (children are appended last, so recency = array position) until the
+            // DAG is acyclic again. Proved lemmas are never pruned.
+            const pruned = repairCycles(working.lemmas);
+            if (pruned.length) {
+                console.log(`[refine] pruned ${pruned.length} lemma(s) to repair a re-split cycle: ${pruned.map(id => id.slice(0, 10)).join(', ')}`);
+                this.checkpoint?.save({ lemmas: working, rounds, hashChain, cycleRepair: pruned });
+            }
         }
 
         while (guard < this.maxRounds) {
@@ -75,7 +145,16 @@ export class BlueprintRefiner {
 
             const order = topologicalOrder(working.lemmas);
             if (!order) {
-                return { ok: false, error: 'blueprint became cyclic', refined: working, proved: [], unproved: working.lemmas.filter(l => !l.proof).map(l => l.id), rounds };
+                // Self-heal: a re-split cycle that survived the guards gets pruned here (newest
+                // unproved nodes only). If repair fails (proved-only cycle — impossible, since
+                // proved lemmas were added acyclically), report the blocker honestly.
+                const pruned = repairCycles(working.lemmas);
+                if (pruned.length && topologicalOrder(working.lemmas)) {
+                    console.log(`[refine] self-healed a dependency cycle mid-run: pruned ${pruned.length} lemma(s)`);
+                    this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain, cycleRepair: pruned });
+                    continue;
+                }
+                return { ok: false, error: 'blueprint became cyclic (unrepairable)', refined: working, proved: [], unproved: working.lemmas.filter(l => !l.proof).map(l => l.id), rounds };
             }
 
             const provenIds = new Set(working.lemmas.filter(l => l.proof).map(l => l.id));
@@ -265,6 +344,17 @@ export class BlueprintRefiner {
             if (!known.has(child.id)) {
                 working.lemmas.push(child);
                 added++;
+            }
+        }
+        // Validate the MERGED set: a child's deps can close a cycle through the parent or an
+        // existing lemma. repairCycles prunes the newest unproved nodes (exactly the children
+        // just added) until the DAG is acyclic again — the re-split never corrupts the graph.
+        const mergedAudit = validateBlueprint({ theorem: working.lemmas[0]?.statement ?? '', lemmas: working });
+        if (!mergedAudit.ok && /cycle/i.test(mergedAudit.errors.join(' '))) {
+            const pruned = repairCycles(working);
+            if (pruned.length) {
+                console.log(`[refine]   re-split would have created a cycle; pruned ${pruned.length} child lemma(s): ${pruned.map(id => id.slice(0, 10)).join(', ')}`);
+                added = Math.max(0, added - pruned.length);
             }
         }
         console.log(`[refine]   re-split produced ${sub.blueprint.lemmas.length} lemmas, ${added} new`);
