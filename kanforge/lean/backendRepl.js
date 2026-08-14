@@ -301,7 +301,10 @@ export class BackendRepl {
         if (becomesWarm) this._warmWorker = worker;
         // Warm the new worker in the background (also covers retire-replacements). The worker
         // stays busy until its warmup response lands, so _acquire never hands it out cold.
-        const warmupStmt = this.warmupStatement ?? (becomesWarm ? this._lastWarmup : null);
+        // Replacement workers warm with the pool's LAST warm (e.g. the mission's import block
+        // set by pool.warm) — warming with nothing made every post-first-lemma worker pay the
+        // cold elaboration in-row, which is what the 4-minute _acquire blocks were.
+        const warmupStmt = this.warmupStatement ?? this._lastWarmup ?? null;
         if (warmupStmt) {
             worker.busy = true;
             this._warm(worker, warmupStmt);
