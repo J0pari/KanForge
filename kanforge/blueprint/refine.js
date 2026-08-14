@@ -97,11 +97,6 @@ export class BlueprintRefiner {
     }
 
     async refine(blueprint) {
-        const audit = validateBlueprint(blueprint);
-        if (!audit.ok) {
-            return { ok: false, error: 'invalid blueprint', errors: audit.errors, refined: blueprint, proved: [], unproved: [], rounds: [] };
-        }
-
         const working = JSON.parse(JSON.stringify(blueprint));
         const rounds = [];
         let hashChain = [];
@@ -133,8 +128,16 @@ export class BlueprintRefiner {
             const pruned = repairCycles(working.lemmas);
             if (pruned.length) {
                 console.log(`[refine] pruned ${pruned.length} lemma(s) to repair a re-split cycle: ${pruned.map(id => id.slice(0, 10)).join(', ')}`);
-                this.checkpoint?.save({ lemmas: working, rounds, hashChain, cycleRepair: pruned });
+                this.checkpoint?.save({ lemmas: working.lemmas, rounds, hashChain, cycleRepair: pruned });
             }
+        }
+
+        // Validate AFTER resume + cycle repair: a pre-guard checkpoint can carry a cycle that
+        // the repair just healed; validating up-front would reject the whole mission before
+        // the heal could run. The repaired working set must be valid to proceed.
+        const audit = validateBlueprint(working);
+        if (!audit.ok) {
+            return { ok: false, error: 'invalid blueprint', errors: audit.errors, refined: working, proved: [], unproved: working.lemmas.filter(l => !l.proof).map(l => l.id), rounds };
         }
 
         while (guard < this.maxRounds) {
