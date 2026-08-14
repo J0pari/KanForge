@@ -877,6 +877,16 @@ P0 (toolchain + core) ─▶ P1 (loop + telemetry) ─▶ P2 (state machine + re
 3. Reward-hacking probes consistently fail (guardrails hold).
 4. Every result is reproducible: pinned toolchain + full event trace + hashes.
 
+## Definition of done (a live pipeline test of a mission target)
+A live test of the pipeline on a target is COMPLETE only when the pipeline reaches its end on
+that target: every blueprint lemma proved bottom-up, the root theorem proved, the full source
+kernel-verified, and the development digest + per-lemma artifacts exported. Checkpoint saves,
+resume cycles, stalled flags, re-splits, and round caps are INTERMEDIATE states of the run —
+they are how the run survives interruption, never its completion. "The test ran" or "the
+machinery was exercised" is not a finished test; only the exported, kernel-verified proof is.
+A target that genuinely defeats the system (an open problem the model cannot reach) leaves the
+campaign in progress or reported as unproved with the evidence — never reported as complete.
+
 ## Evaluation dimensions (Wave2 §15)
 Independent of per-phase acceptance, the project is measured along four axes — the argument is
 that this is an *incremental verification system*, so the KPIs are verification-system KPIs:
