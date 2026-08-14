@@ -225,7 +225,7 @@ async function main() {
     const maxRounds = Number(argValue(args, '--max-rounds=') ?? 50000);
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? Number(reg.effectiveValue('maxTacticsPerGoal')));
     const maxGoals = Number(argValue(args, '--max-goals=') ?? Number(reg.effectiveValue('maxGoalsPerLemma')));
-    const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
+    const concurrency = Number(argValue(args, '--concurrency=') ?? 2);
     const recipe = argValue(args, '--recipe=') ?? reg.effectiveValue('recipe');
     const useSwiss = args.includes('--use-swiss');
     const swissN = Number(argValue(args, '--swiss-n=') ?? 8);
@@ -241,7 +241,7 @@ async function main() {
 
     // The repl pool must survive the COLD mathlib import of the target's statement (the
     // autoformalizer harness uses 180s for the same reason); 60s is a warm-worker budget only.
-    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency, timeoutMs: checkTimeoutMs, workerPerProblem: true });
+    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency: Math.max(2, concurrency), timeoutMs: checkTimeoutMs, workerPerProblem: true });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 

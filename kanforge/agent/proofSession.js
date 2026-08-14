@@ -10,8 +10,19 @@ export class ProofSession {
         this.backend = backend;
     }
 
+    // Open the session, retrying ONCE on transient repl states: a parse error or an empty
+    // goal list for a statement that is in fact well-formed (observed live: the same stub
+    // parses fine on the retry and later proves) is a fresh-session issue, not a statement
+    // defect — one retry converts it instead of burning a whole round.
     async open(statement) {
-        return this.backend.extractGoals(statement);
+        try {
+            const goals = await this.backend.extractGoals(statement);
+            if (!goals || goals.length === 0) throw new Error('extractGoals returned no goals');
+            return goals;
+        } catch (err) {
+            if (!/parse error|unexpected token|returned no goals/i.test(err?.message ?? '')) throw err;
+            return this.backend.extractGoals(statement);
+        }
     }
 
     close(lemmaId) {

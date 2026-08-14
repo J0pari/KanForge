@@ -22,6 +22,7 @@ export function classifyError(error) {
         return 'elaboration';
     }
     if (/syntax|unexpected|expected/i.test(msg)) return 'syntax';
+    if (/internal exception|abortTactic/i.test(msg)) return 'tactic-abort';
     if (/type error|mismatch|failed to synthesize/i.test(msg)) return 'type';
     if (/unknown identifier|not found/i.test(msg)) return 'missing-lemma';
     return 'unknown';
