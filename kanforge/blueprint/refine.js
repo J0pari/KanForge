@@ -19,7 +19,7 @@ import { lemmaTrajectory } from '../optimization/causal.js';
 import { trajectoriesFromEvents, groupAdvantages } from '../optimization/grpo.js';
 
 export class BlueprintRefiner {
-    constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 200, lemmaStore = null, dataset = null, checkpoint = null } = {}) {
+    constructor({ llm, backend, outDir = null, loopOptions = {}, maxRounds = 50000, lemmaStore = null, dataset = null, checkpoint = null } = {}) {
         if (!llm || !backend) {
             throw new Error('BlueprintRefiner requires a real llm client and a real backend');
         }

@@ -25,7 +25,7 @@ import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 200, provenance = null, lemmaStore = null, dataset = null } = {}) {
+export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null, loopOptions = {}, maxRounds = 50000, provenance = null, lemmaStore = null, dataset = null } = {}) {
     if (!backend || !llm) throw new Error('runBlueprintTheorem requires a real backend and a real llm client');
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
@@ -222,7 +222,7 @@ async function main() {
             console.log(`[${new Date().toTimeString().slice(0,8)}] [blueprint] archived existing work -> ${backup}`);
         }
     }
-    const maxRounds = Number(argValue(args, '--max-rounds=') ?? 200);
+    const maxRounds = Number(argValue(args, '--max-rounds=') ?? 50000);
     const maxTactics = Number(argValue(args, '--max-tactics=') ?? Number(reg.effectiveValue('maxTacticsPerGoal')));
     const maxGoals = Number(argValue(args, '--max-goals=') ?? Number(reg.effectiveValue('maxGoalsPerLemma')));
     const concurrency = Number(argValue(args, '--concurrency=') ?? 1);
