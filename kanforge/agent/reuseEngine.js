@@ -26,14 +26,20 @@ export class ReuseEngine {
         const stored = this.store.findByGoal(rootGoal.type);
         if (!stored?.lemmaName) return null;
         // Degrade chain: full dependency closure first; if the kernel rejects the assembled
-        // source (a foreign stored entry can be malformed), fall back to the stored lemma
-        // alone, then the target alone. FRESH-ONLY: reuse sources carry import lines and the
-        // repl forbids `import` over an env continuation (the warm path can never accept them —
-        // a warm attempt is doomed spend plus a wasted wipe of the warm chain).
+        // source (a foreign stored entry can be malformed), fall back progressively.
+        // FRESH-ONLY: reuse sources carry import lines and the repl forbids `import` over an
+        // env continuation (the warm path can never accept them — a warm attempt is doomed
+        // spend plus a wasted wipe of the warm chain).
+        // Variants: (1) closure + stored lemma, referenced by name; (2) closure deps + the
+        // stored proof inlined AS THE TARGET'S BODY (no by-name reference — this is the
+        // name-collision and hypothesis-transfer path, e.g. when the target stub shares the
+        // stored lemma's name); (3) by-name, target alone; (4) body, target alone.
+        const storedHash = hashStatement(stored.statement);
         const variants = [
-            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement), includeClosureRoot: true }),
-            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement) }),
-            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}` })
+            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: storedHash, includeClosureRoot: true }),
+            buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript, closureOf: storedHash }),
+            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}` }),
+            buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript })
         ];
         let check = null;
         for (const combined of variants) {
