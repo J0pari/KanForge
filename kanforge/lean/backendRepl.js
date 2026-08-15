@@ -265,7 +265,7 @@ export class BackendRepl {
         // so its env accumulation is unbounded across a long pass. Recycle it after this many
         // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
         // warmup automatically. A long verification sweep can no longer OOM the box.
-        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 12;
+        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 30;
         this.coldChecks = 0;
         // A fresh repl process takes tens of seconds to elaborate its FIRST command (initial
         // environment build), which otherwise lands on the first caller's clock and trips its
@@ -324,10 +324,16 @@ export class BackendRepl {
         if (becomesWarm) this._warmWorker = worker;
         // Warm the new worker in the background (also covers retire-replacements). The worker
         // stays busy until its warmup response lands, so _acquire never hands it out cold.
-        // Replacement workers warm with the pool's LAST warm (e.g. the mission's import block
-        // set by pool.warm) — warming with nothing made every post-first-lemma worker pay the
-        // cold elaboration in-row, which is what the 4-minute _acquire blocks were.
-        const warmupStmt = this.warmupStatement ?? this._lastWarmup ?? null;
+        // Role split: the WARM worker carries the mission import block (its warm env is the
+        // chained continuation for one-shot checks). LOOP workers only serve leased sessions,
+        // whose extractGoals always runs env: null (fresh) — the mission-import warm on them is
+        // wasted elaboration, so they absorb the process cold start with a TRIVIAL statement
+        // instead (seconds, not minutes under load). A caller-configured warmupStatement always
+        // wins for every worker (tests/bench contract).
+        let warmupStmt = this.warmupStatement;
+        if (!warmupStmt) {
+            warmupStmt = becomesWarm ? (this._lastWarmup ?? null) : 'example : True := by trivial';
+        }
         if (warmupStmt) {
             worker.busy = true;
             this._warm(worker, warmupStmt);
