@@ -261,6 +261,12 @@ export class BackendRepl {
         // memory". workerPerProblem retires a session's worker when its lemma ends, giving each
         // problem a fresh process (use for Mathlib-heavy workloads).
         this.workerPerProblem = options.workerPerProblem ?? false;
+        // The WARM worker serves every one-shot check and never gets retired by workerPerProblem,
+        // so its env accumulation is unbounded across a long pass. Recycle it after this many
+        // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
+        // warmup automatically. A long verification sweep can no longer OOM the box.
+        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 12;
+        this.coldChecks = 0;
         // A fresh repl process takes tens of seconds to elaborate its FIRST command (initial
         // environment build), which otherwise lands on the first caller's clock and trips its
         // timeout before any real work. warmup fires a trivial statement on each worker at
@@ -286,13 +292,30 @@ export class BackendRepl {
     }
 
     _spawnWorker() {
-        const worker = new ReplWorker({
-            replBin: this.replBin,
-            env: this._env,
-            onParseError: () => { this.parseErrors++; },
-            onExit: w => this._retire(w),
-            onIdle: () => this._wakeWaiters()
-        });
+        let worker;
+        try {
+            worker = new ReplWorker({
+                replBin: this.replBin,
+                env: this._env,
+                onParseError: () => { this.parseErrors++; },
+                onExit: w => this._retire(w),
+                onIdle: () => this._wakeWaiters()
+            });
+        } catch (err) {
+            // Process spawn can fail under system memory pressure. The pool must NEVER shrink
+            // silently (a missing warm worker starves one-shot checks behind leased sessions —
+            // observed as multi-hour _acquire livelock). Retry with backoff until a worker
+            // exists; the retry loop is capped and drains on shutdown.
+            console.log(`[${ts()}] [repl-pool] worker spawn failed (${err?.message ?? err}); retrying in 15s`);
+            this._spawnRetries = (this._spawnRetries ?? 0) + 1;
+            if (this._spawnRetries <= 24 && !this._draining) {
+                this._spawnRetryTimer = setTimeout(() => {
+                    this._spawnRetryTimer = null;
+                    if (!this._draining) this._spawnWorker();
+                }, 15000);
+            }
+            return null;
+        }
         this._workers.push(worker);
         // The first worker is the warm worker: it holds the warm env for fast chained checks
         // and never handles leased sessions (extractGoals). Loop workers are spawned
@@ -317,7 +340,12 @@ export class BackendRepl {
     async _warm(worker, statement) {
         const stmt = statement ?? this.warmupStatement;
         try {
-            await this._requestOnWorker(worker, { cmd: stmt, env: null }, { timeoutMs: this.warmupTimeoutMs });
+            const resp = await this._requestOnWorker(worker, { cmd: stmt, env: null }, { timeoutMs: this.warmupTimeoutMs });
+            // A replacement warm worker's freshly built env becomes the warm chain id, so the
+            // next warm check continues from it instead of rebuilding inline.
+            if (worker === this._warmWorker && resp && Number.isInteger(resp.env)) {
+                this.warmEnvId = resp.env;
+            }
         } catch {
             // timeout path already retired the worker and spawned a warm replacement
         } finally {
@@ -419,6 +447,18 @@ export class BackendRepl {
     }
 
     async _checkOnce(statement, timeoutMs, envId = null) {
+        // Every env: null request builds a fresh repl environment that the process retains
+        // forever (the repl's documented OOM failure mode). This counts cold checks, warm
+        // checks falling back to fresh, and background re-warms alike, and recycles the warm
+        // worker past the threshold (its replacement spawns and re-warms itself). Runs BEFORE
+        // _acquire so the retiring worker can never be handed out to this request.
+        if (envId === null && !this._draining) {
+            this.coldChecks++;
+            if (this.coldChecks >= this.coldCheckRecycleThreshold && this._warmWorker && !this._warmWorker.busy) {
+                this.coldChecks = 0;
+                this._retire(this._warmWorker);
+            }
+        }
         const worker = await this._acquire(timeoutMs, { lease: false });
         try {
             // envId: continue the statement-mode session from a prior env (the repl is stateful:
@@ -437,6 +477,12 @@ export class BackendRepl {
         const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
         const maxRetries = opts.maxRetries ?? 1; // crash/hang retries on a fresh worker
         const useWarmEnv = !!opts.useWarmEnv;
+        // A new request cancels a pending background re-warm: the rebuild must run in GAPS
+        // between work, not interleave with (and pad) the requests that follow a cold check.
+        if (this._rewarmTimer) {
+            clearTimeout(this._rewarmTimer);
+            this._rewarmTimer = null;
+        }
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -446,8 +492,10 @@ export class BackendRepl {
                 } else if (!useWarmEnv) {
                     // A fresh (env: null) check rebuilt the repl environment from scratch, so any
                     // previously established chain id is stale — subsequent chained checks would
-                    // hit "Unknown environment". Drop it.
+                    // hit "Unknown environment". Drop it, then rebuild the warm session in the
+                    // background so the next warm check doesn't pay the import cost inline.
                     this.warmEnvId = null;
+                    this._rewarmInBackground();
                 }
                 return this._classify(resp);
             } catch (err) {
@@ -466,6 +514,24 @@ export class BackendRepl {
         const p = this._doCheck(statement, opts).finally(() => this._inflight.delete(key));
         this._inflight.set(key, p);
         return p;
+    }
+
+    // Re-establish the warm statement-mode session after a fresh (env: null) check wiped it.
+    // Debounced: bursts of cold checks (e.g. a verification sweep) coalesce into ONE re-warm at
+    // the end of the burst, so the warm env is not rebuilt between cold checks that ignore it.
+    // The next warm check either finds the env ready or queues behind this warmup. Errors are
+    // swallowed (the next warm check rebuilds inline if this failed). Never re-warms while draining.
+    _rewarmInBackground() {
+        if (this._draining || !this._lastWarmup) return;
+        clearTimeout(this._rewarmTimer);
+        this._rewarmTimer = setTimeout(() => {
+            this._rewarmTimer = null;
+            if (this._draining || this._rewarming || this.warmEnvId !== null) return;
+            this._rewarming = true;
+            this.warm(this._lastWarmup)
+                .catch(() => {})
+                .finally(() => { this._rewarming = false; });
+        }, 1500);
     }
 
     // Establish (or refresh) the statement-mode session: warm the repl with the statement's
@@ -640,6 +706,14 @@ export class BackendRepl {
 
     async shutdown(timeoutMs = this.timeoutMs) {
         this._draining = true;
+        if (this._rewarmTimer) {
+            clearTimeout(this._rewarmTimer);
+            this._rewarmTimer = null;
+        }
+        if (this._spawnRetryTimer) {
+            clearTimeout(this._spawnRetryTimer);
+            this._spawnRetryTimer = null;
+        }
         for (const w of this._waiters) w.reject(new Error('backend draining'));
         this._waiters = [];
         this._sessions.clear();

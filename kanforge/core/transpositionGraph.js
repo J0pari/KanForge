@@ -36,6 +36,55 @@ export function lexicalNormalize(type) {
     return String(type ?? '').trim().replace(/\s+/g, ' ').trim();
 }
 
+// Pure goal normalization (module-level): alpha-renaming of the context telescope + target
+// under ONE substitution map, capture-avoiding. Shared by the graph class and the campaign
+// goal memory (core/goalMemory.js) so cross-lemma memory keys match the incumbent structure's
+// class identity exactly — a memory key IS the transposition canonical key.
+export function normalizeGoalPure(type, context = [], normalizer = lexicalNormalize) {
+    const varMap = new Map();
+    let varCounter = 0;
+    const usedNames = new Set(context.map(c => c.name));
+    const fresh = () => {
+        let n;
+        do { n = `v${varCounter++}`; } while (usedNames.has(n));
+        return n;
+    };
+    const renameVar = (name) => {
+        if (!varMap.has(name)) varMap.set(name, fresh());
+        return varMap.get(name);
+    };
+    for (const { name } of context) renameVar(name);
+    const substitute = (text) => {
+        let out = String(text);
+        for (const [original, canonical] of varMap) {
+            out = out.replace(new RegExp(`\\b${original}\\b`, 'g'), canonical);
+        }
+        return out;
+    };
+    return {
+        type: normalizer(substitute(type)),
+        context: context.map(({ name, type: varType }) => ({
+            name: varMap.get(name) ?? name,
+            type: substitute(varType)
+        }))
+    };
+}
+
+// Deterministic serialization of the normalized goal → the canonical key (equality authority).
+export function canonicalKeyOf(normalizedGoal) {
+    const { type, context = [] } = normalizedGoal;
+    const contextStr = context.map(c => `${c.name}:${c.type}`).join(',');
+    return `${type}|${contextStr}`;
+}
+
+// Canonical key straight from a concrete goal — the campaign-level identity of a goal shape.
+// Uses the transposition graph's syntactic normalization (alpha-renaming + whitespace), the
+// incumbent identity discipline. Retrieval consumers re-verify through the kernel, so a keying
+// mismatch costs at most a wasted replay.
+export function goalCanonicalKey(type, context = [], normalizer = lexicalNormalize) {
+    return canonicalKeyOf(normalizeGoalPure(type, context, normalizer));
+}
+
 // Retrieval-only similarity form (lemmaStore §2.8): algebraic identities that make similar
 // conclusions comparable for ranking. NOT used for class identity — the kernel re-verifies any
 // lemma matched this way, and a retrieval mismatch costs at most a wasted attempt.
@@ -69,54 +118,12 @@ export class GoalTranspositionGraph {
 
     normalizeGoal(goal) {
         const { type, context = [] } = goal;
-        const varMap = new Map();
-        let varCounter = 0;
-
-        // Canonical names must avoid capture: a context variable literally named `v0` must not
-        // absorb a renamed sibling. Fresh names skip anything already used in the context.
-        const usedNames = new Set(context.map(c => c.name));
-        const fresh = () => {
-            let n;
-            do { n = `v${varCounter++}`; } while (usedNames.has(n));
-            return n;
-        };
-        const renameVar = (name) => {
-            if (!varMap.has(name)) varMap.set(name, fresh());
-            return varMap.get(name);
-        };
-
-        // Register every binder first, then substitute under ONE map into the goal type AND
-        // every context binder's type. Renaming only the binder names leaves `h : x = x` (with
-        // `x` renamed to `v0` in the target) un-merged with its alpha-equivalent sibling — the
-        // context must be renamed under the same substitution or transposition merging misses.
-        for (const { name } of context) renameVar(name);
-        const substitute = (text) => {
-            let out = String(text);
-            for (const [original, canonical] of varMap) {
-                out = out.replace(new RegExp(`\\b${original}\\b`, 'g'), canonical);
-            }
-            return out;
-        };
-
-        const normalizedContext = context.map(({ name, type: varType }) => ({
-            name: varMap.get(name) ?? name,
-            type: substitute(varType)
-        }));
-
-        // The normalizer is syntactic (whitespace) only — semantic identity is out of contract.
-        const normalizedType = this._normalizeType(substitute(type));
-
-        return {
-            type: normalizedType,
-            context: normalizedContext
-        };
+        return normalizeGoalPure(type, context, this._normalizeType.bind(this));
     }
 
     // Deterministic serialization of the normalized goal → the canonical key (equality authority).
     canonicalKey(normalizedGoal) {
-        const { type, context = [] } = normalizedGoal;
-        const contextStr = context.map(c => `${c.name}:${c.type}`).join(',');
-        return `${type}|${contextStr}`;
+        return canonicalKeyOf(normalizedGoal);
     }
 
     // SHA-256 of the canonical key — a lookup index over the key, not the identity itself.
@@ -157,6 +164,7 @@ export class GoalTranspositionGraph {
                 tactics: [],
                 stats: { visits: 0, successes: 0, value: 0.0 },
                 parents: parentId ? [parentId] : [],
+                depth: parentId ? (this.classes.get(parentId)?.depth ?? 0) + 1 : 0,
                 state: 'OPEN'
             });
             return id;
@@ -180,10 +188,17 @@ export class GoalTranspositionGraph {
                 tactics: [],
                 stats: { visits: 0, successes: 0, value: 0.0 },
                 parents: parentId ? [parentId] : [],
+                depth: parentId ? (this.classes.get(parentId)?.depth ?? 0) + 1 : 0,
                 state: 'OPEN'
             });
         }
         return cid;
+    }
+
+    // GoalStateGraph contract: direct class accessor (search recipes read parents/classes
+    // through this, never through the raw field — the egraph future keeps the field private).
+    getClass(classId) {
+        return this.classes.get(classId) ?? null;
     }
 
     setRoot(goal) {
@@ -401,6 +416,7 @@ export class GoalTranspositionGraph {
 
     serialize() {
         return {
+            structure: 'transposition',
             rootId: this.rootId,
             frontier: this.frontier,
             classes: Array.from(this.classes.entries())

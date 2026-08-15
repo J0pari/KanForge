@@ -1,7 +1,12 @@
 // ReuseEngine (architecture.md §4 role split, §2.8): the root-level lemma-store reuse path. A
 // previously-proven lemma whose conclusion matches the root goal is inlined — declaration +
-// proof — and proved by `exact <name>`; the kernel re-verifies the combined source, so
-// retrieval never bypasses verification and cross-problem reuse works in any fresh session.
+// proof + its DEPENDENCY CLOSURE (the stored proof references its own lemmas, so the closure
+// must be declared for the combined source to verify in a fresh env) — and proved by
+// `exact <name>`; the kernel re-verifies the combined source, so retrieval never bypasses
+// verification and cross-problem reuse works in any fresh session.
+import { hashStatement } from '../lean/pin.js';
+import { buildReuseSource } from '../core/state.js';
+
 export class ReuseEngine {
     constructor({ backend, store = null }) {
         this.backend = backend;
@@ -18,10 +23,20 @@ export class ReuseEngine {
         if (!rootGoal) return null;
         const stored = this.store.findByGoal(rootGoal.type);
         if (!stored?.lemmaName) return null;
-        const storedSource = stored.statement.replace(/:=\s*by\s+sorry\s*$/, `:= ${stored.proofScript}`);
-        const currentDecl = statement.replace(/:=\s*by\s+sorry\s*$/, `:= by exact ${stored.lemmaName}`);
-        const combined = `${storedSource}\n\n${currentDecl}`;
-        const check = await this.backend.check(combined, { useWarmEnv: false });
+        const combined = buildReuseSource({
+            store: this.store,
+            statement,
+            proofScript: `by exact ${stored.lemmaName}`,
+            closureOf: hashStatement(stored.statement),
+            includeClosureRoot: true
+        });
+        // Warm-first with a fresh fallback: the warm env carries the mission's import block, so
+        // an in-family reuse verifies in seconds. A warm rejection is re-tested on a fresh env
+        // (authoritative for rejection) before the store hit is given up.
+        let check = await this.backend.check(combined, { useWarmEnv: true });
+        if (check.status !== 'verified') {
+            check = await this.backend.check(combined, { useWarmEnv: false });
+        }
         if (check.status !== 'verified') {
             onReuse?.({ type: 'store_reuse_rejected', lemmaId, error: check.error?.message?.slice(0, 100) ?? 'verification failed' });
             return null;

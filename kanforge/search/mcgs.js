@@ -98,7 +98,7 @@ export class MCGS {
             seen.add(c.id);
             c.stats.value += reward;
             for (const parentId of c.parents) {
-                const parent = graph.classes.get(parentId);
+                const parent = graph.getClass(parentId);
                 if (parent) stack.push(parent);
             }
         }

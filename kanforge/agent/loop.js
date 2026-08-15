@@ -22,10 +22,8 @@ import { Scheduler } from '../core/scheduler.js';
 import { PullGraph } from '../core/pullgraph.js';
 import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 import { isLemmaProved } from './solve.js';
-import { GoalTranspositionGraph, lexicalNormalize } from '../core/transpositionGraph.js';
-import { GoalEGraph, DEFAULT_EGRAPH_RULES } from '../core/egraph.js';
 import { createDefEqOracle } from '../lean/defEqOracle.js';
-import { assertGoalStateGraph } from '../core/goalStateGraph.js';
+import { createGoalStateGraph } from '../core/goalStateGraph.js';
 import { EventBus } from '../optimization/bus.js';
 import { EventStore } from '../optimization/store.js';
 import { runCommitGate } from './commitGate.js';
@@ -46,7 +44,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition', compressionMetrics = true } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition', compressionMetrics = true, safeLadder = false, goalMemory = null } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -83,11 +81,17 @@ export class TacticLoop {
         this.predictorExploration = predictorExploration; // §6: counterfactual re-tests of rejected tactics
         // searchStructure (registry component, build_order.md §5.12): the Level-2 goal-state
         // structure — 'transposition' (incumbent, syntactic identity) or 'egraph' (congruence
-        // closure + kernel-confirmed rule unions). Ablation decides the default.
+        // closure + kernel-confirmed rule unions). Ablation decides the default. Unknown names
+        // fail loudly at wiring time (createGoalStateGraph) — never a silent fallback.
         this.searchStructure = searchStructure === 'egraph' ? 'egraph' : 'transposition';
         // compressionMetrics (registry component): include the §0.5 compression-quality block
         // in the outcome's KPI catalog.
         this.compressionMetrics = compressionMetrics !== false;
+        // safeLadder / goalMemory (registry components): deterministic kernel-closer ladder
+        // and campaign-level goal-shape memory — the cross-lemma extension of the Level-2
+        // graph's identity discipline. Both only reorder kernel calls; proofs stay verified.
+        this.safeLadder = safeLadder === true;
+        this.goalMemory = goalMemory ?? null;
         // The egraph's def-eq oracle is backend-grounded: `rfl` checks only. A backend without
         // check() (e.g. a minimal mock) degrades to congruence-only unions — never unverified.
         this.egraphOracle = this.searchStructure === 'egraph' && typeof backend?.check === 'function'
@@ -134,6 +138,8 @@ export class TacticLoop {
             ttrlPolicy: this.ttrlPolicy,
             repair: this.repair,
             store: this.store,
+            safeLadder: this.safeLadder,
+            goalMemory: this.goalMemory,
             emit: (e, lemmaId) => this._emit(e, lemmaId)
         });
         this.recorder = new RunRecorder({
@@ -201,24 +207,16 @@ export class TacticLoop {
             throw err;
         };
 
-        // Predictor provenance (§6): version the matcher in the event stream so audits can
-        // distinguish a fresh prior-run mining from a stale one.
-        if (this.predictors) {
-            this._emit({ type: 'predictor_compiled', lemmaId, count: this.predictors.count ?? null, inert: this.predictors.inert ?? null, source: this.predictors.source ?? null, minedAt: this.predictors.minedAt ?? null }, lemmaId);
-        }
-
         try {
             // Level 2: goal-state graph behind the contract — structure selection is the
-            // searchStructure component (§5.12); the loop depends on the contract only.
-            const graph = this.searchStructure === 'egraph'
-                ? assertGoalStateGraph(new GoalEGraph({
-                    oracle: this.egraphOracle,
-                    rules: DEFAULT_EGRAPH_RULES,
-                    onUnion: (a, b, reason, confirmed) => {
-                        this._emit({ type: 'egraph_union', lemmaId, reason, confirmed, classA: a, classB: b }, lemmaId);
-                    }
-                }), { label: 'GoalEGraph' })
-                : new GoalTranspositionGraph({ normalizer: lexicalNormalize });
+            // searchStructure component (§5.12); the factory asserts the contract for BOTH
+            // structures and fails loudly on unknown names. The loop depends on the contract only.
+            const graph = await createGoalStateGraph(this.searchStructure, {
+                oracle: this.egraphOracle,
+                onUnion: (a, b, reason, confirmed) => {
+                    this._emit({ type: 'egraph_union', lemmaId, reason, confirmed, classA: a, classB: b }, lemmaId);
+                }
+            });
 
             // ProofSession (§4): extractGoals opens the backend proof session (leased worker).
             let rootGoals;
@@ -299,6 +297,14 @@ export class TacticLoop {
                     const verr = gate.kernelError ?? 'no kernel message';
                     console.log(`[${ts()}] [loop] KERNEL_REJECTED lemma ${lemmaId.slice(0, 10)}… verify-error: ${String(verr).slice(0, 200)}`);
                     console.log(`[${ts()}] [loop] assembled source head:\n${gate.sourceHead ?? ''}`);
+                    // Campaign goal memory: an identifier the kernel says is undeclared is
+                    // campaign-scoped evidence — every future tactic referencing it is vetoed
+                    // before kernel spend (this is the `exact twopow_one` loop killer).
+                    const unknownId = /[Uu]nknown (?:identifier|constant) [`']?([A-Za-z0-9_.']+)/.exec(String(verr));
+                    if (unknownId?.[1]) {
+                        this.goalMemory?.recordUnknownIdentifier(unknownId[1]);
+                        this._emit({ type: 'kernel_unknown_identifier', lemmaId, identifier: unknownId[1] }, lemmaId);
+                    }
                     fail(`guardrails rejected the commit: ${gate.message}`, {
                         kernelError: String(verr),
                         sourceHead: gate.sourceHead
@@ -342,6 +348,11 @@ export class TacticLoop {
 
     async proveAll() {
         this._runStart = Date.now();
+        // Predictor provenance (§6): version the matcher ONCE per run (one event, not one per
+        // lemma) so audits can distinguish a fresh prior-run mining from a stale one.
+        if (this.predictors) {
+            this._emit({ type: 'predictor_compiled', count: this.predictors.count ?? null, inert: this.predictors.inert ?? null, source: this.predictors.source ?? null, minedAt: this.predictors.minedAt ?? null });
+        }
         const scheduler = new Scheduler(this.graph, {
             check: async (id, signal) => this._proveLemma(id, this.graph.nodes.get(id).computation.value, signal),
             concurrency: this.concurrency,

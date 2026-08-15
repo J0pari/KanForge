@@ -17,12 +17,14 @@ const ENV = loadEnv();
 const REPL_BIN = ENV.KANFORGE_REPL_BIN;
 const SKIP_LIVE = !REPL_BIN || !fs.existsSync(REPL_BIN);
 
-test('live verifyStepSet verifies all 10 multi-step problems against real Lean kernel', { skip: SKIP_LIVE, timeout: 180000 }, async () => {
+test('live verifyStepSet verifies all 10 multi-step problems against real Lean kernel', { skip: SKIP_LIVE, timeout: 3600000 }, async () => {
     const backend = new BackendRepl({
         replBin: REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         concurrency: 2,
-        timeoutMs: 30000
+        // The harness's negative checks are cold env rebuilds; on loaded hardware a single
+        // elaboration can exceed 30s, so the request budget must match the cold-check reality.
+        timeoutMs: 120000
     });
 
     try {

@@ -84,8 +84,15 @@ test('live: skeleton stubs typecheck under the real Lean kernel', { skip: SKIP_L
 // the kernel at commit (regression for the old goal-frontier misattribution).
 test('live: end-to-end skeleton → refine proves a development with no sorry remaining', { skip: SKIP_LIVE, timeout: 900000 }, async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-live-'));
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanforge-live-store-'));
     const backend = makeBackend();
     try {
+        // ISOLATED stores: this test's assertions must not depend on (or pollute) the live
+        // global lemma store accumulated by campaign runs.
+        const { LemmaStore } = await import('../growth/lemmaStore.js');
+        const { TrainingDataset } = await import('../growth/dataset.js');
+        const lemmaStore = new LemmaStore({ dir: path.join(storeDir, 'lemma-store') });
+        const dataset = new TrainingDataset({ dir: path.join(storeDir, 'training-dataset') });
         const theorem = 'example : 1 = 1 ∧ 2 = 2 := by sorry';
         const h1 = 'example : 1 = 1 := by sorry';
         const h2 = 'example : 2 = 2 := by sorry';
@@ -99,7 +106,7 @@ test('live: end-to-end skeleton → refine proves a development with no sorry re
             })
         });
 
-        const r = await runBlueprintTheorem({ backend, llm, theorem, outDir, loopOptions: { maxTacticsPerGoal: 3, maxGoalsPerLemma: 20 } });
+        const r = await runBlueprintTheorem({ backend, llm, theorem, outDir, loopOptions: { maxTacticsPerGoal: 3, maxGoalsPerLemma: 20 }, lemmaStore, dataset });
         assert.strictEqual(r.ok, true);
         assert.strictEqual(r.refined.ok, true);
         assert.strictEqual(r.refined.unproved.length, 0);
@@ -111,12 +118,11 @@ test('live: end-to-end skeleton → refine proves a development with no sorry re
         assert.strictEqual(r.refined.stored.lemmas, 3);
 
         // Contamination report is clean for an unrelated benchmark split.
-        const { TrainingDataset } = await import('../growth/dataset.js');
-        const ds = new TrainingDataset({ dir: path.join(outDir, 'training-dataset') });
-        const report = ds.contaminationCheck({ miniF2F: ['example (a b c : Nat) (h : a < b) : a ≤ c := by sorry'] });
+        const report = dataset.contaminationCheck({ miniF2F: ['example (a b c : Nat) (h : a < b) : a ≤ c := by sorry'] });
         assert.strictEqual(report.clean, true);
     } finally {
         await backend.shutdown(3000);
         fs.rmSync(outDir, { recursive: true, force: true });
+        fs.rmSync(storeDir, { recursive: true, force: true });
     }
 });

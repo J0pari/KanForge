@@ -33,7 +33,7 @@ export class RunCheckpoint {
     }
 
     // Write the current run state. Called after each refine round.
-    save({ lemmas = [], rounds = [], hashChain = [], eventStore = null, provenance = null } = {}) {
+    save({ lemmas = [], rounds = [], hashChain = [], eventStore = null, provenance = null, goalMemory = null } = {}) {
         fs.mkdirSync(this.workDir, { recursive: true });
         const events = serializeEventStore(eventStore);
         const payload = {
@@ -55,6 +55,7 @@ export class RunCheckpoint {
             })),
             hashChain: hashChain.map(e => ({ ...e })),
             events,
+            goalMemory: goalMemory ?? null,
             provenance: provenance ?? null
         };
         fs.writeFileSync(this.file, JSON.stringify(payload, null, 1), 'utf8');
@@ -98,6 +99,7 @@ export class RunCheckpoint {
             rounds: checkpoint.rounds ?? [],
             hashChain,
             eventCount: checkpoint.events?.length ?? 0,
+            goalMemory: checkpoint.goalMemory ?? null,
             savedAt: checkpoint.savedAt ?? null
         };
     }

@@ -89,7 +89,11 @@ function recipeOptions(recipe, N, maxLlmCalls) {
 // The loop counts its own cost (llmCalls / tacticCalls / predictorSkips) — the row is read
 // straight from the loop, never recomputed by a parallel driver. `overrides` carries the
 // component toggles the graph node configured (menu/exemplars/ttrl/monitor/repair/repulsion).
+// The cell's EVENT STREAM is captured (not discarded) and summarized into `telemetry` — the
+// per-cell consumable the failure-taxonomy recommendations read (extract timeouts, kernel
+// rejections, undeclared identifiers, ladder/memory activity).
 async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, predictors = null, premiseConfig = null, overrides = {} }) {
+    const cellEvents = [];
     const loop = new TacticLoop({
         backend,
         llm,
@@ -104,8 +108,9 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         monitor: overrides.monitor ?? false,
         repair: overrides.repair ?? true,
         searchStructure: overrides.searchStructure ?? 'transposition',
+        safeLadder: overrides.safeLadder ?? false,
         writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
-        onEvent: () => {}
+        onEvent: e => { cellEvents.push(e); }
     });
     loop.addLemma(statement);
     const t0 = Date.now();
@@ -117,7 +122,43 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         llmCalls: loop.llmCalls,
         tacticCalls: loop.tacticCalls,
         skipped: loop.predictorSkips,
-        ms: Date.now() - t0
+        ms: Date.now() - t0,
+        telemetry: summarizeCellTelemetry(cellEvents)
+    };
+}
+
+// Lean per-cell telemetry summary: the row-level consumable for the failure taxonomy. Counts +
+// compact failure kinds only — the full event stream stays with the run, never bloats the row.
+export function summarizeCellTelemetry(events = []) {
+    const count = t => events.filter(e => e.type === t).length;
+    const sum = (t, f) => events.filter(e => e.type === t).reduce((s, e) => s + (Number.isFinite(f(e)) ? f(e) : 0), 0);
+    const goalClasses = new Set(events.filter(e => e.goalClassId != null).map(e => e.goalClassId));
+    const depths = events.filter(e => e.type === 'goal_selected' && Number.isFinite(e.depth)).map(e => e.depth);
+    const failureKinds = {};
+    for (const e of events) {
+        if (e.type === 'lemma_failed') {
+            const msg = String(e.error ?? '');
+            if (/could not extract root goal/.test(msg)) failureKinds.extractTimeout = (failureKinds.extractTimeout ?? 0) + 1;
+            if (/guardrails rejected the commit: KERNEL_REJECTED/.test(msg)) failureKinds.kernelReject = (failureKinds.kernelReject ?? 0) + 1;
+        }
+        if (e.type === 'kernel_unknown_identifier') failureKinds.unknownIdentifier = (failureKinds.unknownIdentifier ?? 0) + 1;
+        if (e.type === 'tactic_failed') failureKinds.tacticFailed = (failureKinds.tacticFailed ?? 0) + 1;
+    }
+    return {
+        events: events.length,
+        goalClasses: goalClasses.size,
+        carries: sum('tactic_applied', e => e.carriedOver),
+        creates: sum('tactic_applied', e => e.created),
+        depthMax: depths.length ? Math.max(...depths) : null,
+        deadEnds: count('goal_dead_end'),
+        ladderResults: count('ladder_result'),
+        ladderClosed: events.filter(e => e.type === 'ladder_result' && e.solved === true).length,
+        memoryReplays: events.filter(e => e.type === 'tactic_applied' && e.via === 'goal-memory').length,
+        memoryVetoes: events.filter(e => e.type === 'tactic_predicted_failure' && typeof e.reason === 'string' && e.reason.startsWith('failed-before')).length,
+        unknownVetoes: events.filter(e => e.type === 'tactic_predicted_failure' && typeof e.reason === 'string' && e.reason.startsWith('unknown-identifier')).length,
+        repairRounds: count('repair_attempted'),
+        llmMs: sum('tactic_proposed', e => e.llmMs) + sum('repair_proposed', e => e.llmMs),
+        failureKinds
     };
 }
 
@@ -393,6 +434,20 @@ async function main() {
     const predictorsArg = process.argv.find(a => a.startsWith('--predictors='));
     const ablateArg = process.argv.find(a => a.startsWith('--ablate'));
 
+    // --pass-report=<run-dir>: consume a campaign's pass telemetry (passes.ndjson +
+    // campaign*.log + checkpoint + events.jsonl) as the ablation's input surface — the
+    // per-pass cost/outcome series the recommendations and the amortized-cost curve read.
+    const passReportArg = process.argv.find(a => a.startsWith('--pass-report='));
+    if (passReportArg) {
+        const { loadPassMetrics, renderPassMetrics } = await import('./passMetrics.js');
+        const runDir = passReportArg.split('=')[1];
+        const pm = loadPassMetrics(runDir);
+        console.log(renderPassMetrics(pm));
+        const outArg2 = process.argv.find(a => a.startsWith('--pass-report-out='));
+        if (outArg2) writeFileSync(outArg2.split('=')[1], JSON.stringify(pm, null, 2));
+        process.exit(0);
+    }
+
     const set = setArg ? setArg.split('=')[1] : 'core';
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS
         : set === 'step' ? STEP_PROBLEMS
@@ -448,6 +503,12 @@ async function main() {
         predictorsProvenance = { path: predictorsPath, sha256: sha, bytes: meta.size, trainedAt: raw.generatedAt ?? null, count: predictors.count };
     }
 
+    // Mission-shaped targets (mission corpus or a checkpoint's frontier lemmas) carry heavy
+    // mathlib imports AND heavy statement elaboration: they need the mission pool config
+    // (300s kernel timeout, worker-per-problem). A checkpoint set misconfigured as `core`
+    // starves its rows: every extractGoals times out at 60s on the cold import with 0 LLM /
+    // 0 kernel calls — the all-failed erdos10_frontier run was exactly this.
+    const missionLike = set === 'mathlib' || set === 'mission' || set.startsWith('checkpoint:');
     const pool = createBackend({
         type: 'repl',
         replBin: ENV.KANFORGE_REPL_BIN,
@@ -456,9 +517,9 @@ async function main() {
         concurrency: 2,
         // Mathlib imports take 5-35s cold (mission statements can take minutes under memory
         // pressure); the core set is near-instant.
-        timeoutMs: (set === 'mathlib' || set === 'mission') ? 300_000 : 60_000,
+        timeoutMs: missionLike ? 300_000 : 60_000,
         // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
-        workerPerProblem: set === 'mathlib' || set === 'mission',
+        workerPerProblem: missionLike,
         // A fresh repl takes ~60s to elaborate its first command; warm each worker so the first
         // row pays that cost off the timer (the failed `or_elim` row was exactly this: it timed
         // out at 60020ms before the LLM was ever called).
@@ -554,13 +615,16 @@ async function main() {
         console.log(renderMarkdown(report));
 
         // Recipe recommendation: the cheapest recipe among those solving ≥ the best-rate-minus-
-        // margin; written to defaults.json alongside any component recommendations.
+        // margin; failure-taxonomy recommendations fill in when pass rate is 0 (or alongside).
+        // Both write to defaults.json — the ablation's output surface consumed by the live path.
         const recipeRec = recommendRecipe(report);
-        if (recipeRec) {
+        const taxonomyRecs = recommendFromRows(report);
+        if (recipeRec || Object.keys(taxonomyRecs).length) {
             const defaultsFile = path.join(__dirname, '..', 'runs', 'defaults.json');
             const existing = loadRecommendedDefaults(defaultsFile)?.recommendations ?? {};
-            saveRecommendedDefaults(defaultsFile, { ...existing, recipe: recipeRec }, { provenance: { ...provenance, kind: 'ablation-recipe' } });
-            console.log(`[ablation] recommended recipe: ${recipeRec} -> ${defaultsFile}`);
+            saveRecommendedDefaults(defaultsFile, { ...existing, ...(recipeRec ? { recipe: recipeRec } : {}), ...taxonomyRecs }, { provenance: { ...provenance, kind: 'ablation-recipe' } });
+            if (recipeRec) console.log(`[ablation] recommended recipe: ${recipeRec} -> ${defaultsFile}`);
+            if (Object.keys(taxonomyRecs).length) console.log(`[ablation] failure-taxonomy recommendations -> ${defaultsFile}: ${JSON.stringify(taxonomyRecs)}`);
         }
     } finally {
         await pool.shutdown(3000);
@@ -593,6 +657,32 @@ export function recommendRecipe(report) {
     rows.sort((a, b) => b.passRate - a.passRate
         || (a.meanLlmCallsPerSolved ?? Infinity) - (b.meanLlmCallsPerSolved ?? Infinity));
     return rows[0].recipe;
+}
+
+// Failure-taxonomy recommendations: actionable even when NO cell solves (the all-zero report
+// is exactly when the harness must say something — an extract-timeout or kernel-reject storm
+// is an infrastructure/component verdict, not evidence that all recipes tie). Reads the
+// per-row telemetry (summarizeCellTelemetry) and maps failure kinds to registry components:
+//  - extractTimeout   -> checkTimeoutMs: 300000 (mission-scale kernel timeout; a 60s budget
+//                        starves cold-import cells)
+//  - kernelReject     -> safeLadder: true (the deterministic closers kill the invented-lemma-
+//                        name commit rejections) and campaignMemory: true
+//  - unknownIdentifier-> campaignMemory: true (the undeclared-identifier veto)
+export function recommendFromRows(report) {
+    const recs = {};
+    const rows = report?.detail ?? [];
+    const fails = rows.filter(r => !r.solved);
+    if (!fails.length) return recs;
+    const extractTimeouts = fails.filter(r => r.telemetry?.failureKinds?.extractTimeout).length;
+    if (extractTimeouts > 0) recs.checkTimeoutMs = 300000;
+    const kernelRejects = fails.filter(r => r.telemetry?.failureKinds?.kernelReject).length;
+    if (kernelRejects > 0) {
+        recs.safeLadder = true;
+        recs.campaignMemory = true;
+    }
+    const unknownIds = fails.filter(r => r.telemetry?.failureKinds?.unknownIdentifier).length;
+    if (unknownIds > 0) recs.campaignMemory = true;
+    return recs;
 }
 
 // Ablation graph (§5.7/§5.8): the full factorial over the named component toggles. Each node is

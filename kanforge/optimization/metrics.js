@@ -48,6 +48,31 @@ export function computeMetrics(events = []) {
     // Kernel checks = tactic_applied + tactic_failed (each applied/failed is one kernel round-trip).
     const kernelChecks = applied + failedTactics;
 
+    // --- transposition / merge telemetry (architecture.md §2.2) -----------------------------
+    // tactic_applied carries carriedOver (transposition merges: subgoals that landed on an
+    // already-open class) and created (genuinely new classes) — the structure's own counts,
+    // emitted by the loop. The egraph future emits the same fields, so these metrics are
+    // structure-agnostic.
+    const applyEvents = events.filter(e => (e.type ?? '').toLowerCase() === 'tactic_applied');
+    const carriesTotal = applyEvents.reduce((s, e) => s + (Number.isFinite(e.carriedOver) ? e.carriedOver : 0), 0);
+    const createsTotal = applyEvents.reduce((s, e) => s + (Number.isFinite(e.created) ? e.created : 0), 0);
+    const transpositionHitRate = (carriesTotal + createsTotal) > 0 ? carriesTotal / (carriesTotal + createsTotal) : null;
+    const duplicateStatesAvoided = carriesTotal > 0 ? carriesTotal : null;
+
+    // --- search quality from the new instrumentation ----------------------------------------
+    const deadEnds = count(events, 'goal_dead_end');
+    const deadEndRate = selected > 0 ? deadEnds / selected : null;
+    const depthValues = events
+        .filter(e => (e.type ?? '').toLowerCase() === 'goal_selected' && Number.isFinite(e.depth))
+        .map(e => e.depth);
+    const meanDepth = depthValues.length ? depthValues.reduce((s, d) => s + d, 0) / depthValues.length : null;
+    const ladderResults = count(events, 'ladder_result');
+    const ladderClosed = events.filter(e => (e.type ?? '').toLowerCase() === 'ladder_result' && e.solved === true).length;
+    const memoryReplays = events.filter(e => (e.type ?? '').toLowerCase() === 'tactic_applied' && e.via === 'goal-memory').length;
+    const memoryVetoes = events.filter(e => (e.type ?? '').toLowerCase() === 'tactic_predicted_failure' && typeof e.reason === 'string' && e.reason.startsWith('failed-before')).length;
+    const unknownVetoes = events.filter(e => (e.type ?? '').toLowerCase() === 'tactic_predicted_failure' && typeof e.reason === 'string' && e.reason.startsWith('unknown-identifier')).length;
+    const kernelUnknownIdentifiers = count(events, 'kernel_unknown_identifier');
+
     // --- compression quality (architecture.md §0.5, research_notes §5) ---------------------
     // proofDescriptionLength: the final proof scripts' lengths under the canonical layout.
     const verifiedEvents = events.filter(e => (e.type ?? '').toUpperCase() === 'LEMMA_VERIFIED');
@@ -91,14 +116,14 @@ export function computeMetrics(events = []) {
         kernelChecksPerSolved: verified > 0 ? kernelChecks / verified : null,
         llmCallsPerSolved: verified > 0 ? proposed / verified : null,
         uniqueStatesExplored: statesSeen.size,
-        duplicateStatesAvoided: null, // needs e-graph carriedOver counts; not in the event stream
+        duplicateStatesAvoided,
 
         // --- search quality ---
         firstSuccessRank,
         branchingFactor: applied > 0 ? subgoals / applied : null,
-        meanDepth: null, // needs per-goal depth bookkeeping in the loop; not in the event stream
-        deadEndRate: null, // needs "goal class abandoned without solution" events; not emitted
-        transpositionHitRate: null, // needs e-graph carriedOver/new-class counts; not in the event stream
+        meanDepth,
+        deadEndRate,
+        transpositionHitRate,
 
         // --- planning quality (blueprint-level; needs blueprint/refine surface) ---
         blueprintLemmasPerTheorem: null,
@@ -134,7 +159,13 @@ export function computeMetrics(events = []) {
             completionTokensTotal,
             solvedGoals: solved,
             goalsSelected: selected,
-            repairRounds: repaired
+            repairRounds: repaired,
+            ladderResults,
+            ladderClosed,
+            memoryReplays,
+            memoryVetoes,
+            unknownVetoes,
+            kernelUnknownIdentifiers
         }
     };
 }

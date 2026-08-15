@@ -12,7 +12,11 @@ import { resolveModule } from '../lean/moduleResolver.js';
 import { validateBlueprint } from './dag.js';
 import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 
-export function buildSkeletonPrompt(theoremStatement) {
+export function buildSkeletonPrompt(theoremStatement, opts = {}) {
+    const prior = (opts.priorChildren ?? []).filter(Boolean);
+    const deepenBlock = prior.length
+        ? `\n\nA previous decomposition into the following lemmas did not suffice (they remain unproved):\n\n${prior.map(s => `- ${s.split('\n').filter(l => l.trim() && !/^\s*import\s/.test(l)).join(' ')}`).join('\n')}\n\nPropose a DIFFERENT decomposition — different lemma boundaries, different helper statements, or a finer/coarser split. Do not repeat the prior children verbatim.`
+        : '';
     return [
         {
             role: 'system',
@@ -20,14 +24,14 @@ export function buildSkeletonPrompt(theoremStatement) {
                 '- Every lemma statement must be a valid standalone Lean statement of the form `lemma <name> : <proposition> := by sorry`.\n' +
                 '- `deps` lists the NAMES of other helper lemmas this one needs; never list a lemma you did not define.\n' +
                 '- `rootDeps` lists the helper-lemma names the theorem itself needs (omit for none).\n' +
-                '- Use UNIQUE lemma names — do NOT reuse names already in mathlib (e.g. `pow_two_pos`, `prime_eq_two_of_even`, `set_infinite_iff_forall_exists_ge`).\n' +
+                '- Use UNIQUE lemma names �?" do NOT reuse names already in mathlib (e.g. `pow_two_pos`, `prime_eq_two_of_even`, `set_infinite_iff_forall_exists_ge`).\n' +
                 '- Prefer descriptive compound names like `twopow_even` or `not_sum_of_prime_and_two_pows`.\n' +
                 '- Return ONLY a JSON object, no prose, no markdown fences.\n' +
                 'Format: {"lemmas":[{"name":"...","statement":"lemma ... := by sorry","deps":["..."]}],"rootDeps":["..."]}'
         },
         {
             role: 'user',
-            content: `Decompose this theorem into kernel-typechecked helper lemma stubs:\n\n${theoremStatement}\n\nReturn the JSON decomposition.`
+            content: `Decompose this theorem into kernel-typechecked helper lemma stubs:\n\n${theoremStatement}${deepenBlock}\n\nReturn the JSON decomposition.`
         }
     ];
 }
@@ -107,7 +111,7 @@ export class SkeletonGenerator {
         return this.backend.check(statement);
     }
 
-    async generate(theoremStatement) {
+    async generate(theoremStatement, opts = {}) {
         const rootStatement = normalizeStub(theoremStatement);
         const rootCheck = await this._tryCheck(rootStatement);
         if (rootCheck.status !== 'verified') {
@@ -124,7 +128,7 @@ export class SkeletonGenerator {
 
         let lastErrors = [];
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-            const outcome = await this._attempt(rootStatement, imports);
+            const outcome = await this._attempt(rootStatement, imports, opts);
             if (outcome.ok) {
                 if (this.outDir) this._write(outcome.blueprint);
                 return outcome;
@@ -134,12 +138,12 @@ export class SkeletonGenerator {
         return { ok: false, error: `decomposition failed after ${this.maxRetries + 1} attempts`, errors: lastErrors, blueprint: null };
     }
 
-    async _attempt(rootStatement, imports = []) {
+    async _attempt(rootStatement, imports = [], opts = {}) {
         const warnings = [];
         let response;
         try {
             const t0 = Date.now();
-            response = await this.llm.complete(buildSkeletonPrompt(rootStatement));
+            response = await this.llm.complete(buildSkeletonPrompt(rootStatement, opts));
             const ms = Date.now() - t0;
             if (ms > 20000) console.log(`[skeleton] slow LLM call: ${(ms/1000).toFixed(1)}s`);
         } catch (err) {

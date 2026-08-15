@@ -21,6 +21,9 @@ import { writeLemmaArtifacts } from '../growth/commit.js';
 import { hashStatement } from '../lean/pin.js';
 import { RunCheckpoint } from '../core/checkpoint.js';
 import { compilePredictorsFromDataset } from '../optimization/causal.js';
+import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
+import { PREMS_STEP_1 } from '../bench/premisesCorpus.js';
+import { mergePremiseCorpora, premisesFromLemmas, loadHarvestFile } from '../search/livePremises.js';
 import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -96,6 +99,26 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         }
     }
 
+    // §5.2 live premise corpus: the retrieval engine (search/premises.js) is wired through
+    // TacticLoop -> SearchEngine -> proposal prompts; this is the corpus source for the LIVE
+    // path — curated kernel-verified base + mission-proved lemmas (statement-name+type) + the
+    // global lemma store (cross-problem transfer) + the #check harvest accumulated by prior
+    // passes. The corpus grows every pass; a pass without --premises leaves it null (inert).
+    if (loopOptions.premisesEnabled && !loopOptions.premises?.length) {
+        const missionProved = (resumeData?.lemmas ?? []).filter(l => l.proof);
+        const storeEntries = effectiveStore.list().map(e => ({ statement: e.statement, proof: e.proofScript ?? 'x' }));
+        const corpus = mergePremiseCorpora([
+            PREMS_STEP_1,
+            premisesFromLemmas(missionProved),
+            premisesFromLemmas(storeEntries),
+            loadHarvestFile(path.join(workDir, 'premise-harvest.jsonl'))
+        ]);
+        if (corpus.length) {
+            loopOptions.premises = corpus;
+            console.log(`[blueprint] live premise corpus: ${corpus.length} premises (curated base + mission-proved + global store + harvest)`);
+        }
+    }
+
     const refiner = new BlueprintRefiner({
         llm,
         backend,
@@ -114,11 +137,12 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     const passSummary = {
         passAt: new Date().toISOString(),
         wallMs: Date.now() - passStartMs,
-        config: { recipe: loopOptions.searchRecipe ?? null, maxTacticsPerGoal: loopOptions.maxTacticsPerGoal ?? null, menu: loopOptions.menu ?? null, exemplars: loopOptions.exemplars ?? null, predictors: loopOptions.predictors?.count ?? null },
+        config: { recipe: loopOptions.searchRecipe ?? null, maxTacticsPerGoal: loopOptions.maxTacticsPerGoal ?? null, menu: loopOptions.menu ?? null, exemplars: loopOptions.exemplars ?? null, predictors: loopOptions.predictors?.count ?? null, searchStructure: loopOptions.searchStructure ?? null, safeLadder: loopOptions.safeLadder ?? null, campaignMemory: loopOptions.campaignMemory ?? null, repair: loopOptions.repair ?? null },
         proved: refined.proved.length,
         unproved: refined.unproved.length,
         roundsRun: refined.rounds.length,
         resplits: refined.rounds.filter(r => r.resplit).length,
+        kernelRejects: refined.rounds.filter(r => /guardrails rejected|KERNEL_REJECTED/.test(r.error ?? '')).length,
         stopReason: refined.stopReason ?? null,
         maxRoundsReached: refined.maxRoundsReached ?? false,
         lemmas: refined.refined.lemmas.length,
@@ -264,7 +288,7 @@ async function main() {
     const theoremFile = argValue(args, '--statement-file=');
     const theorem = theoremFile ? fs.readFileSync(theoremFile, 'utf8').trim() : args.find(a => !a.startsWith('--'));
     if (!theorem) {
-        console.error('usage: node blueprint/run.js --problem=<id> --statement-file=<path> [--fresh] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--recipe=...] [--repulsion] [--menu] [--exemplars] [--ttrl] [--monitor] [--no-repair] [--check-timeout=<ms>] | --list');
+        console.error('usage: node blueprint/run.js --problem=<id> --statement-file=<path> [--fresh] [--max-rounds=<n>] [--max-tactics=<n>] [--max-goals=<n>] [--concurrency=<n>] [--recipe=...] [--repulsion] [--menu] [--exemplars] [--premises] [--ttrl] [--monitor] [--no-repair] [--check-timeout=<ms>] | --list');
         console.error('  --problem: resumes runs/<id>/checkpoint.json when it exists (never overwrites); --fresh starts over by archiving the old dir.');
         console.error('  component toggles default to the registry recommendations in runs/defaults.json (ablation output); flags override.');
         process.exit(2);
@@ -289,10 +313,18 @@ async function main() {
     const exemplars = args.includes('--exemplars') || reg.effectiveValue('exemplars');
     const ttrl = args.includes('--ttrl') || reg.effectiveValue('ttrl');
     const monitor = args.includes('--monitor') || reg.effectiveValue('monitor');
+    const premises = args.includes('--premises') || reg.effectiveValue('premises');
     const repair = !args.includes('--no-repair') && reg.effectiveValue('repair');
+    // searchStructure / safeLadder / campaignMemory are registry components (§5.12): the
+    // ablation writes their recommendations to runs/defaults.json and the live path consumes
+    // them here — a measured searchStructure change propagates to every structure consumer.
+    const searchStructure = argValue(args, '--search-structure=') ?? reg.effectiveValue('searchStructure');
+    const safeLadder = !args.includes('--no-safe-ladder') && reg.effectiveValue('safeLadder');
+    const campaignMemory = !args.includes('--no-campaign-memory') && reg.effectiveValue('campaignMemory');
     // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
-    // chain); 60s is a warm-worker budget only. Default 240s covers the cold case with margin.
-    const checkTimeoutMs = Number(argValue(args, '--check-timeout=') ?? 240_000);
+    // chain); 60s is a warm-worker budget only. Default from the registry (ablation-measurable);
+    // covers the cold case with margin.
+    const checkTimeoutMs = Number(argValue(args, '--check-timeout=') ?? Number(reg.effectiveValue('checkTimeoutMs')));
 
     // The repl pool must survive the COLD mathlib import of the target's statement (the
     // autoformalizer harness uses 180s for the same reason); 60s is a warm-worker budget only.
@@ -321,12 +353,17 @@ async function main() {
             console.log(`[blueprint] warming pool with target imports (cold mathlib import — one-time)`);
             const warmStart = Date.now();
             let warmOk = false;
+            // Warm with the target's imports PLUS the re-split stub tactic modules: the warm env
+            // then covers both the mission imports and the tactic universe child stubs rely on,
+            // so warm-path checks (reuse re-verification, repair, skeleton typechecks) don't fall
+            // back to cold env rebuilds.
+            const warmStatement = `${STUB_TACTIC_MODULES.map(m => `import ${m}`).join('\n')}\n\n${theorem}`;
             // The cold import of module chains is nondeterministic: fresh .olean loads can be
             // 35s or >180s depending on OS file cache. Retry with escalating timeout so a
             // transient slow start doesn't force every subsequent check to pay cold-import.
             for (const timeout of [checkTimeoutMs, checkTimeoutMs * 2]) {
                 try {
-                    await pool.warm(theorem, { timeoutMs: timeout });
+                    await pool.warm(warmStatement, { timeoutMs: timeout });
                     warmOk = true;
                     break;
                 } catch (err) {
@@ -342,7 +379,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, premisesEnabled: premises },
             maxRounds,
             provenance
         });

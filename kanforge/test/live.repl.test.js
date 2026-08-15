@@ -21,7 +21,10 @@ test('live REPL backend round-trip (P0.1 deliverable & P0.3 resilience)', { skip
         replBin: REPL_BIN,
         toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
         concurrency: 2,
-        timeoutMs: 30000
+        timeoutMs: 30000,
+        // Absorb the fresh-process first-elaboration (~1-3 min on a cold box) off the caller's
+        // clock — the pool's own production pattern (warmupStatement in the bench CLI).
+        warmupStatement: 'example : True := by trivial'
     });
 
     try {

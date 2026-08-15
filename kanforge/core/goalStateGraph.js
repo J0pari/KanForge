@@ -18,6 +18,7 @@ export const GOAL_STATE_GRAPH_METHODS = Object.freeze([
     'applyPatch',   // (Patch({op:'tactic'})) -> tacticRecord
     'markFailed',   // (classId) -> void
     'currentGoal',  // (classId) -> freshest concrete goal instance (type/context/proofState)
+    'getClass',     // (classId) -> goal class object | null (recipes read parents/stats through it)
     'getOpenGoals', // () -> open class objects in frontier order
     'isSolved',     // (classId) -> bool (terminating — cycle-guarded)
     'isRootSolved', // () -> bool
@@ -28,7 +29,7 @@ export const GOAL_STATE_GRAPH_METHODS = Object.freeze([
     'getDirectProof',  // (classId) -> proof string | null — the ad-hoc whole-script channel a
                        // multi-line repair writes; the commit gate reads it instead of extracting
     'setDirectProof',  // (classId, proof) -> void — writes the whole-script channel
-    'serialize'     // () -> { rootId, frontier, classes } — resumable shape
+    'serialize'     // () -> { structure, rootId, frontier, classes } — resumable shape
 ]);
 
 // OPTIONAL capabilities (structures may provide them; callers duck-type with typeof):
@@ -61,4 +62,27 @@ export function assertGoalStateGraph(instance, { label = 'goal-state structure' 
         throw new Error(`${label} does not implement the GoalStateGraph contract; missing: ${missing.join(', ')}`);
     }
     return instance;
+}
+
+// Structure factory (architecture.md §2.2, build_order.md §5.12): the single wiring point for
+// the searchStructure component. BOTH structures are asserted against the contract (the
+// incumbent is not exempt — a contract drift must fail here, not deep in the loop), and an
+// unknown structure name fails loudly instead of silently falling back to the incumbent.
+// A future third structure plugs in here and everywhere the contract is consumed.
+export function createGoalStateGraph(searchStructure, { backend = null, oracle = null, rules = null, onUnion = null, normalizer = null } = {}) {
+    if (searchStructure === 'egraph') {
+        return import('./egraph.js').then(({ GoalEGraph, DEFAULT_EGRAPH_RULES }) =>
+            assertGoalStateGraph(new GoalEGraph({
+                oracle: oracle ?? null,
+                rules: rules ?? DEFAULT_EGRAPH_RULES,
+                onUnion
+            }), { label: 'GoalEGraph' })
+        );
+    }
+    if (searchStructure === 'transposition') {
+        return import('./transpositionGraph.js').then(({ GoalTranspositionGraph, lexicalNormalize }) =>
+            assertGoalStateGraph(new GoalTranspositionGraph({ normalizer: normalizer ?? lexicalNormalize }), { label: 'GoalTranspositionGraph' })
+        );
+    }
+    throw new Error(`unknown searchStructure '${searchStructure}'; known: transposition, egraph`);
 }

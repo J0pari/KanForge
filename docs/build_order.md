@@ -178,6 +178,17 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - Drift detection: `blueprint/drift.js` periodically re-hashes stub statements.
 - **Acceptance:** the 10+ lemma development is fully proved bottom-up with no `sorry`; blueprint
   is invariant across the run (statement set unchanged).
+- **Status (live-path hardening, erdos10 mission).** The sequential round became a
+  **frontier-parallel batch**: up to `concurrency − 1` ready stubs are attempted in parallel
+  lanes (pure units — children are returned, never pushed), with a serial merge that applies
+  children, repairs cycles, appends rounds/hash chain, and checkpoints. Lane crashes degrade to
+  failed rounds (no re-split on `extractFailed`); a re-split that adds no new children no longer
+  wipes the stub's existing deps. Ready-pick is descendant-weighted (unblocking power) with
+  topological tiebreak. The deadlock-release path releases up to `lanes` stalled lemmas per
+  batch; retries run a reduced tactic budget (≤4 proposals) and a **deepened re-split** — the
+  stub's existing children are fed back to the skeleton prompt so a failed retry proposes a
+  different decomposition instead of repeating the dead end. `watchdog.mjs` supervises
+  multi-pass runs (per-pass wall cap, zero-progress stop, resume-by-checkpoint).
 
 ### 4.3 Digestion (first cut)
 - Implement `digest/writeup.js`: parse statements/writeups → render proof
@@ -259,6 +270,14 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `tauto_elim` flips FAILED→SOLVED on the first call under both best-of-N and MCGS, and the whole
   set goes 4/5→5/5 at LOWER cost (best-of-N 15→10 calls, MCGS 6→5). Coverage widens recall; for
   arg-less closers that is the whole fix.
+- **Status (live corpus wiring, erdos10 mission).** The ablation corpora were the only corpus
+  source; the live refine path never built one, so the wired retrieval seam
+  (`TacticLoop → SearchEngine → buildPremisePrompt`) ran inert in production. Closed by
+  `search/livePremises.js` + `blueprint/run.js --premises`: curated base + mission-proved lemmas
+  + global lemma store + a `#check` harvest appended after every verified lemma
+  (`runs/<problem>/premise-harvest.jsonl`, re-loaded each pass). A deliberate non-adoption on
+  this axis: a deterministic kernel-try of every import-grounded menu card before the first LLM
+  proposal was declined as redundant with `safeLadder` (architecture.md §10).
 
 ### 5.3 Failure-aware search biasing
 - Use `optimization/causal.js` `getFailurePredictors()` to penalize action sequences known to

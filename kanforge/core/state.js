@@ -148,3 +148,47 @@ export function buildProofSource(statement, script) {
     }
     return text.replace(/:=\s*by\s+sorry\s*$/, ':= ' + String(script).trim());
 }
+
+// Transitive reuse source (§2.8 compression back-reference): a stored proof almost never
+// stands alone — it references its own dependency lemmas. Inlining only the stored lemma makes
+// the combined source fail fresh-env verification (observed as the store_reuse_rejected
+// churn), so this assembles the dependency CLOSURE (each dep's statement + proof, recursively,
+// deepest first) and appends the target stub whose script references the inlined declarations
+// by name. Cycle-guarded, count-capped, and collision-aware: an entry whose declaration name
+// is already present is skipped (duplicate declarations would reject the whole source).
+// The kernel re-verifies the assembled text, so a bad closure costs one check, never truth.
+export function buildReuseSource({ store, statement, proofScript, closureOf = null, includeClosureRoot = false, maxInline = 24 } = {}) {
+    const parts = [];
+    const seen = new Set();
+    const declaredNames = new Set();
+    const targetName = (String(statement).match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/) ?? [])[1] ?? null;
+    if (targetName) declaredNames.add(targetName);
+
+    const inline = (hash, depth) => {
+        if (!hash || seen.has(hash) || depth > 8 || parts.length >= maxInline) return;
+        seen.add(hash);
+        const entry = store?.get?.(hash);
+        if (!entry?.statement || !entry?.proofScript) return;
+        const name = (String(entry.statement).match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/) ?? [])[1];
+        for (const d of entry.dependencies ?? entry.deps ?? []) inline(d, depth + 1);
+        if (name && declaredNames.has(name)) return;
+        if (name) declaredNames.add(name);
+        try {
+            parts.push(buildProofSource(entry.statement, entry.proofScript));
+        } catch {
+            // malformed stored entry — the closure continues without it
+        }
+    };
+
+    if (closureOf) {
+        if (includeClosureRoot) {
+            inline(closureOf, 0);
+        } else {
+            seen.add(closureOf);
+            const entry = store?.get?.(closureOf);
+            for (const d of entry?.dependencies ?? entry?.deps ?? []) inline(d, 1);
+        }
+    }
+    parts.push(buildProofSource(statement, proofScript));
+    return parts.join('\n\n');
+}

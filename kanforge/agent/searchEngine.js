@@ -18,6 +18,7 @@ import { MCGS } from '../search/mcgs.js';
 import { RepulsionSampler } from '../search/repulsion.js';
 import { tacticHead } from '../optimization/causal.js';
 import { buildPremisePrompt } from '../search/premises.js';
+import { runSafeLadder } from '../search/safeLadder.js';
 
 // Timestamped log prefix.
 export function ts() {
@@ -43,7 +44,7 @@ function buildLemmarepairPrompt(statement) {
 }
 
 export class SearchEngine {
-    constructor({ backend, llm, menu = false, maxLlmCalls = null, predictorExploration = 0.02, searchRecipe = 'loop', maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, swissN = 8, repulsion = false, predictors = null, dataset = null, lemmaStore = null, retriever = null, premiseLocked = false, premiseTopK = 5, exemplars = false, exemplarLimit = 3, ttrlPolicy = null, repair = true, store = null, emit }) {
+    constructor({ backend, llm, menu = false, maxLlmCalls = null, predictorExploration = 0.02, searchRecipe = 'loop', maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, swissN = 8, repulsion = false, predictors = null, dataset = null, lemmaStore = null, retriever = null, premiseLocked = false, premiseTopK = 5, exemplars = false, exemplarLimit = 3, ttrlPolicy = null, repair = true, store = null, emit, safeLadder = false, goalMemory = null }) {
         this.backend = backend;
         this.llm = llm;
         this.menu = menu;
@@ -66,6 +67,8 @@ export class SearchEngine {
         this.repair = repair;
         this.store = store; // the run's event store (ttrl observes it)
         this.emit = emit ?? (() => {});
+        this.safeLadder = safeLadder === true; // deterministic kernel-closer ladder before LLM (registry component)
+        this.goalMemory = goalMemory ?? null; // campaign-level goal-shape memory (solved-replay / failure veto)
     }
 
     // Run the search for one lemma. Throws the loop's fail-error contract (lemma_failed is
@@ -144,12 +147,58 @@ export class SearchEngine {
 
             const currentGoalClass = openGoals[0];
             const goal = graph.currentGoal(currentGoalClass.id);
-            emit({ type: 'goal_selected', goalClassId: currentGoalClass.id, goal });
+            emit({ type: 'goal_selected', goalClassId: currentGoalClass.id, goal, depth: currentGoalClass.depth ?? 0 });
             const ctx = (goal.context ?? []).map(c => `${c.name}: ${c.type}`).join('; ');
             console.log(`[${ts()}] [loop] goal_selected ${currentGoalClass.id.slice(0, 10)}… ⊢ ${goal.type.slice(0, 120)}${ctx ? ` | ctx: ${ctx.slice(0, 200)}` : ''}`);
 
             let solved = false;
             let lastResult = null;
+
+            if (this.searchRecipe === 'loop') {
+                // Campaign goal memory + safe ladder (registry components): deterministic,
+                // kernel-grounded paths BEFORE any LLM spend. A replay re-runs a tactic that
+                // solved this exact goal shape in an earlier lemma — still kernel-verified here,
+                // so the memory caches ORDER, never truth. The ladder is a fixed closer
+                // sequence for the trivial arithmetic/logic goals the LLM otherwise
+                // hallucinates identifiers for.
+                const replayTactics = this.goalMemory ? this.goalMemory.solvedBy(goal) : [];
+                for (const t of replayTactics) {
+                    if (this.goalMemory) this.goalMemory.hits.solvedReplay++;
+                    tacticCalls++;
+                    const replayRes = await this.backend.applyTactic(goal, t);
+                    if (replayRes.status === 'ok') {
+                        if (this.goalMemory) this.goalMemory.hits.solvedReplayVerified++;
+                        const rpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: t, scope: 'goal', meta: { via: 'goal-memory', newGoals: replayRes.newGoals } });
+                        const record = await this._applyPatch(graph, rpatch);
+                        emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic: t, via: 'goal-memory', goalType: goal.type, newGoalCount: replayRes.newGoals?.length ?? 0, carriedOver: record.carriedOver.length, created: record.created.length, depth: currentGoalClass.depth ?? 0 });
+                        solved = true;
+                        lastResult = replayRes;
+                        if (isGoalSolved(replayRes)) {
+                            this.goalMemory?.recordSolved(goal, t);
+                            emit({ type: 'goal_solved', goalClassId: currentGoalClass.id, tactic: t, via: 'goal-memory', goalType: goal.type });
+                        }
+                        break;
+                    }
+                    this.goalMemory?.recordFailure(goal, t);
+                }
+
+                if (!solved && this.safeLadder) {
+                    const ladder = await runSafeLadder(goal, this.backend);
+                    tacticCalls += ladder.attempts;
+                    emit({ type: 'ladder_result', goalClassId: currentGoalClass.id, solved: ladder.ok, tactic: ladder.tactic, attempts: ladder.attempts, lastError: ladder.lastError?.message ?? null });
+                    if (ladder.ok) {
+                        const lpatch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: ladder.tactic, scope: 'goal', meta: { via: 'ladder', newGoals: ladder.result.newGoals } });
+                        const record = await this._applyPatch(graph, lpatch);
+                        emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic: ladder.tactic, via: 'ladder', goalType: goal.type, newGoalCount: ladder.result.newGoals?.length ?? 0, carriedOver: record.carriedOver.length, created: record.created.length, depth: currentGoalClass.depth ?? 0 });
+                        solved = true;
+                        lastResult = ladder.result;
+                        if (isGoalSolved(ladder.result)) {
+                            this.goalMemory?.recordSolved(goal, ladder.tactic);
+                            emit({ type: 'goal_solved', goalClassId: currentGoalClass.id, tactic: ladder.tactic, via: 'ladder', goalType: goal.type });
+                        }
+                    }
+                }
+            }
 
             if (this.searchRecipe === 'loop') {
                 // Test-time policy (§6.3): a goal class that keeps failing gets a larger
@@ -161,7 +210,7 @@ export class SearchEngine {
                 // failing window. Rejected tactics skip the kernel call and count as
                 // predictor-skips in telemetry — the LLM is not charged for the prediction.
                 const predictorHistory = [];
-                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                for (let attempt = 1; attempt <= maxAttempts && !solved; attempt++) {
                     if (signal?.aborted) break;
                     if (proposal.budgetExhausted) break;
 
@@ -181,6 +230,25 @@ export class SearchEngine {
 
                     emit({ type: 'tactic_proposed', goalClassId: currentGoalClass.id, attempt, tactic, llmMs: proposed.llmMs, promptTokens: proposed.promptTokens, completionTokens: proposed.completionTokens });
                     console.log(`[${ts()}] [loop] goal ${currentGoalClass.id.slice(0, 10)}… (${goal.type.slice(0, 90)}) attempt ${attempt}/${maxAttempts}: "${tactic}"`);
+
+                    // Campaign goal-memory vetoes (exact-text failures for this goal shape, and
+                    // campaign-wide undeclared identifiers). Not permanent (§6): the
+                    // predictorExploration valve re-tests the counterfactual occasionally.
+                    if (this.goalMemory) {
+                        const memVeto = this.goalMemory.failedTactics(goal).has(tactic)
+                            ? `failed-before:${tactic}`
+                            : (this.goalMemory.referencesUnknownIdentifier(tactic) ? `unknown-identifier:${this.goalMemory.referencesUnknownIdentifier(tactic)}` : null);
+                        if (memVeto) {
+                            if (proposal.shouldExplore(tactic)) {
+                                emit({ type: 'predictor_explored', goalClassId: currentGoalClass.id, attempt, tactic, reason: memVeto });
+                            } else {
+                                predictorSkips++;
+                                this.goalMemory.hits[memVeto.startsWith('unknown') ? 'unknownVeto' : 'failedVeto']++;
+                                emit({ type: 'tactic_predicted_failure', goalClassId: currentGoalClass.id, attempt, tactic, reason: memVeto });
+                                continue;
+                            }
+                        }
+                    }
 
                     // Predictor veto is NOT permanent (§6): with probability
                     // `predictorExploration` the tactic is tried anyway, producing the
@@ -204,18 +272,20 @@ export class SearchEngine {
                     if (result.status === 'error') {
                         console.log(`[${ts()}] [loop]   tactic failed: ${String(result.error?.message ?? 'no message').slice(0, 150)}`);
                         emit({ type: 'tactic_failed', goalClassId: currentGoalClass.id, attempt, tactic, error: result.error?.message ?? 'tactic failed' });
+                        this.goalMemory?.recordFailure(goal, tactic);
                         continue;
                     }
 
                     const patch = new Patch({ op: 'tactic', node: currentGoalClass.id, replacement: tactic, scope: 'goal', meta: { attempt, newGoals: result.newGoals } });
                     const record = await this._applyPatch(graph, patch);
-                    emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic, goalType: goal.type, newGoalCount: result.newGoals?.length ?? 0 });
+                    emit({ type: 'tactic_applied', goalClassId: currentGoalClass.id, tactic, goalType: goal.type, newGoalCount: result.newGoals?.length ?? 0, carriedOver: record.carriedOver.length, created: record.created.length, depth: currentGoalClass.depth ?? 0 });
                     for (const subgoal of record.created) {
                         emit({ type: 'subgoal_created', subgoal });
                     }
 
                     if (isGoalSolved(result)) {
                         solved = true;
+                        this.goalMemory?.recordSolved(goal, tactic);
                         emit({ type: 'goal_solved', goalClassId: currentGoalClass.id, tactic, attempt, via: 'proposal', goalType: goal.type });
                         break;
                     }
@@ -266,9 +336,12 @@ export class SearchEngine {
                     // complete source — bypass applyTactic entirely.
                     if (isMultiLineProof(repairedTactic)) {
                         const fullSource = buildProofSource(statement, `by\n${repairedTactic}`);
-                        const check = await this.backend.check(fullSource, { useWarmEnv: false });
+                        let check = await this.backend.check(fullSource, { useWarmEnv: true });
+                        if (check.status !== 'verified') {
+                            check = await this.backend.check(fullSource, { useWarmEnv: false });
+                        }
                         if (check.status === 'verified') {
-                            const rootClass = graph.classes.get(graph.rootId);
+                            const rootClass = graph.getClass(graph.rootId);
                             if (rootClass) {
                                 rootClass.state = 'SOLVED';
                                 graph.setDirectProof(graph.rootId, `by\n${repairedTactic}`);
@@ -295,11 +368,13 @@ export class SearchEngine {
                         lastResult = repairResult;
 
                         if (isGoalSolved(repairResult)) {
+                            this.goalMemory?.recordSolved(goal, repairedTactic);
                             emit({ type: 'goal_solved', goalClassId: currentGoalClass.id, tactic: repairedTactic, via: 'repair', goalType: goal.type });
                         }
                     } else {
                         console.log(`[${ts()}] [loop]   repair failed: ${String(repairResult.error?.message ?? 'no message').slice(0, 150)}`);
                         emit({ type: 'repair_failed', goalClassId: currentGoalClass.id, tactic: repairedTactic, error: repairResult.error?.message });
+                        this.goalMemory?.recordFailure(goal, repairedTactic);
                     }
                 }
             }
@@ -308,6 +383,7 @@ export class SearchEngine {
                 const attemptsLabel = this.searchRecipe === 'loop' ? this.maxTacticsPerGoal : this.maxTacticsPerGoal;
                 console.log(`[${ts()}] [loop] goal class ${currentGoalClass.id.slice(0, 10)}… UNRESOLVED after ${attemptsLabel} attempts + repair (goal: ${goal.type.slice(0, 120)})`);
                 graph.markFailed(currentGoalClass.id);
+                emit({ type: 'goal_dead_end', goalClassId: currentGoalClass.id, goalType: goal.type, depth: currentGoalClass.depth ?? 0 });
             }
 
             goalCount += lastResult?.newGoals?.length ?? 0;
@@ -322,10 +398,13 @@ export class SearchEngine {
             const proof = resp?.tactic;
             if (proof && isMultiLineProof(proof)) {
                 const fullSource = buildProofSource(statement, `by\n${proof}`);
-                const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
+                let lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: true });
+                if (lemmaCheck.status !== 'verified') {
+                    lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
+                }
                 if (lemmaCheck.status === 'verified') {
                     console.log(`[${ts()}] [loop] lemma-level repair ACCEPTED`);
-                    const rootClass = graph.classes.get(graph.rootId);
+                    const rootClass = graph.getClass(graph.rootId);
                     if (rootClass) {
                         rootClass.state = 'SOLVED';
                         graph.setDirectProof(graph.rootId, `by\n${proof}`);

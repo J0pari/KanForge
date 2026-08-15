@@ -128,8 +128,9 @@ same verification discipline as every lemma.
    nodes with *bodies* (not `sorry`), each kernel-checked, pinned, and committed — the same
    bottom-up, dependency-ordered build as theorem refinement, generalized from claims to
    vocabulary. The autoformalizer never emits a bare symbol: the checked substrate it imports is
-   the only source of vocabulary. The blueprint's `refine` loop picks the lowest unbuilt node
-   regardless of kind; a `def` is "proved" when its body typechecks and its probe examples verify.
+   the only source of vocabulary. The blueprint's `refine` loop picks ready unbuilt nodes
+   (dependencies proved) in descendant-weighted batches and dispatches them as parallel lanes;
+   a `def` is "proved" when its body typechecks and its probe examples verify.
 
 4. **Automation is part of the substrate declaration.** A target's import profile bundles the
    field's decision procedures: which goal shapes `native_decide`/`omega`/`ring`/`linarith`/custom
@@ -208,8 +209,11 @@ and mapped to the code modules below. Each arrow names a data contract.
      │       │    hash-pinned per stub          │
      │       └──────────────────┘               │
      └────────────────────┬────────────────────┘
-                          │ refinement loop: per round, pick lowest unproved stub
-                          │ with all dependencies proved; stalled lemmas wait
+                           │ refinement loop: per round, dispatch a BATCH of up to
+                           │ (concurrency − 1) ready stubs in parallel lanes
+                           │ (descendant-weighted pick; serial merge/checkpoint);
+                           │ stalled lemmas are released in batches and retried
+                           │ with a reduced tactic budget + deepened re-split
                           │
      ┌────────────────────▼────────────────────┐
      │            TACTIC SEARCH LOOP            │
@@ -741,11 +745,23 @@ store.findSimilar(goalShape)       // ranked candidates by goal-shape / trajecto
 
 **Reuse modes in the pipeline.** Exact reuse is the first live mode: `blueprint/refine.js` consults
 the store before spawning the tactic loop and takes the stored proof when the statement hash
-matches — a re-run of an already-proven development costs no LLM or kernel calls. The other three
-modes are staged (build_order.md §5.7): specialization/generalization need the goal-shape and
-binder index to match against; proof-pattern transfer needs the tactic trajectory to be replayed
-against a new goal's context, which the loop's premise/tactic-menu machinery already supports.
-A reuse is always verified by the kernel at commit — retrieval never bypasses verification.
+matches — a re-run of an already-proven development costs no LLM spend, only the single
+re-verification check (memoized per pass). The root-level
+reuse path (`agent/reuseEngine.js`) additionally matches by goal-shape: a stub whose root goal
+normalizes (semanticNormalize) to a stored lemma's conclusion is proved by `exact <stored name>`.
+Both paths assemble their verification source with `buildReuseSource` (`core/state.js`), which
+inlines the stored proof's **dependency closure** — a stored proof references its own lemmas, and
+inlining only the stored lemma made fresh-env re-verification fail (observed as the
+`store_reuse_rejected` churn; measured on the erdos10 mission: ~50 of ~124 unproved stubs had
+conclusions matching a proved lemma). The closure is cycle-guarded, count-capped, and skips
+declaration-name collisions; the kernel re-verifies the assembled text (warm env first, fresh env
+as the authoritative fallback), so a bad closure costs one check, never truth. Reuse rejections
+are memoized per statement hash per pass, so a churned stub does not re-pay the verification
+every round. The other three modes are staged (build_order.md §5.7): specialization/generalization
+need the goal-shape and binder index to match against; proof-pattern transfer needs the tactic
+trajectory to be replayed against a new goal's context, which the loop's premise/tactic-menu
+machinery already supports. A reuse is always verified by the kernel at commit — retrieval never
+bypasses verification.
 
 ---
 
@@ -799,6 +815,23 @@ discovered at scale.
   a check is a single request/response over one worker; on success the worker returns to the
   pool; on crash the worker is replaced and the job retried on a fresh worker (≤ 1 retry per
   job, then it fails loudly).
+- **Worker spawn resilience:** a worker spawn can fail under system memory pressure (observed
+  0xC0000409/1455 failures on a loaded box). Spawn failures retry with backoff (15s, capped) and
+  are logged — the pool never shrinks silently. A missing warm worker starves one-shot checks
+  behind leased sessions, which presents as multi-hour `_acquire` livelock; the retry loop is
+  the recovery path.
+- **Warm-env chaining and re-warm.** One worker is the *warm worker*: the pool warms it with the
+  mission's import block (plus the stub tactic modules, so re-split/skeleton checks stay warm)
+  and captures its env id. Checks with `useWarmEnv: true` continue that session (env `n`) instead
+  of re-importing; a fresh (`env: null`) check rebuilds the environment, invalidates the chain
+  id, and schedules a debounced background re-warm (cancelled by any new request, so cold bursts
+  coalesce into one rebuild in the gap between work, never interleaved with the requests that
+  follow a cold check).
+- **Warm-worker recycling.** The repl retains every environment snapshot forever (its OOM mode).
+  The warm worker therefore recycles after a threshold of fresh-environment builds (cold checks,
+  warm fallbacks, and re-warms alike — anything that runs `env: null`); its replacement spawns
+  and re-warms itself. Threshold is configurable (`coldCheckRecycleThreshold`, default 12) and
+  the recycle skips workers a waiter already reserved.
 - **Kill-on-hang:** every check has a timeout (`scheduler.timeoutMs`); a worker that exceeds it
   is killed and replaced, with exponential backoff on repeated kills of the same worker profile.
 - **Parsing resilience:** JSON-lines output is parsed per-line; a malformed line is skipped,
@@ -939,7 +972,7 @@ The transposition graph structure enables **transposition merging** (research_no
   is the actionable form — it refuses to re-propose already-tried tactics (exact-duplicate penalty)
   and echoes the tried list into the prompt so the generator steers away; `MCGS`/`BestFirstSearch`
   take a `repulsion` flag that skips duplicate kernel re-checks.
-- `premises.js`: relevance scoring over mathlib; `premiseLocked: true` restricts the generator to retrieved premises only.
+- `premises.js`: relevance scoring over mathlib; `premiseLocked: true` restricts the generator to retrieved premises only. The **live corpus source** is `search/livePremises.js`: curated kernel-verified base (step tier) + mission-proved lemmas (name+type parsed from stubs) + the global lemma store + the `#check` harvest accumulated by prior passes. The harvest grows the corpus exactly where the campaign works: after every verified lemma, mathlib names its proof referenced are resolved via warm `#check` (off the merge loop's critical path) and appended to `runs/<problem>/premise-harvest.jsonl`. `blueprint/run.js --premises` builds the corpus at pass start and passes it through `TacticLoop → SearchEngine → proposal prompts` (the retrieval engine was already wired; the corpus seam was the unwired gap).
 - `swiss.js`: Swiss-tournament best-of-n selection (faithful to Open Proof Corpus methodology, arXiv:2506.21621 §5.5): round-robin tournament judged pairwise by the LLM, Bradley-Terry ratings fit by MLE, candidates applied in rating order with kernel-grounded fallthrough. OPC reports +17% improvement over naive best-of-n (26%→43% vs 26%→36%).
 - `bench/ablation.js`: the measurement instrument for §5.7. It has no proof machinery of its
   own: each cell constructs a real `TacticLoop` with the cell's options (the recipe name maps
@@ -1180,10 +1213,22 @@ Two distinct persistence models, not one "checkpoint":
   cache of computed values). It is not a full computation-state checkpoint: uncached/dirty nodes
   are outside its scope, so it alone cannot resume an interrupted development.
 - **Resumable computation state** — `RunCheckpoint` (`core/checkpoint.js`) is the resume record:
-  per-lemma statements, proofs, stalled flags, rounds, and the run hash chain, written to
-  `runs/<problem>/checkpoint.json` after every refine round. `blueprint/run.js --problem=<id>`
-  resumes from it; proved lemmas are restored (and the lemma store's proofs are re-verified, not
-  trusted), stalled lemmas stay stalled. Resume = load + guardrail check 5.
+  per-lemma statements, proofs, stalled flags, rounds, the run hash chain, and the campaign goal
+  memory, written to `runs/<problem>/checkpoint.json` after every refine round.
+  `blueprint/run.js --problem=<id>` resumes from it; proved lemmas are restored (and the lemma
+  store's proofs are re-verified, not trusted), stalled lemmas stay stalled. Resume = load +
+  guardrail check 5. Two per-problem accumulation files ride alongside the checkpoint:
+  `events.jsonl` (the full proposal/outcome trail, appended per event) and
+  `premise-harvest.jsonl` (the §5.2 `#check`-resolved premise corpus, appended per prove —
+  loaded into the next pass's corpus).
+- **Supervised runs** — `watchdog.mjs` is the self-relaunching runner for long missions: it
+  spawns `blueprint/run.js` per pass, captures pass logs (`wdN.log`), kills at a wall-clock cap
+  (default 6h), and relaunches from the checkpoint while unproved lemmas remain, stopping on
+  full proof, `--max-passes`, or `--zero-progress-limit` consecutive no-progress passes (exit
+  codes: 0 = complete, 2 = zero-progress stop, 3 = max passes). The refine loop's
+  `no-ready-lemma`/`dependency-idle` exits are its relaunch cadence, not terminal states — the
+  pass boundary is also the deadlock-release budget boundary (stalled retries are one per lemma
+  per pass).
 
 The in-memory event store (`optimization/store.js`) is bounded and indexed (O(1) id lookup;
 evicted events are counted, and a causal chain queried after eviction starts at its oldest
@@ -1225,9 +1270,10 @@ by role:
 - **Foundations** (generic, unit-tested, no proof assumptions): `core/lazy` (memoized thunk used by
   `PullGraph`), `core/hasher`.
 - **Proof domain** (the contribution that makes this a proof refinery): `core/pullgraph` (proof
-  DAG), `core/transpositionGraph` (goal equivalence classes), `core/state` (tree↔script), `core/scheduler`,
+  DAG), `core/transpositionGraph` (goal equivalence classes), `core/state` (tree↔script +
+  transitive-reuse closure assembly), `core/scheduler`,
   `core/guardrails`, `lean/*` (incl. `goalText`), `agent/*`, `blueprint/*`,
-  `search/*` (incl. `swiss`).
+  `search/*` (incl. `swiss` and `livePremises`), `watchdog.mjs` (supervised multi-pass runner).
 - **Instrumentation / growth / digest**: `optimization/*`, `growth/*`, `digest/*`, `bench/*`
   (incl. `smoke`).
 
@@ -1263,3 +1309,14 @@ for the stated reason; do not re-add without revisiting the reason.
   artifacts and fingerprints, not builds.
 - **Patch operators for program synthesis** (Wave2 §4: inline definition, insert/delete node).
   We prove theorems, not code; only the Lean-relevant subset (§2.7) is used.
+- **Within-goal LLM↔kernel prefetch (software pipelining of proposal i+1 during check i).**
+  Measured against the live workload and declined: proposals are error-free (goal + attempt
+  number only), so prefetch is correct, but ~64% of goals solve on the first proposal — the
+  prefetched second call is wasted spend for the common case (~26s of LLM per goal) against a
+  10–40s latency save only on the failure path. Frontier-parallel lanes (§0.3) already overlap
+  LLM calls of different lemmas with kernel work at the granularity where the overlap pays.
+  Revisit if first-proposal success collapses.
+- **Deterministic tactic-menu card sampler (kernel-try every import-grounded card before the
+  first LLM proposal).** Declined for now as redundant with `safeLadder`: the ladder already
+  occupies the deterministic-closer slot before generation. Revisit when goal-shape data shows
+  shallow goals still reaching proposal 1 with the ladder on.

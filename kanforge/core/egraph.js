@@ -540,8 +540,15 @@ export class GoalEGraph {
             tactics: [],
             stats: { visits: 0, successes: 0, value: 0.0 },
             parents: parentId ? [parentId] : [],
+            depth: parentId ? (this.classes.get(parentId)?.depth ?? 0) + 1 : 0,
             state: 'OPEN'
         };
+    }
+
+    // GoalStateGraph contract: direct class accessor (same role as the transposition graph's —
+    // search recipes read classes through this, never through the raw field).
+    getClass(classId) {
+        return this.classes.get(classId) ?? null;
     }
 
     setRoot(goal) {

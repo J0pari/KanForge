@@ -25,6 +25,9 @@ export const COMPONENTS = {
     monitor: { kind: 'toggle', default: false, recommended: null, label: 'Degeneracy monitors' },
     repair: { kind: 'toggle', default: true, recommended: null, label: 'Error-driven repair' },
     searchStructure: { kind: 'dropdown', options: ['transposition', 'egraph'], default: 'transposition', recommended: null, label: 'Goal-state search structure' },
+    safeLadder: { kind: 'toggle', default: true, recommended: null, label: 'Deterministic kernel-closer ladder' },
+    campaignMemory: { kind: 'toggle', default: true, recommended: null, label: 'Campaign goal-shape memory (replay + veto)' },
+    checkTimeoutMs: { kind: 'slider', min: 60000, max: 600000, step: 30000, default: 240000, recommended: null, label: 'Kernel check timeout (ms)' },
     compressionMetrics: { kind: 'toggle', default: true, recommended: null, label: 'Compression-quality metrics' }
 };
 
