@@ -23,19 +23,22 @@ export class ReuseEngine {
         if (!rootGoal) return null;
         const stored = this.store.findByGoal(rootGoal.type);
         if (!stored?.lemmaName) return null;
-        const combined = buildReuseSource({
-            store: this.store,
-            statement,
-            proofScript: `by exact ${stored.lemmaName}`,
-            closureOf: hashStatement(stored.statement),
-            includeClosureRoot: true
-        });
-        // Warm-first with a fresh fallback: the warm env carries the mission's import block, so
-        // an in-family reuse verifies in seconds. A warm rejection is re-tested on a fresh env
-        // (authoritative for rejection) before the store hit is given up.
-        let check = await this.backend.check(combined, { useWarmEnv: true });
-        if (check.status !== 'verified') {
+        // Degrade chain: full dependency closure first; if the kernel rejects the assembled
+        // source (a foreign stored entry can be malformed), fall back to the stored lemma
+        // alone, then the target alone — each step still kernel-verified. Warm-first with a
+        // fresh fallback: the warm env carries the mission's import block, so an in-family
+        // reuse verifies in seconds; a warm rejection is re-tested fresh (authoritative).
+        const variants = [
+            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement), includeClosureRoot: true }),
+            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement) }),
+            buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}` })
+        ];
+        let check = null;
+        for (const combined of variants) {
+            check = await this.backend.check(combined, { useWarmEnv: true });
+            if (check.status === 'verified') break;
             check = await this.backend.check(combined, { useWarmEnv: false });
+            if (check.status === 'verified') break;
         }
         if (check.status !== 'verified') {
             onReuse?.({ type: 'store_reuse_rejected', lemmaId, error: check.error?.message?.slice(0, 100) ?? 'verification failed' });

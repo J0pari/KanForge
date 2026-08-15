@@ -373,22 +373,19 @@ export class BlueprintRefiner {
                 // Transitive reuse: inline the stored proof's dependency closure (its proof
                 // references sibling lemmas, which must be declared for the fresh-env
                 // verification to pass) — the compression back-reference that turns a known
-                // lemma into a zero-LLM prove.
-                const fullSource = buildReuseSource({
-                    store: this.lemmaStore,
-                    statement: stub.statement,
-                    proofScript: reused.proofScript,
-                    closureOf: stmtHash
-                });
-                // Warm-first: the warm env holds the mission's import block (plus the tactic
-                // modules the pool was warmed with), so a same-statement reuse re-verifies in
-                // seconds. A warm rejection is confirmed once on a fresh env (the rejection is
-                // then memoized per pass — churned stubs must not re-pay the cold check every
-                // round). Acceptance stays kernel-verified either way; the commit gate is the
-                // final fresh authority for anything that gets committed.
-                let reuseCheck = await this.backend.check(fullSource, { useWarmEnv: true });
-                if (reuseCheck.status !== 'verified') {
+                // lemma into a zero-LLM prove. Degrade chain: closure first, target alone if the
+                // assembled source is rejected (a foreign stored dep can be malformed); both
+                // variants kernel-verified, warm-first with fresh authority on rejection.
+                const variants = [
+                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript, closureOf: stmtHash }),
+                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript })
+                ];
+                let reuseCheck = null;
+                for (const fullSource of variants) {
+                    reuseCheck = await this.backend.check(fullSource, { useWarmEnv: true });
+                    if (reuseCheck.status === 'verified') break;
                     reuseCheck = await this.backend.check(fullSource, { useWarmEnv: false });
+                    if (reuseCheck.status === 'verified') break;
                 }
                 if (reuseCheck.status !== 'verified') {
                     this.reuseRejectedThisPass.add(stmtHash);

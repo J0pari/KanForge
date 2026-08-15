@@ -161,8 +161,19 @@ export function buildReuseSource({ store, statement, proofScript, closureOf = nu
     const parts = [];
     const seen = new Set();
     const declaredNames = new Set();
+    const imports = new Set();
     const targetName = (String(statement).match(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)/) ?? [])[1] ?? null;
     if (targetName) declaredNames.add(targetName);
+
+    // A part's statement keeps its OWN import lines out of the combined body: the kernel
+    // rejects `import` anywhere but the top of the source. Every part's imports are hoisted
+    // into one union block at the top instead (deduped, in first-seen order).
+    const splitImports = (src) => {
+        const lines = String(src).split(/\r?\n/);
+        const imps = lines.filter(l => /^\s*import\s+\S/.test(l));
+        for (const i of imps) imports.add(i.trim());
+        return lines.filter(l => !/^\s*import\s+\S/.test(l)).join('\n');
+    };
 
     const inline = (hash, depth) => {
         if (!hash || seen.has(hash) || depth > 8 || parts.length >= maxInline) return;
@@ -174,7 +185,7 @@ export function buildReuseSource({ store, statement, proofScript, closureOf = nu
         if (name && declaredNames.has(name)) return;
         if (name) declaredNames.add(name);
         try {
-            parts.push(buildProofSource(entry.statement, entry.proofScript));
+            parts.push(splitImports(buildProofSource(entry.statement, entry.proofScript)));
         } catch {
             // malformed stored entry — the closure continues without it
         }
@@ -189,6 +200,6 @@ export function buildReuseSource({ store, statement, proofScript, closureOf = nu
             for (const d of entry?.dependencies ?? entry?.deps ?? []) inline(d, 1);
         }
     }
-    parts.push(buildProofSource(statement, proofScript));
-    return parts.join('\n\n');
+    parts.push(splitImports(buildProofSource(statement, proofScript)));
+    return `${[...imports].join('\n')}${imports.size ? '\n\n' : ''}${parts.join('\n\n')}`;
 }

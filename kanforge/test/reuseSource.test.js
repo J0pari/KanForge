@@ -79,3 +79,21 @@ test('missing entries and malformed stubs degrade without throwing', () => {
     const src = buildReuseSource({ store, statement: T, proofScript: 'rfl', closureOf: 'hT' });
     assert.strictEqual(src, buildProofSource(T, 'rfl'));
 });
+
+test('import lines are hoisted to the top exactly once (kernel rejects mid-source imports)', () => {
+    const A_IMP = 'import Mathlib.Data.Nat.Basic\ntheorem a_lem : P := by sorry';
+    const B_IMP = 'import Mathlib.Data.Nat.Basic\nimport Mathlib.Tactic.Linarith\ntheorem b_lem : Q := by sorry';
+    const store = mockStore({
+        hA: { statement: A_IMP, proofScript: 'rfl', dependencies: [] },
+        hB: { statement: B_IMP, proofScript: 'exact a_lem', dependencies: ['hA'] },
+        hT: { statement: 'import Mathlib.Data.Nat.Basic\ntheorem target : R := by sorry', proofScript: 'exact b_lem', dependencies: ['hB'] }
+    });
+    const src = buildReuseSource({ store, statement: 'theorem target : R := by sorry', proofScript: 'exact b_lem', closureOf: 'hT' });
+    const lines = src.split('\n');
+    const importIdx = lines.map((l, i) => /^import /.test(l.trim()) ? i : -1).filter(i => i >= 0);
+    const firstDecl = lines.findIndex(l => /^theorem |^lemma /.test(l.trim()));
+    assert.ok(importIdx.length > 0, 'imports present');
+    assert.ok(importIdx.every(i => i < firstDecl), 'every import above the first declaration');
+    assert.strictEqual(lines.filter(l => l.trim() === 'import Mathlib.Data.Nat.Basic').length, 1, 'deduped union');
+    assert.strictEqual(lines.filter(l => l.trim() === 'import Mathlib.Tactic.Linarith').length, 1);
+});
