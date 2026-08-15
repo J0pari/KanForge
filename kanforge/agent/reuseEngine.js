@@ -8,9 +8,10 @@ import { hashStatement } from '../lean/pin.js';
 import { buildReuseSource } from '../core/state.js';
 
 export class ReuseEngine {
-    constructor({ backend, store = null }) {
+    constructor({ backend, store = null, rejectMemo = null }) {
         this.backend = backend;
         this.store = store;
+        this.rejectMemo = rejectMemo; // shared per-pass set (statement hash -> rejected): churned stubs skip the doomed re-check
     }
 
     // Returns { solved, directProof, lemma } when a stored lemma closes the root goal
@@ -19,15 +20,16 @@ export class ReuseEngine {
     // placeholder name.
     async tryRoot({ statement, lemmaId, graph, onReuse = null }) {
         if (!this.store || graph.isRootSolved()) return null;
+        if (this.rejectMemo?.has(hashStatement(statement))) return null;
         const rootGoal = graph.currentGoal(graph.rootId);
         if (!rootGoal) return null;
         const stored = this.store.findByGoal(rootGoal.type);
         if (!stored?.lemmaName) return null;
         // Degrade chain: full dependency closure first; if the kernel rejects the assembled
         // source (a foreign stored entry can be malformed), fall back to the stored lemma
-        // alone, then the target alone — each step still kernel-verified. Warm-first with a
-        // fresh fallback: the warm env carries the mission's import block, so an in-family
-        // reuse verifies in seconds; a warm rejection is re-tested fresh (authoritative).
+        // alone, then the target alone. FRESH-ONLY: reuse sources carry import lines and the
+        // repl forbids `import` over an env continuation (the warm path can never accept them —
+        // a warm attempt is doomed spend plus a wasted wipe of the warm chain).
         const variants = [
             buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement), includeClosureRoot: true }),
             buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: hashStatement(stored.statement) }),
@@ -35,12 +37,11 @@ export class ReuseEngine {
         ];
         let check = null;
         for (const combined of variants) {
-            check = await this.backend.check(combined, { useWarmEnv: true });
-            if (check.status === 'verified') break;
             check = await this.backend.check(combined, { useWarmEnv: false });
             if (check.status === 'verified') break;
         }
         if (check.status !== 'verified') {
+            this.rejectMemo?.add(hashStatement(statement));
             onReuse?.({ type: 'store_reuse_rejected', lemmaId, error: check.error?.message?.slice(0, 100) ?? 'verification failed' });
             return null;
         }

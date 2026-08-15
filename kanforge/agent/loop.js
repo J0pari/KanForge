@@ -44,7 +44,7 @@ import path from 'node:path';
 export const LOOP_SEARCH_RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'mcgs'];
 
 export class TacticLoop {
-    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition', compressionMetrics = true, safeLadder = false, goalMemory = null } = {}) {
+    constructor({ backend, llm, concurrency = 2, maxTacticsPerGoal = 8, maxGoalsPerLemma = 100, onEvent = null, bus = null, store = null, checkpointDir = null, useSwiss = false, swissN = 8, premises = null, premiseLocked = false, premiseTopK = 5, searchRecipe = 'loop', repulsion = false, predictors = null, monitor = false, exportTo = null, ttrl = false, grpo = false, lemmaStore = null, dataset = null, menu = false, exemplars = false, exemplarLimit = 3, maxLlmCalls = null, writeAuditPacks = true, repair = true, predictorExploration = 0.02, searchStructure = 'transposition', compressionMetrics = true, safeLadder = false, goalMemory = null, reuseRejectMemo = null } = {}) {
         if (!backend || !llm) {
             throw new Error('TacticLoop requires a real backend and a real llm client');
         }
@@ -115,7 +115,7 @@ export class TacticLoop {
 
         // Role split (§4): the loop owns orchestration; these modules own their seams.
         this.session = new ProofSession(this.backend);
-        this.reuse = new ReuseEngine({ backend: this.backend, store: this.lemmaStore });
+        this.reuse = new ReuseEngine({ backend: this.backend, store: this.lemmaStore, rejectMemo: reuseRejectMemo ?? null });
         this.search = new SearchEngine({
             backend: this.backend,
             llm: this.llm,

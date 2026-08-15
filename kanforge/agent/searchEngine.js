@@ -336,10 +336,9 @@ export class SearchEngine {
                     // complete source — bypass applyTactic entirely.
                     if (isMultiLineProof(repairedTactic)) {
                         const fullSource = buildProofSource(statement, `by\n${repairedTactic}`);
-                        let check = await this.backend.check(fullSource, { useWarmEnv: true });
-                        if (check.status !== 'verified') {
-                            check = await this.backend.check(fullSource, { useWarmEnv: false });
-                        }
+                        // Fresh-only: the full source carries import lines, which the repl
+                        // rejects over an env continuation (warm) — see reuseEngine.js.
+                        const check = await this.backend.check(fullSource, { useWarmEnv: false });
                         if (check.status === 'verified') {
                             const rootClass = graph.getClass(graph.rootId);
                             if (rootClass) {
@@ -398,10 +397,9 @@ export class SearchEngine {
             const proof = resp?.tactic;
             if (proof && isMultiLineProof(proof)) {
                 const fullSource = buildProofSource(statement, `by\n${proof}`);
-                let lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: true });
-                if (lemmaCheck.status !== 'verified') {
-                    lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
-                }
+                // Fresh-only: import-bearing source over a continuation env always fails (repl
+                // rule) — the warm attempt is doomed spend plus a wasted warm-chain wipe.
+                const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
                 if (lemmaCheck.status === 'verified') {
                     console.log(`[${ts()}] [loop] lemma-level repair ACCEPTED`);
                     const rootClass = graph.getClass(graph.rootId);

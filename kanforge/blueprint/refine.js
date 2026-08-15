@@ -372,18 +372,18 @@ export class BlueprintRefiner {
             try {
                 // Transitive reuse: inline the stored proof's dependency closure (its proof
                 // references sibling lemmas, which must be declared for the fresh-env
-                // verification to pass) — the compression back-reference that turns a known
+                // verification to pass) �?" the compression back-reference that turns a known
                 // lemma into a zero-LLM prove. Degrade chain: closure first, target alone if the
-                // assembled source is rejected (a foreign stored dep can be malformed); both
-                // variants kernel-verified, warm-first with fresh authority on rejection.
+                // assembled source is rejected (a foreign stored dep can be malformed).
+                // FRESH-ONLY: reuse sources carry import lines and the repl forbids `import`
+                // over an env continuation — the warm path can never accept them. Rejections are
+                // memoized per pass so a churned stub pays the check at most once.
                 const variants = [
                     buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript, closureOf: stmtHash }),
                     buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript })
                 ];
                 let reuseCheck = null;
                 for (const fullSource of variants) {
-                    reuseCheck = await this.backend.check(fullSource, { useWarmEnv: true });
-                    if (reuseCheck.status === 'verified') break;
                     reuseCheck = await this.backend.check(fullSource, { useWarmEnv: false });
                     if (reuseCheck.status === 'verified') break;
                 }
@@ -416,6 +416,7 @@ export class BlueprintRefiner {
             goalMemory: this.loopOptions.goalMemory ?? this.goalMemory,
             lemmaStore: this.lemmaStore ?? this.loopOptions.lemmaStore ?? null,
             dataset: this.dataset ?? this.loopOptions.dataset ?? null,
+            reuseRejectMemo: this.reuseRejectedThisPass ??= new Set(),
             onEvent: e => {
                 lemmaEvents.push(e);
                 this._capture(e, lemmaEvents, stub);
