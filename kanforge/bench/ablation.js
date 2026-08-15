@@ -510,6 +510,11 @@ async function main() {
     // starves its rows: every extractGoals times out at 60s on the cold import with 0 LLM /
     // 0 kernel calls — the all-failed erdos10_frontier run was exactly this.
     const missionLike = set === 'mathlib' || set === 'mission' || set.startsWith('checkpoint:');
+    // Consume the registry's recommended defaults (the failure-taxonomy output surface writes
+    // runs/defaults.json; the live run.js path applies it — the ablation must apply it too or
+    // its own recommendations can never take effect in the next benchmark run).
+    const recommended = loadRecommendedDefaults(path.join(__dirname, '..', 'runs', 'defaults.json'))?.recommendations ?? {};
+    const recCheckTimeout = Number(recommended.checkTimeoutMs ?? 60_000);
     const pool = createBackend({
         type: 'repl',
         replBin: ENV.KANFORGE_REPL_BIN,
@@ -517,8 +522,9 @@ async function main() {
         leanProject: ENV.KANFORGE_LEAN_PROJECT,
         concurrency: 2,
         // Mathlib imports take 5-35s cold (mission statements can take minutes under memory
-        // pressure); the core set is near-instant.
-        timeoutMs: missionLike ? 300_000 : 60_000,
+        // pressure); the core set is near-instant — but a slow/loaded box can blow the core
+        // budget too, which the taxonomy recommendation (checkTimeoutMs) exists to fix.
+        timeoutMs: missionLike ? 300_000 : Math.max(recCheckTimeout, 60_000),
         // Mathlib imports accumulate in the repl until it OOMs; give each problem a fresh process.
         workerPerProblem: missionLike,
         // A fresh repl takes ~60s to elaborate its first command; warm each worker so the first
@@ -564,8 +570,8 @@ async function main() {
             toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
             leanProject: ENV.KANFORGE_LEAN_PROJECT,
             packageRoot: __dirname,
-            components: { recipes, N, overrides },
-            budget: { N, maxLlmCalls, rowTimeoutMs, perCell: 'N candidates, maxLlmCalls wall' }
+            components: { recipes, N, menu: menuEnabled ?? null, premises: premiseConfig?.corpusName ?? null, predictors: predictors?.count ?? null },
+            budget: { N, maxLlmCalls, rowTimeoutMs }
         }),
         leanProject: ENV.KANFORGE_LEAN_PROJECT ?? null,
         promptVersion: null, // prompts are inline in agent/prompts.js; a version constant is §5.8 backlog
