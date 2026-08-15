@@ -25,8 +25,19 @@ export const GOAL_STATE_GRAPH_METHODS = Object.freeze([
     'extractProof', // () -> proof tree | null (root to solved leaves)
     'getStats',     // (classId) -> { visits, successes, value } | null
     'updateValue',  // (classId, value) -> void
+    'getDirectProof',  // (classId) -> proof string | null — the ad-hoc whole-script channel a
+                       // multi-line repair writes; the commit gate reads it instead of extracting
+    'setDirectProof',  // (classId, proof) -> void — writes the whole-script channel
     'serialize'     // () -> { rootId, frontier, classes } — resumable shape
 ]);
+
+// OPTIONAL capabilities (structures may provide them; callers duck-type with typeof):
+//   saturateGoalClass(classId) -> Promise<int> — the e-graph's kernel-confirmed rule
+//     saturation; the transposition graph has none and simply omits the method. The
+//     SearchEngine runs it opportunistically after tactic applications.
+//   serialize()/deserialize must round-trip each structure's own state; the shapes share the
+//     top-level fields but each structure serializes its identity data (canonical keys vs
+//     confirmed-union evidence) independently.
 
 // Static method every structure carries.
 export const GOAL_STATE_GRAPH_STATIC_METHODS = Object.freeze(['deserialize']);

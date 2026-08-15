@@ -51,6 +51,7 @@ import { SMOKE_PROBLEMS, validateSmokeSet } from './smoke.js';
 import { MATHLIB_PROBLEMS } from './mathlibSmoke.js';
 import { STEP_PROBLEMS } from './stepSmoke.js';
 import { MISSION_PROBLEMS } from './missionSmoke.js';
+import { loadCheckpointProblems } from './checkpointSet.js';
 import { PremiseRetriever } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { compilePredictors } from '../optimization/causal.js';
@@ -396,9 +397,10 @@ async function main() {
     const problemsSource = set === 'mathlib' ? MATHLIB_PROBLEMS
         : set === 'step' ? STEP_PROBLEMS
         : set === 'mission' ? MISSION_PROBLEMS
+        : set.startsWith('checkpoint:') ? loadCheckpointProblems(set.slice('checkpoint:'.length))
         : SMOKE_PROBLEMS;
-    if (set !== 'core' && set !== 'mathlib' && set !== 'step' && set !== 'mission') {
-        console.error('unknown problem set; known sets: core, mathlib, step, mission');
+    if (set !== 'core' && set !== 'mathlib' && set !== 'step' && set !== 'mission' && !set.startsWith('checkpoint:')) {
+        console.error('unknown problem set; known sets: core, mathlib, step, mission, checkpoint:<run-dir>');
         process.exit(2);
     }
     const recipes = recipesArg ? recipesArg.split('=')[1].split(',') : RECIPES;
@@ -462,11 +464,12 @@ async function main() {
         // out at 60020ms before the LLM was ever called).
         warmupStatement: 'example : True := by trivial'
     });
-    // Mission-shaped targets carry heavy mathlib imports: warm the pool with the problem's
-    // import block (escalating timeouts — the same discipline as blueprint/run.js) so the
-    // first extractGoals does not pay the cold import INSIDE the measured row. The mission
-    // row that timed out at 600s with 0 llm / 0 kernel calls was exactly this.
-    if (set === 'mission' && pool.warm) {
+    // Mission-shaped targets (mission corpus or a checkpoint's frontier lemmas) carry heavy
+    // mathlib imports: warm the pool with the problem's import block (escalating timeouts —
+    // the same discipline as blueprint/run.js) so the first extractGoals does not pay the cold
+    // import INSIDE the measured row. The mission row that timed out at 600s with 0 llm / 0
+    // kernel calls was exactly this.
+    if ((set === 'mission' || set.startsWith('checkpoint:')) && pool.warm) {
         const warmStmt = problems[0]?.statement?.split('\n')
             .filter(l => /^\s*import\s+\S/.test(l)).join('\n')
             + '\n\nexample : True := by trivial';

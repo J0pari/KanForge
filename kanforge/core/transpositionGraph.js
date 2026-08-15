@@ -275,6 +275,18 @@ export class GoalTranspositionGraph {
         }
     }
 
+    // Whole-script channel (contract): a multi-line repair writes the direct proof here; the
+    // commit gate reads it instead of extracting a tree. `_directProof` is the storage field
+    // behind the accessors — callers use the methods, never the field.
+    getDirectProof(goalClassId) {
+        return this.classes.get(goalClassId)?._directProof ?? null;
+    }
+
+    setDirectProof(goalClassId, proof) {
+        const goalClass = this.classes.get(goalClassId);
+        if (goalClass) goalClass._directProof = proof;
+    }
+
     // The operative concrete goal of a class: the FRESHEST instance. The repl tactic API
     // applies a tactic to the first goal of a proofState, and every tactic application
     // re-reports the remaining frontier under a new proofState — so earlier concrete

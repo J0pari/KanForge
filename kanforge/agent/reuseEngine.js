@@ -29,7 +29,7 @@ export class ReuseEngine {
         const rootClass = graph.classes.get(graph.rootId);
         if (rootClass) {
             rootClass.state = 'SOLVED';
-            rootClass._directProof = `by exact ${stored.lemmaName}`;
+            graph.setDirectProof(graph.rootId, `by exact ${stored.lemmaName}`);
         }
         onReuse?.({ type: 'store_reuse', lemmaId, lemma: stored.lemmaName });
         return { solved: true, directProof: `by exact ${stored.lemmaName}`, lemma: stored.lemmaName };

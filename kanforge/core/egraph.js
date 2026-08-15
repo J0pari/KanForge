@@ -608,6 +608,17 @@ export class GoalEGraph {
         if (gc) gc.state = 'FAILED';
     }
 
+    // Whole-script channel (contract): same semantics as the transposition graph — the
+    // multi-line repair writes here, the commit gate reads here, via the contract methods.
+    getDirectProof(goalClassId) {
+        return this.classes.get(goalClassId)?._directProof ?? null;
+    }
+
+    setDirectProof(goalClassId, proof) {
+        const gc = this.classes.get(goalClassId);
+        if (gc) gc._directProof = proof;
+    }
+
     currentGoal(goalClassId) {
         return this.classes.get(goalClassId)?.goals?.at(-1) ?? null;
     }

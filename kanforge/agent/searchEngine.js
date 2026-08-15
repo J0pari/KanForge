@@ -271,7 +271,7 @@ export class SearchEngine {
                             const rootClass = graph.classes.get(graph.rootId);
                             if (rootClass) {
                                 rootClass.state = 'SOLVED';
-                                rootClass._directProof = `by\n${repairedTactic}`;
+                                graph.setDirectProof(graph.rootId, `by\n${repairedTactic}`);
                             }
                             solved = true;
                             lastResult = { status: 'ok', newGoals: [] };
@@ -328,7 +328,7 @@ export class SearchEngine {
                     const rootClass = graph.classes.get(graph.rootId);
                     if (rootClass) {
                         rootClass.state = 'SOLVED';
-                        rootClass._directProof = `by\n${proof}`;
+                        graph.setDirectProof(graph.rootId, `by\n${proof}`);
                     }
                 } else {
                     console.log(`[${ts()}] [loop] lemma-level repair rejected: ${lemmaCheck.error?.message?.slice(0, 120) ?? 'unknown'}`);

@@ -261,7 +261,6 @@ export class TacticLoop {
             // script → full source), pre-flight, whole-source kernel verify, premise lock, and
             // the HARD guardrail gate (the leakage scan covers the complete source). The gate
             // makes no LLM calls and returns a typed outcome the loop maps to its event stream.
-            const rootClass = graph.classes.get(graph.rootId);
             const gate = await runCommitGate({
                 backend: this.backend,
                 statement,
@@ -270,7 +269,7 @@ export class TacticLoop {
                 currentPin: makePin(statement, this.backend.pin?.() ?? {}),
                 checkPin,
                 graph,
-                directProof: rootClass?._directProof ?? null,
+                directProof: graph.getDirectProof(graph.rootId),
                 premiseLocked: this.premiseLocked,
                 retriever: this.retriever,
                 retrievedPremises: this._retrievedPremises

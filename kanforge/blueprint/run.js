@@ -30,6 +30,11 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     if (!theorem || typeof theorem !== 'string') throw new Error('runBlueprintTheorem requires a theorem statement');
 
     const workDir = outDir ?? path.join(PACKAGE_ROOT, 'runs', `blueprint_${Date.now()}`);
+    const passStartMs = Date.now();
+    // Snapshot for the pass telemetry: how many lemmas were already proved when this pass
+    // started (from the checkpoint, if any).
+    const preCkpt = new RunCheckpoint(workDir);
+    const provedBeforeCount = (preCkpt.load()?.lemmas ?? []).filter(l => l.proof).length;
     // GLOBAL accumulated knowledge (§2.8): the lemma store and training dataset are shared
     // across ALL problems — a lemma proved for problem A is reusable for problem B. Everything
     // else (checkpoint, blueprint, events, digest) is scoped to this problem's workDir.
@@ -101,6 +106,56 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         dataset: effectiveDataset
     });
     const refined = await refiner.refine(generated.blueprint);
+
+    // Pass telemetry (machine-readable, one JSON line per pass): the ablation layer consumes
+    // this series — config, cost, and outcome per pass — for component recommendations and the
+    // amortized-cost curve. Lean by design: counts + config only, the full stream stays in
+    // events.jsonl.
+    const passSummary = {
+        passAt: new Date().toISOString(),
+        wallMs: Date.now() - passStartMs,
+        config: { recipe: loopOptions.searchRecipe ?? null, maxTacticsPerGoal: loopOptions.maxTacticsPerGoal ?? null, menu: loopOptions.menu ?? null, exemplars: loopOptions.exemplars ?? null, predictors: loopOptions.predictors?.count ?? null },
+        proved: refined.proved.length,
+        unproved: refined.unproved.length,
+        roundsRun: refined.rounds.length,
+        resplits: refined.rounds.filter(r => r.resplit).length,
+        stopReason: refined.stopReason ?? null,
+        maxRoundsReached: refined.maxRoundsReached ?? false,
+        lemmas: refined.refined.lemmas.length,
+        provedBefore: provedBeforeCount
+    };
+    fs.appendFileSync(path.join(workDir, 'passes.ndjson'), JSON.stringify(passSummary) + '\n');
+
+    if (!refined.ok) {
+        // DoD (§7.4, build_order "Definition of done (a live pipeline test)"): the digest +
+        // artifacts are the completion record. An incomplete mission gets a STATUS record, not
+        // a digest that would masquerade as a finished result.
+        const status = {
+            state: 'incomplete',
+            proved: refined.proved.length,
+            unproved: refined.unproved.length,
+            stopReason: refined.stopReason ?? null,
+            rounds: refined.rounds.length,
+            savedAt: new Date().toISOString(),
+            workDir
+        };
+        fs.writeFileSync(path.join(workDir, 'mission-status.json'), JSON.stringify(status, null, 2));
+        // Remove any stale digest from an earlier campaign state so the workdir never shows a
+        // finished-looking digest for an unfinished mission.
+        for (const f of ['development.json', 'development.md', 'development.html']) {
+            const p = path.join(workDir, f);
+            if (fs.existsSync(p)) fs.rmSync(p);
+        }
+        return {
+            ok: false,
+            stage: 'refine',
+            refined,
+            blueprint: generated.blueprint,
+            warnings: generated.warnings ?? [],
+            workDir,
+            status
+        };
+    }
 
     // DoD tail (§7.4): assemble + write the development digest (writeup + audit + hash chain),
     // and write every verified lemma's artifacts (statement + proof + audit) into the problem
