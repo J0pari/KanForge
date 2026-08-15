@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hashStatement } from '../lean/pin.js';
 import { stripImports } from '../agent/roles/autoformalizer.js';
-import { resolveModule } from '../lean/moduleResolver.js';
+import { resolveModule, mathlibTreePresent } from '../lean/moduleResolver.js';
 import { validateBlueprint } from './dag.js';
 import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 
@@ -122,8 +122,15 @@ export class SkeletonGenerator {
         // symbols, but extractGoals (the loop's leased session) opens a fresh env (env: null).
         // Prepend the theorem's imports AND the standard tactic-library imports to every stub
         // so they are self-contained and the loop's tactic proposals actually resolve.
+        // Tactic-module grounding mirrors normalize.js's fallback stance: with the mathlib
+        // tree materialized, modules resolve to real files; WITHOUT it, the RAW curated module
+        // names are emitted (grounded by curation, validated by the kernel at use) — stubs
+        // never silently lose their import lines to a resolver that cannot run.
         const theoremImports = extractImports(theoremStatement).split('\n').map(l => l.replace(/^\s*import\s+/, '').trim()).filter(Boolean);
-        const allImports = [...new Set([...theoremImports, ...STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean)])];
+        const groundedTactic = mathlibTreePresent()
+            ? STUB_TACTIC_MODULES.map(resolveModule).filter(Boolean)
+            : STUB_TACTIC_MODULES;
+        const allImports = [...new Set([...theoremImports, ...groundedTactic])];
         const imports = allImports.map(m => `import ${m}`).join('\n');
 
         let lastErrors = [];

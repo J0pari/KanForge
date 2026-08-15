@@ -12,6 +12,13 @@ import { fileURLToPath } from 'node:url';
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const MATHLIB_SRC = path.join(PACKAGE_ROOT, '..', 'lean-project', '.lake', 'packages', 'mathlib', 'Mathlib');
 
+// Whether the pinned mathlib source tree is materialized in this checkout. Grounded resolution
+// (resolveModule) needs it; callers that operate without it must take an explicit fallback
+// stance rather than silently resolving everything to null.
+export function mathlibTreePresent() {
+    return fs.existsSync(path.join(MATHLIB_SRC, 'Init.lean')) || fs.existsSync(path.join(MATHLIB_SRC, 'Mathlib.lean')) || fs.existsSync(MATHLIB_SRC);
+}
+
 // Preferred fallback file names within a module directory, in order.
 const FALLBACKS = ['Defs', 'Basic', 'Init', 'Core'];
 

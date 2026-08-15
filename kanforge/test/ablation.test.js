@@ -387,7 +387,7 @@ test('ablation graph enumerates the full factorial and computes main effects + i
         components: n.components,
         recipes: n.recipes,
         report: {
-            config: { N: 4, maxLlmCalls: 60, provenance: { toolchain: 't', leanProject: 'p', model: 'm', provider: 'o', corpus: 'core' } },
+            config: { N: 4, maxLlmCalls: 60, provenance: { llmProvider: 'mock', model: 'm', runtimeVersion: 'test', leanToolchain: 't', mathlibRev: 'r1', replRev: 'r2', kanforgeCommit: 'c1', components: { recipe: 'loop' }, budget: { N: 4 }, seed: 'none' } },
             perRecipe: [{
                 recipe: n.recipes[0], solved: Math.round(rates[n.mask] * 5), total: 5,
                 passRate: rates[n.mask], passRateCI: wilsonInterval(Math.round(rates[n.mask] * 5), 5),

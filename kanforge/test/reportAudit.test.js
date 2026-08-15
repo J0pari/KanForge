@@ -15,7 +15,7 @@ test('ablation audit passes on a self-consistent report', () => {
         generatedAt: 't',
         config: {
             recipes: ['bestofn', 'mcgs'], N: 4, maxLlmCalls: 60, problemCount: 2,
-            provenance: { toolchain: 't', leanProject: 'p', model: 'm', provider: 'o', corpus: 'core' }
+            provenance: { llmProvider: 'mock', model: 'm', runtimeVersion: 'test', leanToolchain: 't', mathlibRev: 'r1', replRev: 'r2', kanforgeCommit: 'c1', components: { recipe: 'loop' }, budget: { N: 4 }, seed: 'none' }
         },
         perRecipe: [
             { recipe: 'bestofn', solved: 1, total: 2, passRate: 0.5, passRateCI: wilsonInterval(1, 2), llmCalls: 13, tacticCalls: 5, skipped: 1, wallMs: 300, solvedLlmCalls: 5, meanLlmCallsPerSolved: 5, problems: [] },

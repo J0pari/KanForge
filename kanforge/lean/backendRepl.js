@@ -265,8 +265,10 @@ export class BackendRepl {
         // so its env accumulation is unbounded across a long pass. Recycle it after this many
         // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
         // warmup automatically. A long verification sweep can no longer OOM the box.
-        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 30;
+        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 15;
         this.coldChecks = 0;
+        this.warmCheckTotal = 0;
+        this.coldCheckTotal = 0;
         // A fresh repl process takes tens of seconds to elaborate its FIRST command (initial
         // environment build), which otherwise lands on the first caller's clock and trips its
         // timeout before any real work. warmup fires a trivial statement on each worker at
@@ -483,6 +485,11 @@ export class BackendRepl {
         const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
         const maxRetries = opts.maxRetries ?? 1; // crash/hang retries on a fresh worker
         const useWarmEnv = !!opts.useWarmEnv;
+        // Verification-throughput KPI counters (§5.7 KPIs): warm (env continuation) vs cold
+        // (fresh env build) check totals — the warm/cold ratio is the leading indicator of
+        // kernel-import waste. Never reset (unlike the recycle counter).
+        if (useWarmEnv && this.warmEnvId !== null) this.warmCheckTotal++;
+        else this.coldCheckTotal++;
         // A new request cancels a pending background re-warm: the rebuild must run in GAPS
         // between work, not interleave with (and pad) the requests that follow a cold check.
         if (this._rewarmTimer) {
@@ -698,6 +705,8 @@ export class BackendRepl {
             hangs: this.hangs,
             timeouts: this.timeouts,
             parseErrors: this.parseErrors,
+            warmChecks: this.warmCheckTotal,
+            coldChecks: this.coldCheckTotal,
             poolUptime: Date.now() - this.startedAt
         };
     }

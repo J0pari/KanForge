@@ -11,6 +11,7 @@
 
 import { CausalAnalyzer } from '../optimization/causal.js';
 import { wilsonInterval } from './ablation.js';
+import { missingProvenanceKeys, MANDATORY_PROVENANCE_KEYS } from '../core/provenance.js';
 
 // ---------------------------------------------------------------------------
 // Ablation report (bench/ablation.js → report.json)
@@ -95,10 +96,12 @@ export function auditAblationReport(report) {
     }
     ok('pass_rate_ci_recompute', !violations.some(v => v.check === 'pass_rate_ci_recompute'), {});
 
-    // Provenance: a benchmark run must carry the §5.7 provenance block with non-null keys.
+    // Provenance: a benchmark run must carry the MANDATORY §5.7 provenance block
+    // (core/provenance.js): provider/model/runtime, toolchain, mathlib+repl revs, kanforge
+    // commit, component settings, budget, seed. Missing keys are violations, not warnings.
     const prov = report.config?.provenance ?? null;
-    const provMissing = prov ? ['toolchain', 'leanProject', 'model', 'provider', 'corpus'].filter(k => prov[k] == null) : ['entire block'];
-    if (provMissing.length) bad('provenance_present', { missing: provMissing });
+    const provMissing = missingProvenanceKeys(prov);
+    if (provMissing.length) bad('provenance_present', { missing: provMissing, required: [...MANDATORY_PROVENANCE_KEYS] });
     ok('provenance_present', provMissing.length === 0, { missing: provMissing });
 
     // Solved rows carry no error; failed rows carry one. A "solved" row whose error is set, or

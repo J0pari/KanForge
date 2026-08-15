@@ -65,7 +65,10 @@ class DispatchLLM {
     async complete(messages) {
         const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
         if (user.includes('Decompose this theorem into')) {
-            const theorem = user.slice(user.indexOf(':\n\n') + 3).split('\n\nReturn the JSON')[0].trim();
+            // The theorem text sits between the prompt header and the first blank line — robust
+            // to the deepened re-split block (prior children) the retry prompt appends.
+            const body = user.slice(user.indexOf('stubs:\n\n') + 8);
+            const theorem = body.split('\n\n')[0].trim();
             return { text: this.decompose[theorem] ?? JSON.stringify({ lemmas: [], rootDeps: [] }) };
         }
         this.tacticCalls++;

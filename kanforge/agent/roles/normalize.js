@@ -8,7 +8,7 @@
 // (Nat, Int) and keeping quantifier symbols (∃/∀ are valid Lean) avoids the failure, and the
 // module resolver ensures the import itself is valid.
 
-import { resolveModule } from '../../lean/moduleResolver.js';
+import { resolveModule, mathlibTreePresent } from '../../lean/moduleResolver.js';
 import { loadSymbolIndex, querySymbolIndex, SYMBOL_INDEX_CACHE_NAME } from '../../lean/symbolIndex.js';
 import path from 'node:path';
 
@@ -104,11 +104,15 @@ export function defaultSymbolIndex() {
     return _defaultIndex;
 }
 
-// Given a Lean error message, return { symbol, modules, notationFix? } for the first recognized
-// missing symbol, or null. Curated notation fixes take precedence when they exist (they point to
-// the light module AND carry the rewrite — strictly more actionable than the derived module);
-// otherwise the derived index resolves any mathlib symbol mechanically. Modules are resolved to
-// real module names via the module resolver.
+// Given a Lean error message, return { symbol, modules, notationFix?, derived, treeVerified }
+// for the first recognized missing symbol, or null. Curated notation fixes take precedence when
+// they exist (they point to the light module AND carry the rewrite — strictly more actionable
+// than the derived module); otherwise the derived index resolves any mathlib symbol
+// mechanically. Modules are grounded against the materialized mathlib tree when it is present
+// (treeVerified: true). WITHOUT the tree, the curated module names are returned AS-IS —
+// they are authored constants against the pinned mathlib (grounded by curation), never filtered
+// through a resolver that cannot run — and flagged treeVerified: false. The derived index
+// cannot exist without the tree (it is BUILT from it), so derived hits only occur grounded.
 export function suggestImportsForError(message, { index } = {}) {
     const msg = String(message ?? '');
     // Prefer the LONGEST backticked token (e.g. `Finset.sum` over `sum`).
@@ -116,17 +120,19 @@ export function suggestImportsForError(message, { index } = {}) {
     // Explicit `index: null` disables the derived index; the default (undefined) loads the
     // cached index from the lean project.
     const activeIndex = index === undefined ? defaultSymbolIndex() : index;
+    const tree = mathlibTreePresent();
+    const grounded = (names) => tree ? names.map(resolveModule).filter(Boolean) : names;
 
     for (const t of tokens) {
         const curated = SYMBOL_MODULES[t];
         if (curated) {
-            const resolved = curated.modules.map(resolveModule).filter(Boolean);
-            if (resolved.length) return { symbol: t, modules: resolved, notationFix: curated.notationFix ?? null, derived: 0 };
+            const resolved = grounded(curated.modules);
+            if (resolved.length) return { symbol: t, modules: resolved, notationFix: curated.notationFix ?? null, derived: 0, treeVerified: tree };
         }
         const hit = activeIndex ? querySymbolIndex(activeIndex, t) : null;
         if (hit) {
-            const resolved = [hit.module].map(resolveModule).filter(Boolean);
-            if (resolved.length) return { symbol: hit.symbol, modules: resolved, notationFix: null, derived: hit.tier };
+            const resolved = grounded([hit.module]);
+            if (resolved.length) return { symbol: hit.symbol, modules: resolved, notationFix: null, derived: hit.tier, treeVerified: tree };
         }
     }
     if (!activeIndex) {
@@ -134,8 +140,8 @@ export function suggestImportsForError(message, { index } = {}) {
         const qualified = tokens.filter(t => t.includes('.')).sort((a, b) => b.length - a.length)[0];
         const entry = SYMBOL_MODULES[qualified];
         if (entry) {
-            const resolved = entry.modules.map(resolveModule).filter(Boolean);
-            if (resolved.length) return { symbol: qualified, modules: resolved, notationFix: entry.notationFix ?? null, derived: 0 };
+            const resolved = grounded(entry.modules);
+            if (resolved.length) return { symbol: qualified, modules: resolved, notationFix: entry.notationFix ?? null, derived: 0, treeVerified: tree };
         }
     }
     return null;

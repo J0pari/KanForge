@@ -4,6 +4,15 @@
 vocabulary, reward defaults, guardrail spec, Lean backend interface, query API, module inventory.
 Everything else references this document rather than restating it.
 
+**Status vocabulary** (read every capability claim through this lens):
+- **implemented** — ships, exercised by the live path, tests/measured evidence exist.
+- **implemented but experimental** — ships behind a toggle and is measured by the ablation
+  harness; no evidence yet that it wins at equal budget (e.g. the e-graph searchStructure).
+- **instrumented** — quantities are computed and persisted for an external consumer; nothing
+  in-system consumes them as a policy (e.g. the GRPO-shaped trajectory/advantage records — the
+  system has no trainable policy, so "GRPO" here never means a training step).
+- **planned** — a stated design goal without a shipped artifact (see build_order.md and §10).
+
 
 ## 0. The workflow
 
@@ -365,6 +374,16 @@ curve aggregates the per-run points at digest level).
 
 ESM package, `"type": "module"`.
 
+**Source / experiment partition.** The repository contains SOURCE ONLY. All experiment
+artifacts — run checkpoints, event logs, pass telemetry, audit packs, ablation outputs, the
+lemma store, the training dataset — live in an experiment archive OUTSIDE the repository
+(`<parent>/experiments/`), reachable from the package via a filesystem junction at
+`runs/` (the junction is invisible to every relative-path consumer, so code never knows the
+difference). Never commit run directories into the repository; a run directory that
+accidentally enters the tree is moved to `experiments/archive/` before it can be mistaken for
+source or contaminate benchmark provenance. `.gitignore` lists the run/archive patterns as a
+backstop, not as permission to accumulate them.
+
 ```
 kanforge/
   index.js                   # root entry point
@@ -420,7 +439,7 @@ kanforge/
     patterns.js              # degeneracy / reward-hacking monitors (pure function of the event stream)
     exporter.js              # telemetry export (JSONL events + KPI summary sidecar)
     reward.js                # reward function (initial defaults, §6)
-    grpo.js                  # GRPO update harness (trajectories, group advantages, clipped loss)
+    grpo.js                  # GRPO-compatible instrumentation (trajectories, group advantages, clipped-loss quantity; no policy update)
     ttrl.js                  # test-time RL (within-run budget adaptation from outcomes)
   digest/
     writeup.js               # Markdown/HTML with KaTeX
@@ -1008,6 +1027,13 @@ and every comparison cost-normalized:
 - **Reported per cell (where the event stream supports it, else `null` per §6.1):** success rate,
   wall-clock time, LLM calls, Lean (kernel) calls, token usage, proof length — plus confidence
   intervals on the pass rate (binomial/Wilson on `solved/total`) where the cell has ≥ 2 problems.
+- **Verification-throughput KPIs (implemented).** Every pass appends a KPI line
+  (`optimization/kpis.js` → `runs/<problem>/kpis.ndjson`, also embedded in `passes.ndjson`):
+  LLM calls / verified theorem, kernel tactic ops / verified, search wall seconds / verified,
+  repl restarts / verified, goal expansions / verified, reuse hit rate, and the pool's
+  warm/cold check ratio — each recomputed from the event stream + backend health counters, not
+  sampled. The warm/cold ratio is the leading indicator of kernel-import waste; the per-verified
+  costs are the check on "better or merely more expensive".
 - **Component ablation GRAPH, not a ladder** (`bench/ablation.js --ablate=<comps>`). There is no
   known hierarchy of merit among components, and component effects are neither assumed additive
   nor assumed commutative — the experiment must *measure* that. So the design is a factorial graph
@@ -1197,11 +1223,14 @@ accepted-but-not-closed signal). All three are projected from events the loop al
 nothing is synthesized. The per-step `progress` records carry the goal type so a reward model
 can condition on state, not just outcome.
 
-**GRPO records are per-run trainer-consumable data.** `grpo.js` computes trajectories,
-group-relative advantages, and the clipped-surrogate loss over each run's episodes; the refiner
-aggregates them and the development digest persists them (`development.json` + writeup). The
-loss is recorded with the policy probabilities a trainer must supply — the harness computes the
-update quantities, never applies them.
+**GRPO-compatible trajectory/reward instrumentation (NOT GRPO training).** `grpo.js` computes
+trajectories, group-relative advantages, and the clipped-surrogate loss quantity over each run's
+episodes; the refiner aggregates them and the development digest persists them
+(`development.json` + writeup). The loss is recorded as `null` with the reason — the system has
+no trainable policy, so no policy update exists and none is applied. This is
+**instrumentation**: trainer-consumable data in GRPO shape, not a training step. Any wording
+elsewhere that reads as "GRPO training" is aspirational; the implemented artifact is the
+instrumentation only.
 
 ---
 
@@ -1320,3 +1349,12 @@ for the stated reason; do not re-add without revisiting the reason.
   first LLM proposal).** Declined for now as redundant with `safeLadder`: the ladder already
   occupies the deterministic-closer slot before generation. Revisit when goal-shape data shows
   shallow goals still reaching proposal 1 with the ladder on.
+- **SearchStrategy policy split (planned).** `SearchEngine` is the deliberate single owner of
+  the per-lemma search seam today, but it has become a nexus: proposal, budget, retrieval,
+  failure prediction, repair, and diversity all pass through it. The planned consolidation
+  extracts the strategy interface into explicit policy modules —
+  `select_goal / propose / expand / score / terminate` — with independent policies for
+  proposal, budget, retrieval, failure prediction, repair, and diversity, and a global cost
+  model the strategies consult (the KPI layer above is its measurement substrate). No
+  interface change ships until a second structure or recipe demonstrates the seam earns its
+  keep.

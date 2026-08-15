@@ -24,6 +24,8 @@ import { compilePredictorsFromDataset } from '../optimization/causal.js';
 import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 import { PREMS_STEP_1 } from '../bench/premisesCorpus.js';
 import { mergePremiseCorpora, premisesFromLemmas, loadHarvestFile } from '../search/livePremises.js';
+import { assembleProvenance } from '../core/provenance.js';
+import { computePassKpis } from '../optimization/kpis.js';
 import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -62,8 +64,10 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     const eventLogFile = path.join(workDir, 'events.jsonl');
     fs.mkdirSync(workDir, { recursive: true });
     const userOnEvent = loopOptions.onEvent ?? null;
+    const passEvents = []; // in-memory pass slice — the KPI computation reads it, the file persists it
     loopOptions.onEvent = e => {
         fs.appendFileSync(eventLogFile, JSON.stringify(e) + '\n');
+        passEvents.push(e);
         userOnEvent?.(e);
     };
     console.log(`[blueprint] event log -> ${eventLogFile}`);
@@ -133,11 +137,14 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // Pass telemetry (machine-readable, one JSON line per pass): the ablation layer consumes
     // this series — config, cost, and outcome per pass — for component recommendations and the
     // amortized-cost curve. Lean by design: counts + config only, the full stream stays in
-    // events.jsonl.
+    // events.jsonl. Carries the MANDATORY provenance block (§5.7) and the verification-
+    // throughput KPIs (optimization/kpis.js) — a pass row is self-auditable on its own.
     const passSummary = {
         passAt: new Date().toISOString(),
         wallMs: Date.now() - passStartMs,
         config: { recipe: loopOptions.searchRecipe ?? null, maxTacticsPerGoal: loopOptions.maxTacticsPerGoal ?? null, menu: loopOptions.menu ?? null, exemplars: loopOptions.exemplars ?? null, predictors: loopOptions.predictors?.count ?? null, searchStructure: loopOptions.searchStructure ?? null, safeLadder: loopOptions.safeLadder ?? null, campaignMemory: loopOptions.campaignMemory ?? null, repair: loopOptions.repair ?? null },
+        provenance,
+        ...computePassKpis({ events: passEvents, rounds: refined.rounds, backendInfos: typeof backend.getInfos === 'function' ? backend.getInfos() : null }),
         proved: refined.proved.length,
         unproved: refined.unproved.length,
         roundsRun: refined.rounds.length,
@@ -149,6 +156,9 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         provedBefore: provedBeforeCount
     };
     fs.appendFileSync(path.join(workDir, 'passes.ndjson'), JSON.stringify(passSummary) + '\n');
+    // Per-pass KPI series — the verification-throughput curve (§5.7 KPIs): every pass appends
+    // one line so cost-per-verified-theorem trends are readable without replaying events.
+    fs.appendFileSync(path.join(workDir, 'kpis.ndjson'), JSON.stringify(passSummary.passKpis) + '\n');
 
     if (!refined.ok) {
         // DoD (§7.4, build_order "Definition of done (a live pipeline test)"): the digest +
@@ -332,15 +342,28 @@ async function main() {
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
-    // Provenance block (architecture.md §5.7): every development report records the model that
-    // produced it, so a result is attributable and reproducible. The active model is the value of
-    // KANFORGE_LLM_MODEL at run time — flagging it here means a switched model is never ambiguous
-    // in the digest.
+    // Provenance block (§5.7, core/provenance.js): the MANDATORY benchmark block — provider/model/
+    // runtime, toolchain, mathlib+repl revs, kanforge commit, the effective component settings the
+    // run actually used, its budget, and the seed. Carried by the digest AND the per-pass
+    // telemetry (passes.ndjson), so any benchmark row can be tied back to the exact stack.
     const provenance = {
-        toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN ?? null,
+        ...assembleProvenance({
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
+            leanProject: ENV.KANFORGE_LEAN_PROJECT,
+            packageRoot: PACKAGE_ROOT,
+            components: {
+                recipe, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals,
+                maxLlmCalls: Number(reg.effectiveValue('maxLlmCalls')),
+                repulsion, premises, tacticMenu: menu, predictors: reg.effectiveValue('predictors'),
+                exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory,
+                checkTimeoutMs, concurrency
+            },
+            budget: { maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, maxRounds, concurrency, checkTimeoutMs },
+            seed: 'none' // no seeded randomness in the live loop (predictor exploration is unseeded)
+        }),
         leanProject: ENV.KANFORGE_LEAN_PROJECT ?? null,
-        provider: llmConfig.provider ?? null,
-        model: llmConfig.model ?? null,
         promptVersion: null // prompts are inline in agent/prompts.js; a version constant is §5.8 backlog
     };
     console.log(`[blueprint] model: ${llmConfig.provider}/${llmConfig.model} (KANFORGE_LLM_MODEL)`);

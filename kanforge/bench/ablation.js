@@ -57,6 +57,7 @@ import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { compilePredictors } from '../optimization/causal.js';
 import { auditAblationReport } from './reportAudit.js';
 import { saveRecommendedDefaults, loadRecommendedDefaults } from '../config/registry.js';
+import { assembleProvenance, missingProvenanceKeys, MANDATORY_PROVENANCE_KEYS } from '../core/provenance.js';
 
 export const RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
 
@@ -552,12 +553,21 @@ async function main() {
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
-    // Provenance block (§5.7): every run is reproducible from these fields + the report + digest.
+    // Provenance block (§5.7, core/provenance.js): the MANDATORY benchmark block (provider/model/
+    // runtime, toolchain, mathlib+repl revs, kanforge commit, components, budget, seed) plus the
+    // ablation-specific fields (corpus, problem ids). The report audit treats missing mandatory
+    // keys as violations — a result without this block is not a benchmark result.
     const provenance = {
-        toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN ?? null,
+        ...assembleProvenance({
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
+            leanProject: ENV.KANFORGE_LEAN_PROJECT,
+            packageRoot: __dirname,
+            components: { recipes, N, overrides },
+            budget: { N, maxLlmCalls, rowTimeoutMs, perCell: 'N candidates, maxLlmCalls wall' }
+        }),
         leanProject: ENV.KANFORGE_LEAN_PROJECT ?? null,
-        model: llmConfig.model ?? null,
-        provider: llmConfig.provider ?? null,
         promptVersion: null, // prompts are inline in agent/prompts.js; a version constant is §5.8 backlog
         corpus: set,
         problemIds: problems.map(p => p.id)
@@ -838,8 +848,8 @@ export function auditAblationGraph(summary) {
     ok('graph_ci_recompute', !violations.some(v => v.check === 'graph_ci_recompute'), {});
 
     const prov = summary.config?.provenance ?? null;
-    const provMissing = prov ? ['toolchain', 'leanProject', 'model', 'provider', 'corpus'].filter(k => prov[k] == null) : ['entire block'];
-    if (provMissing.length) bad('provenance_present', { missing: provMissing });
+    const provMissing = missingProvenanceKeys(prov);
+    if (provMissing.length) bad('provenance_present', { missing: provMissing, required: [...MANDATORY_PROVENANCE_KEYS] });
     ok('provenance_present', provMissing.length === 0, { missing: provMissing });
 
     // Interaction recompute from node rates (the additivity/commutativity diagnostic).
