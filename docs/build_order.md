@@ -473,6 +473,14 @@ about dead code.
   telemetry exists.
 
 ### 5.7 Lemma store as retrieval index (per `architecture.md` §2.8)
+- **Status update (ranked reuse, live).** The staged specialization/generalization modes are
+  now **implemented**: `LemmaStore.rankByGoal` (BM25 over proved entries, goal+context keyed)
+  + the reuse engine's ranked fallback (top-K candidates through the kernel-verified variant
+  chain, global fresh-check cap) behind the `rankedReuse` registry toggle with `reuseRankLimit`
+  / `reuseRankedChecks` sliders — all ablation-measurable (`--ablate=...,rankedReuse`). Measured
+  opportunity on the erdos10 mission: 100% of exact-miss unproved stubs have a ranked candidate;
+  19 conclusions have multiple store entries the first-inserted exact path never tries. The
+  kernel remains the sole accept authority; ranked candidates are retrieval, never truth.
 The content-addressed `growth/lemmaStore.js` (statement hash → artifact) evolves into a retrieval
 index: theorem proving becomes partly retrieval. Staged so each mode lands with a live consumer and
 a measured effect; retrieval never bypasses kernel verification.

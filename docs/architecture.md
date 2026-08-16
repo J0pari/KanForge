@@ -782,6 +782,18 @@ trajectory to be replayed against a new goal's context, which the loop's premise
 machinery already supports. A reuse is always verified by the kernel at commit — retrieval never
 bypasses verification.
 
+**Ranked-reuse fallback (specialization/generalization, implemented).** When no exact
+conclusion match exists (or the exact candidate's hypotheses do not align and the kernel
+rejects it), the store ranks every proved entry with the same BM25 scorer premise retrieval
+uses (`LemmaStore.rankByGoal`), keyed on goal type + context, and the reuse engine walks the
+top-K candidates through the same variant chain (closure → body-inline), kernel-verified, under
+a global fresh-check cap. Measured on the erdos10 mission: 100% of exact-miss unproved stubs
+have a BM25-ranked candidate, and 19 conclusions have multiple store entries the
+first-inserted-wins exact path never tries. Registry components: `rankedReuse` (toggle),
+`reuseRankLimit` (candidates), `reuseRankedChecks` (fresh-check cap) — all ablation-measurable
+(`--ablate=...,rankedReuse`). Ranked candidates are retrieval, never truth; the kernel remains
+the sole accept authority.
+
 ---
 
 ## 3. Lean backend interface
@@ -1084,9 +1096,10 @@ Components: `recipe` (dropdown: `loop`/`bestofn`/`swiss`/`swiss+repulsion`/`bfs`
 `searchStructure` (dropdown: `transposition`/`egraph`), `maxTacticsPerGoal`,
 `maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`, `premiseLocked`,
 `premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`, `repair`,
-`compressionMetrics` (toggles). A component's `recommended` is `null` until evidence sets it;
-`default` is the safe initial. Components absent from the registry are not configurable by any
-consumer.
+`safeLadder`, `campaignMemory`, `rankedReuse` (toggles), `reuseRankLimit`, `reuseRankedChecks`,
+`checkTimeoutMs` (sliders), `compressionMetrics` (toggles). A component's `recommended` is `null`
+until evidence sets it; `default` is the safe initial. Components absent from the registry are
+not configurable by any consumer.
 
 ---
 

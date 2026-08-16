@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { semanticNormalize } from '../core/transpositionGraph.js';
+import { PremiseRetriever } from '../search/premises.js';
 
 const DATA_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'runs');
 
@@ -129,6 +130,7 @@ export class LemmaStore {
     put(hash, lemmaData) {
         if (typeof hash !== 'string' || !hash) throw new Error('LemmaStore.put requires a hash string');
         this.store.set(hash, lemmaData);
+        this._rankDirty = true;
         const conclusion = extractConclusion(lemmaData?.statement ?? '');
         if (conclusion) {
             const norm = semanticNormalize(conclusion);
@@ -192,6 +194,45 @@ export class LemmaStore {
         const entry = this.store.get(hash);
         if (!entry) return null;
         return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null };
+    }
+
+    // Ranked retrieval for reuse (the §2.8 specialization/generalization modes, live): BM25
+    // (the same scorer premise retrieval uses) over every PROVED entry, scored against the
+    // goal type + context. The exact-match path stays first; this is the fallback that turns
+    // "no identical conclusion" into "the k most relevant proven lemmas, kernel-confirmed".
+    // Ranked candidates are RETRIEVAL, never truth — the reuse engine kernel-verifies each.
+    rankByGoal(goalType, goalContext = [], { limit = 3 } = {}) {
+        if (!this._rankRetriever || this._rankDirty) {
+            const corpus = [];
+            this._rankByName = new Map();
+            for (const entry of this.store.values()) {
+                if (!entry?.proofScript || String(entry.proofScript).includes('sorry')) continue;
+                const stmt = String(entry.statement ?? '')
+                    .split(/\r?\n/)
+                    .filter(l => !/^\s*import\s+\S/.test(l))
+                    .join(' ')
+                    .replace(/:=\s*by\s+sorry\s*$/, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (!stmt) continue;
+                const name = entry.lemmaName ?? '';
+                if (name && !this._rankByName.has(name)) this._rankByName.set(name, entry);
+                corpus.push({ name, type: stmt });
+                if (corpus.length >= 500) break;
+            }
+            this._rankRetriever = new PremiseRetriever(corpus);
+            this._rankDirty = false;
+        }
+        if (!this._rankRetriever) return [];
+        const ranked = this._rankRetriever.retrieve({ type: goalType, context: goalContext ?? [] }, limit);
+        const out = [];
+        for (const r of ranked) {
+            if (r.score <= 0) continue;
+            const entry = this._rankByName.get(r.name);
+            if (!entry) continue;
+            out.push({ score: r.score, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null });
+        }
+        return out;
     }
 
     _load() {

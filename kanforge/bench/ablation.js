@@ -110,6 +110,9 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         repair: overrides.repair ?? true,
         searchStructure: overrides.searchStructure ?? 'transposition',
         safeLadder: overrides.safeLadder ?? false,
+        rankedReuse: overrides.rankedReuse ?? true,
+        reuseRankLimit: overrides.reuseRankLimit ?? 3,
+        reuseRankedChecks: overrides.reuseRankedChecks ?? 4,
         writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
         onEvent: e => { cellEvents.push(e); }
     });
@@ -714,7 +717,7 @@ export function recommendFromRows(report) {
 // 'on' nodes that need external config (premises corpus, predictor file) are skipped when that
 // config is absent. The base node (all toggles off) is always included.
 export function buildAblationGraph(comps, { premiseConfig = null, predictors = null } = {}) {
-    const known = ['tacticMenu', 'premises', 'predictors', 'repulsion', 'exemplars', 'ttrl', 'monitor', 'repair', 'search', 'searchStructure'];
+    const known = ['tacticMenu', 'premises', 'predictors', 'repulsion', 'exemplars', 'ttrl', 'monitor', 'repair', 'search', 'searchStructure', 'rankedReuse'];
     const unknown = comps.filter(c => !known.includes(c));
     if (unknown.length) {
         throw new Error(`unknown ablation component(s): ${unknown.join(', ')}; known: ${known.join(', ')}`);
@@ -741,7 +744,10 @@ export function buildAblationGraph(comps, { premiseConfig = null, predictors = n
                 monitor: !!components.monitor,
                 repair: !!components.repair,
                 // searchStructure 'on' = the e-graph; 'off' = the transposition graph.
-                searchStructure: components.searchStructure ? 'egraph' : 'transposition'
+                searchStructure: components.searchStructure ? 'egraph' : 'transposition',
+                // §2.8 ranked retrieval fallback (specialization/generalization): 'on' = the
+                // BM25-ranked candidate path beyond the exact conclusion match; 'off' = exact only.
+                rankedReuse: !!components.rankedReuse
             },
             premises: components.premises ? premiseConfig : null,
             predictors: components.predictors ? predictors : null

@@ -27,6 +27,9 @@ export const COMPONENTS = {
     searchStructure: { kind: 'dropdown', options: ['transposition', 'egraph'], default: 'transposition', recommended: null, label: 'Goal-state search structure' },
     safeLadder: { kind: 'toggle', default: true, recommended: null, label: 'Deterministic kernel-closer ladder' },
     campaignMemory: { kind: 'toggle', default: true, recommended: null, label: 'Campaign goal-shape memory (replay + veto)' },
+    rankedReuse: { kind: 'toggle', default: true, recommended: null, label: 'Ranked store-reuse fallback (BM25 candidates beyond exact conclusion match)' },
+    reuseRankLimit: { kind: 'slider', min: 1, max: 8, step: 1, default: 3, recommended: null, label: 'Ranked reuse candidates per goal' },
+    reuseRankedChecks: { kind: 'slider', min: 1, max: 8, step: 1, default: 4, recommended: null, label: 'Ranked reuse fresh-check cap per attempt' },
     checkTimeoutMs: { kind: 'slider', min: 60000, max: 600000, step: 30000, default: 240000, recommended: null, label: 'Kernel check timeout (ms)' },
     compressionMetrics: { kind: 'toggle', default: true, recommended: null, label: 'Compression-quality metrics' }
 };
