@@ -455,6 +455,16 @@ export class BackendRepl {
     }
 
     async _checkOnce(statement, timeoutMs, envId = null) {
+        // A pending recycle (threshold crossed while the warm worker was busy) fires HERE, at
+        // the next request's entry point — NOT in the previous request's finally. Firing in the
+        // finally ran BEFORE _doCheck captured the response's env id, resurrecting a warmEnvId
+        // that pointed at the just-killed process ("Unknown environment" for every subsequent
+        // warm check). Retiring at entry runs after that capture; _retire then clears the id.
+        if (this._retirePending && !this._draining) {
+            const victim = this._retirePending;
+            this._retirePending = null;
+            this._retire(victim);
+        }
         // Every env: null request builds a fresh repl environment that the process retains
         // forever (the repl's documented OOM failure mode). This counts cold checks, warm
         // checks falling back to fresh, and background re-warms alike, and recycles the warm
@@ -487,10 +497,6 @@ export class BackendRepl {
             if (worker.isAlive() && !worker._retired) {
                 worker.busy = false;
                 this._wakeWaiters();
-            }
-            if (this._retirePending && worker === this._retirePending) {
-                this._retirePending = null;
-                this._retire(worker);
             }
         }
     }
