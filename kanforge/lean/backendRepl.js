@@ -265,7 +265,7 @@ export class BackendRepl {
         // so its env accumulation is unbounded across a long pass. Recycle it after this many
         // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
         // warmup automatically. A long verification sweep can no longer OOM the box.
-        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 8;
+        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 6;
         this.coldChecks = 0;
         this.warmCheckTotal = 0;
         this.coldCheckTotal = 0;
@@ -462,7 +462,12 @@ export class BackendRepl {
         // _acquire so the retiring worker can never be handed out to this request.
         if (envId === null && !this._draining) {
             this.coldChecks++;
-            if (this.coldChecks >= this.coldCheckRecycleThreshold && this._warmWorker && !this._warmWorker.busy) {
+            if (this.coldChecks >= this.coldCheckRecycleThreshold && this._warmWorker) {
+                // Retire even when busy: the warm worker is ALWAYS busy under sustained load
+                // (one-shot checks serialize on it), and a busy-guard here starves the recycle
+                // — the worker then grows without bound (observed: 3GB on the mission box).
+                // The in-flight request on the retired worker dies with a worker-exit error and
+                // its retry lands on the replacement; memory is reclaimed immediately.
                 this.coldChecks = 0;
                 this._retire(this._warmWorker);
             }
