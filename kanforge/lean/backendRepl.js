@@ -463,13 +463,18 @@ export class BackendRepl {
         if (envId === null && !this._draining) {
             this.coldChecks++;
             if (this.coldChecks >= this.coldCheckRecycleThreshold && this._warmWorker) {
-                // Retire even when busy: the warm worker is ALWAYS busy under sustained load
-                // (one-shot checks serialize on it), and a busy-guard here starves the recycle
-                // — the worker then grows without bound (observed: 3GB on the mission box).
-                // The in-flight request on the retired worker dies with a worker-exit error and
-                // its retry lands on the replacement; memory is reclaimed immediately.
+                // Recycle without killing an in-flight request: the warm worker is ALWAYS busy
+                // under sustained load (a busy-guard starved the recycle — observed 3GB), but
+                // killing it mid-request produced 'repl worker busy'/worker-exit failures in
+                // the lease path. The pending-retire flag fires on the NEXT request completion
+                // (the finally below), so memory is reclaimed within one request and no caller
+                // ever holds a dead worker.
                 this.coldChecks = 0;
-                this._retire(this._warmWorker);
+                if (this._warmWorker.busy) {
+                    this._retirePending = this._warmWorker;
+                } else {
+                    this._retire(this._warmWorker);
+                }
             }
         }
         const worker = await this._acquire(timeoutMs, { lease: false });
@@ -482,6 +487,10 @@ export class BackendRepl {
             if (worker.isAlive() && !worker._retired) {
                 worker.busy = false;
                 this._wakeWaiters();
+            }
+            if (this._retirePending && worker === this._retirePending) {
+                this._retirePending = null;
+                this._retire(worker);
             }
         }
     }
@@ -595,31 +604,42 @@ export class BackendRepl {
     async extractGoals(src, opts = {}) {
         const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
         const key = hashStatement(src);
-        const worker = await this._acquire(timeoutMs, { lease: true });
-        try {
-            const resp = await this._requestOnWorker(worker, { cmd: src, env: null }, { timeoutMs, lease: true });
-            const messages = resp?.messages ?? [];
-            const { errors } = parseLeanMessages(messages);
-            if (errors.length) {
-                const msg = typeof errors[0] === 'string' ? errors[0] : JSON.stringify(errors[0]);
-                console.log(`[${ts()}] [repl-pool] extractGoals parse error: ${msg}`);
-                worker.busy = false;
-                this._wakeWaiters();
-                throw Object.assign(new Error(`extractGoals parse error: ${msg}`), { kind: 'parse-error', messages: errors });
+        // One retry on transient pool-state errors ('repl worker busy' — a reservation race
+        // against the recycle — or 'worker exited' — a dead worker handed out before its
+        // retirement propagated). These are pool hygiene, never statement problems: a second
+        // acquire almost always lands on a healthy worker.
+        let lastErr = null;
+        for (let attempt = 0; attempt <= 1; attempt++) {
+            const worker = await this._acquire(timeoutMs, { lease: true });
+            try {
+                const resp = await this._requestOnWorker(worker, { cmd: src, env: null }, { timeoutMs, lease: true });
+                const messages = resp?.messages ?? [];
+                const { errors } = parseLeanMessages(messages);
+                if (errors.length) {
+                    const msg = typeof errors[0] === 'string' ? errors[0] : JSON.stringify(errors[0]);
+                    console.log(`[${ts()}] [repl-pool] extractGoals parse error: ${msg}`);
+                    worker.busy = false;
+                    this._wakeWaiters();
+                    throw Object.assign(new Error(`extractGoals parse error: ${msg}`), { kind: 'parse-error', messages: errors });
+                }
+                this._sessions.set(key, { worker });
+                const goals = (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
+                if (goals.length === 0 && (resp?.sorries?.length ?? 0) === 0) {
+                    console.log(`[${ts()}] [repl-pool] extractGoals returned 0 sorries for src: ${src.slice(0, 100)}`);
+                }
+                return goals;
+            } catch (err) {
+                if (worker.isAlive() && !worker._retired) {
+                    worker.busy = false;
+                    this._wakeWaiters();
+                }
+                const transient = err?.kind === 'worker-exit' || /repl worker busy/.test(err?.message ?? '');
+                if (!transient || attempt === 1) throw err;
+                lastErr = err;
+                console.log(`[${ts()}] [repl-pool] extractGoals transient pool error (${String(err?.message ?? err).slice(0, 80)}); retrying once`);
             }
-            this._sessions.set(key, { worker });
-            const goals = (resp?.sorries ?? []).map(s => ({ ...goalFromSorry(s), sessionKey: key }));
-            if (goals.length === 0 && (resp?.sorries?.length ?? 0) === 0) {
-                console.log(`[${ts()}] [repl-pool] extractGoals returned 0 sorries for src: ${src.slice(0, 100)}`);
-            }
-            return goals;
-        } catch (err) {
-            if (worker.isAlive() && !worker._retired) {
-                worker.busy = false;
-                this._wakeWaiters();
-            }
-            throw err;
         }
+        throw lastErr ?? new Error('extractGoals failed');
     }
 
     // Apply ONE tactic to ONE goal (§3, §4). Uses the repl tactic API against the goal's
