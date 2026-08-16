@@ -626,6 +626,17 @@ export class GoalEGraph {
         if (gc) gc._directProof = proof;
     }
 
+    // Reuse-prelude channel (§2.8) — same contract as the transposition graph: a
+    // kernel-verified assembled source the commit gate verifies instead of re-assembling.
+    getDirectSource(goalClassId) {
+        return this.classes.get(goalClassId)?._directSource ?? null;
+    }
+
+    setDirectSource(goalClassId, source) {
+        const gc = this.classes.get(goalClassId);
+        if (gc) gc._directSource = source;
+    }
+
     currentGoal(goalClassId) {
         return this.classes.get(goalClassId)?.goals?.at(-1) ?? null;
     }

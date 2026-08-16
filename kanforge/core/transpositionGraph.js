@@ -302,6 +302,21 @@ export class GoalTranspositionGraph {
         if (goalClass) goalClass._directProof = proof;
     }
 
+    // Reuse-prelude channel (§2.8): a kernel-verified ASSEMBLED source (imports + inlined
+    // closure declarations + target) the reuse engine wrote. The commit gate verifies THIS
+    // source instead of re-assembling statement+script — the script alone cannot reference
+    // the inlined declarations, which is exactly the KERNEL_REJECTED class the by-name reuse
+    // paths produced at commit. Optional capability; set by the reuse engine only after the
+    // kernel verified the source fresh.
+    getDirectSource(goalClassId) {
+        return this.classes.get(goalClassId)?._directSource ?? null;
+    }
+
+    setDirectSource(goalClassId, source) {
+        const goalClass = this.classes.get(goalClassId);
+        if (goalClass) goalClass._directSource = source;
+    }
+
     // The operative concrete goal of a class: the FRESHEST instance. The repl tactic API
     // applies a tactic to the first goal of a proofState, and every tactic application
     // re-reports the remaining frontier under a new proofState — so earlier concrete

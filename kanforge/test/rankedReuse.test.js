@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ReuseEngine } from '../agent/reuseEngine.js';
+import { runCommitGate } from '../agent/commitGate.js';
 import { LemmaStore } from '../growth/lemmaStore.js';
-import { hashStatement } from '../lean/pin.js';
+import { hashStatement, makePin, checkPin } from '../lean/pin.js';
 
 const TARGET = 'theorem goal_lem (n : Nat) : Even (2 ^ (2 ^ (n + 1))) := by sorry';
 const A = 'theorem twopow_even_exp (n : Nat) : Even (2 ^ n) := by sorry';
@@ -25,6 +26,9 @@ function mockGraph(rootType, { applyOk = () => true, closer = () => false } = {}
         isRootSolved: () => classes.get(rootId).state === 'SOLVED',
         currentGoal: () => ({ type: classes.get(rootId).goalType ?? rootType, context: [] }),
         setDirectProof: (id, proof) => { classes.get(id).directProof = proof; },
+        getDirectProof: (id) => classes.get(id).directProof ?? null,
+        setDirectSource: (id, src) => { classes.get(id).directSource = src; },
+        getDirectSource: (id) => classes.get(id).directSource ?? null,
         applyPatch: (patch) => {
             if (!applyOk(patch)) return { carriedOver: [], created: 0, subgoalClasses: [] };
             const closes = closer(patch) || (patch.meta?.newGoals?.length ?? 1) === 0;
@@ -58,11 +62,11 @@ test('exact match wins and never consults the ranker', async () => {
     assert.strictEqual(rankedCalled, false, 'ranker must not run when exact matches');
 });
 
-test('session transfer: apply <name> closes via the elaborator (specialization)', async () => {
+test('session transfer: apply <name> closes via the elaborator; closure verifies for commit', async () => {
     const stored = { lemmaName: 'twopow_even_exp', statement: A, proofScript: 'rfl', tacticTrajectory: [] };
     const store = mockStore([stored]);
     const backend = {
-        check: async () => ({ status: 'error', error: { message: 'never reached' } }),
+        check: async () => ({ status: 'verified' }),
         applyTactic: async (goal, tactic) => (tactic === 'apply twopow_even_exp')
             ? { status: 'ok', newGoals: [] }
             : { status: 'error', newGoals: [], error: { message: 'no' } }
@@ -74,6 +78,7 @@ test('session transfer: apply <name> closes via the elaborator (specialization)'
     assert.ok(r, 'apply-transfer should close the goal');
     assert.strictEqual(r.lemma, 'twopow_even_exp');
     assert.strictEqual(graph.classes.get(graph.rootId).state, 'SOLVED');
+    assert.ok(graph.getDirectSource(graph.rootId), 'the kernel-verified assembled source must be recorded for the commit gate');
     assert.ok(events.some(e => e.type === 'store_reuse_transfer' && e.via === 'apply'));
     assert.ok(events.some(e => e.type === 'store_reuse' && e.via === 'exact'));
 });
@@ -85,7 +90,7 @@ test('trajectory replay transfers multi-step reasoning to a new goal', async () 
     };
     const store = mockStore([stored]);
     const backend = {
-        check: async () => ({ status: 'error', error: { message: 'never reached' } }),
+        check: async () => ({ status: 'verified' }),
         applyTactic: async (goal, tactic) => {
             if (tactic === 'intro k') return { status: 'ok', newGoals: [{ type: 'inner' }] };
             if (tactic === 'rw [Nat.pow_two]') return { status: 'ok', newGoals: [] };
@@ -97,6 +102,7 @@ test('trajectory replay transfers multi-step reasoning to a new goal', async () 
     const events = [];
     const r = await engine.tryRoot({ statement: TARGET, lemmaId: 'x', graph, onReuse: e => events.push(e) });
     assert.ok(r, 'trajectory replay should close');
+    assert.ok(graph.getDirectSource(graph.rootId), 'committable assembled source recorded');
     const transfers = events.filter(e => e.type === 'store_reuse_transfer' && e.via === 'trajectory');
     assert.ok(transfers.length >= 2, 'both replay steps should emit transfer events');
 });
@@ -162,6 +168,30 @@ test('reuseTransfer: false skips session ops (inlining-only)', async () => {
     const r = await engine.tryRoot({ statement: TARGET, lemmaId: 'x', graph: mockGraph('Q'), onReuse: () => {} });
     assert.ok(r);
     assert.strictEqual(applied, 0, 'no session tactic may fire with transfer off');
+});
+
+test('commit gate verifies the reuse prelude source when recorded (by-name scripts need the inlined closure)', async () => {
+    const prelude = 'import Mathlib.Data.Nat.Basic\n\ntheorem dep_lem : P := by rfl\n\ntheorem goal_lem : P := by exact dep_lem';
+    const backend = {
+        verifyProof: async (source) => source === prelude
+            ? { status: 'verified' }
+            : { status: 'error', error: { message: "Unknown identifier `dep_lem`" } }
+    };
+    const pin = makePin('theorem goal_lem : P := by sorry', { toolchain: 'mock', normVersion: 1 });
+    const graph = { extractProof: () => null };
+    const gate = await runCommitGate({
+        backend,
+        statement: 'theorem goal_lem : P := by sorry',
+        lemmaId: 'x',
+        pin,
+        currentPin: pin,
+        checkPin,
+        graph,
+        directProof: 'by exact dep_lem',
+        directSource: prelude
+    });
+    assert.strictEqual(gate.ok, true, 'the assembled prelude source must be the verified source');
+    assert.strictEqual(gate.proofScript, 'by exact dep_lem');
 });
 
 test('LemmaStore.rankByGoal ranks relevant entries and invalidates on put', () => {

@@ -133,16 +133,20 @@ export class ReuseEngine {
 
     // One candidate through the full transfer chain: session transfer first (cheap — the
     // elaborator instantiates binders by unification), then the source-inline variants
-    // (authoritative whole-source verification). Returns { result, checks }.
+    // (authoritative whole-source verification). A session-close alone is NOT committable:
+    // the commit gate re-verifies a complete source and the transferred name is not in scope
+    // there — so every accepted path records the kernel-verified ASSEMBLED source as the
+    // direct source (the commit gate verifies it instead of re-assembling). Returns
+    // { result, checks, transferOps }.
     async _tryCandidate({ statement, stored, graph, lemmaId, onReuse, maxChecks = 4 }) {
         // Mode 1+2 first: session ops are ~seconds; source checks are 30-200s fresh builds.
         const transfer = await this._tryTransfer({ stored, graph, lemmaId, onReuse, budget: TRANSFER_OPS.length + this.maxTransferOps });
-        if (transfer.result) return { result: transfer.result, checks: 0, transferOps: transfer.transferOps };
 
         const storedHash = hashStatement(stored.statement);
         // Each variant pairs its assembled source with the directProof the commit gate must
         // record when THAT variant verifies: the by-name variants reference the stored lemma;
         // the body variants inline the stored proof, so their directProof is the proof itself.
+        // The verified source itself is recorded as the directSource (reuse prelude).
         const variants = [
             { source: buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: storedHash, includeClosureRoot: true }), directProof: `by exact ${stored.lemmaName}` },
             { source: buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript, closureOf: storedHash }), directProof: stored.proofScript },
@@ -159,12 +163,17 @@ export class ReuseEngine {
                 if (rootClass) {
                     rootClass.state = 'SOLVED';
                     graph.setDirectProof(graph.rootId, v.directProof);
+                    if (typeof graph.setDirectSource === 'function') graph.setDirectSource(graph.rootId, v.source);
                 }
                 return { result: { solved: true, directProof: v.directProof, lemma: stored.lemmaName }, checks, transferOps: transfer.transferOps };
             }
             this.lastRejectError = check.error ?? null;
             this._recordUnknownIdentifier(check.error);
         }
+        // The session transfer may have closed the root in-graph, but without a verified
+        // committable source the commit gate would reject the by-name script. No variant
+        // verified -> the candidate fails; the graph's in-session progress is discarded by the
+        // caller's failed lemma anyway.
         return { result: null, checks, transferOps: transfer.transferOps };
     }
 }

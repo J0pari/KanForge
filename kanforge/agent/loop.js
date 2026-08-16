@@ -268,6 +268,7 @@ export class TacticLoop {
                 checkPin,
                 graph,
                 directProof: graph.getDirectProof(graph.rootId),
+                directSource: typeof graph.getDirectSource === 'function' ? graph.getDirectSource(graph.rootId) : null,
                 premiseLocked: this.premiseLocked,
                 retriever: this.retriever,
                 retrievedPremises: this._retrievedPremises

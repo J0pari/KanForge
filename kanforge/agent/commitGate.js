@@ -22,6 +22,7 @@ export async function runCommitGate({
     checkPin,
     graph,
     directProof,
+    directSource = null,
     premiseLocked = false,
     retriever = null,
     retrievedPremises = null
@@ -41,7 +42,12 @@ export async function runCommitGate({
         return { ok: false, kind: 'proof_extraction_failed', message: 'proof extraction failed' };
     }
     const proofScript = directProof ?? straighten(proofTree).script;
-    const source = buildProofSource(statement, proofScript);
+    // Reuse-prelude (§2.8): when the reuse engine already kernel-verified an ASSEMBLED source
+    // (imports + inlined closure + target), the gate verifies THAT source — re-assembling
+    // statement+script would lose the inlined declarations and reject the very proof the reuse
+    // check verified (the KERNEL_REJECTED class of the by-name paths). The gate's authority is
+    // unchanged: it still runs the kernel over a complete source, just the complete one.
+    const source = directSource ?? buildProofSource(statement, proofScript);
 
     // Whole-source kernel verification — ONE call on the leased session worker. (An extra
     // stateless `check` here would need a second pool worker while the session holds its
