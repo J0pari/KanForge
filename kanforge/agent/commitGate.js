@@ -53,7 +53,16 @@ export async function runCommitGate({
     // stateless `check` here would need a second pool worker while the session holds its
     // lease — a self-inflicted pool block on single-worker configurations. The verify result
     // carries the compose errors just as well; the source head is logged with any failure.)
-    const verification = await backend.verifyProof(source, lemmaId);
+    // A parse-class rejection on a WELL-FORMED source is a transient repl artifact (observed
+    // on the mission box under kill/recycle churn: `unexpected token '+'` on trivial sources
+    // that extractGoals accepted) — retry once before treating it as a real rejection.
+    let verification = await backend.verifyProof(source, lemmaId);
+    if (verification.status !== 'verified') {
+        const msg = String(verification.error?.message ?? verification.error ?? '');
+        if (/unexpected token|syntax|parse error|expected token/i.test(msg)) {
+            verification = await backend.verifyProof(source, lemmaId);
+        }
+    }
 
     // Premise-lock gate (build_order.md §5.2): when locked, the proof may only reference
     // premises that were actually retrieved for this lemma.
