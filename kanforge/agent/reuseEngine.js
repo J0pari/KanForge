@@ -8,10 +8,18 @@ import { hashStatement } from '../lean/pin.js';
 import { buildReuseSource } from '../core/state.js';
 
 export class ReuseEngine {
-    constructor({ backend, store = null, rejectMemo = null }) {
+    constructor({ backend, store = null, rejectMemo = null, goalMemory = null }) {
         this.backend = backend;
         this.store = store;
         this.rejectMemo = rejectMemo; // shared per-pass set (statement hash -> rejected): churned stubs skip the doomed re-check
+        this.goalMemory = goalMemory; // campaign goal memory: reuse-level rejections feed the unknown-identifier veto channel
+    }
+
+    _recordUnknownIdentifier(error) {
+        if (!this.goalMemory) return;
+        const msg = String(error?.message ?? error ?? '');
+        const m = /[Uu]nknown (?:identifier|constant) [`']?([A-Za-z0-9_.']+)/.exec(msg);
+        if (m?.[1]) this.goalMemory.recordUnknownIdentifier(m[1]);
     }
 
     // Returns { solved, directProof, lemma } when a stored lemma closes the root goal
@@ -48,6 +56,11 @@ export class ReuseEngine {
         }
         if (check.status !== 'verified') {
             this.rejectMemo?.add(hashStatement(statement));
+            // The kernel's rejection reason is campaign-scoped evidence: an undeclared
+            // identifier here means every future tactic referencing it is vetoed before
+            // kernel spend (the commit gate's channel — fed here too, since reuse rejects
+            // BEFORE the commit gate ever runs).
+            this._recordUnknownIdentifier(check.error);
             onReuse?.({ type: 'store_reuse_rejected', lemmaId, error: check.error?.message?.slice(0, 100) ?? 'verification failed' });
             return null;
         }

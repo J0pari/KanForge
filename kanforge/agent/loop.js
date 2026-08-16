@@ -115,7 +115,7 @@ export class TacticLoop {
 
         // Role split (§4): the loop owns orchestration; these modules own their seams.
         this.session = new ProofSession(this.backend);
-        this.reuse = new ReuseEngine({ backend: this.backend, store: this.lemmaStore, rejectMemo: reuseRejectMemo ?? null });
+        this.reuse = new ReuseEngine({ backend: this.backend, store: this.lemmaStore, rejectMemo: reuseRejectMemo ?? null, goalMemory: goalMemory ?? null });
         this.search = new SearchEngine({
             backend: this.backend,
             llm: this.llm,

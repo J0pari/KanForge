@@ -389,6 +389,11 @@ export class BlueprintRefiner {
                 }
                 if (reuseCheck.status !== 'verified') {
                     this.reuseRejectedThisPass.add(stmtHash);
+                    // Campaign-scoped evidence: an undeclared identifier at the reuse check
+                    // feeds the goal-memory veto channel (the commit gate is never reached for
+                    // reuse rejections, so the harvest must happen here too).
+                    const idm = /[Uu]nknown (?:identifier|constant) [`']?([A-Za-z0-9_.']+)/.exec(String(reuseCheck.error?.message ?? ''));
+                    if (idm?.[1]) this.goalMemory?.recordUnknownIdentifier(idm[1]);
                 }
                 if (reuseCheck.status === 'verified') {
                     stub.proof = reused.proofScript;
