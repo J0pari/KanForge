@@ -11,7 +11,6 @@
 // accept authority for every mode.
 import { hashStatement } from '../lean/pin.js';
 import { buildReuseSource } from '../core/state.js';
-import { Patch } from '../core/patch.js';
 
 const TRANSFER_OPS = [
     { name: 'exact', tactic: n => `exact ${n}`, via: 'exact' },
@@ -52,7 +51,7 @@ export class ReuseEngine {
         // Path A: exact normalized-conclusion match (cheapest, proven path).
         const stored = this.store.findByGoal(rootGoal.type);
         if (stored?.lemmaName) {
-            const hit = await this._tryCandidate({ statement, stored, graph, lemmaId, onReuse });
+            const hit = await this._tryCandidate({ statement, stored, graph, lemmaId, onReuse, rootGoal });
             if (hit?.result) {
                 onReuse?.({ type: 'store_reuse', lemmaId, lemma: stored.lemmaName, via: 'exact' });
                 return hit.result;
@@ -68,7 +67,7 @@ export class ReuseEngine {
             let checks = 0;
             for (const cand of ranked) {
                 if (!cand.lemmaName || cand.lemmaName === stored?.lemmaName) continue;
-                const hit = await this._tryCandidate({ statement, stored: cand, graph, lemmaId, onReuse, maxChecks: Math.max(1, this.maxRankedChecks - checks) });
+                const hit = await this._tryCandidate({ statement, stored: cand, graph, lemmaId, onReuse, rootGoal, maxChecks: Math.max(1, this.maxRankedChecks - checks) });
                 checks += hit?.checks ?? 0;
                 if (hit?.result) {
                     onReuse?.({ type: 'store_reuse', lemmaId, lemma: cand.lemmaName, via: 'ranked', score: cand.score });
@@ -86,49 +85,50 @@ export class ReuseEngine {
 
     // Session transfer (mode 1+2): apply the stored lemma to the LIVE root goal via the
     // leased proof session — `exact <name>` / `apply <name>` / `rw [<name>]`, then the stored
-    // proof's tactic trajectory, kernel-checked per step. Tactic applications flow through the
-    // graph contract (Patch records), so a transfer that decomposes the root into subgoals is
-    // PROGRESS the search continues on, and a transfer that closes it is a full proof.
-    // Returns { result, transferOps } — result set only when the root closed.
-    async _tryTransfer({ stored, graph, lemmaId, onReuse, budget }) {
+    // proof's tactic trajectory, kernel-checked per step. DETECTION ONLY: this phase never
+    // mutates the goal graph (no patches, no state flips) — a transfer that closes in-session
+    // still must verify a committable source variant, and a failed candidate must leave the
+    // graph exactly as the caller's search expects it. Proof-state chaining is tracked locally
+    // (frontier-head discipline, the same the loop's open[0] uses), stopping at divergence.
+    // Returns { solved, transferOps } — solved is advisory; the variant loop decides the result.
+    async _tryTransfer({ stored, lemmaId, onReuse, budget, rootGoal }) {
         const name = stored.lemmaName;
         let ops = 0;
-        const applyOne = async (tactic, via) => {
+        let current = rootGoal;
+        const applyOne = async (tactic, via, { continueOnFail = false } = {}) => {
             if (ops >= budget) return { stop: true };
             ops++;
-            const goal = graph.currentGoal(graph.rootId);
-            if (!goal) return { stop: true };
-            const res = await this.backend.applyTactic(goal, tactic);
+            const res = await this.backend.applyTactic(current, tactic);
             if (res.status !== 'ok') {
                 this._recordUnknownIdentifier(res.error);
-                return { stop: false };
+                onReuse?.({ type: 'store_reuse_transfer', lemmaId, lemma: name, tactic, via, ok: false, newGoals: 0 });
+                // Fixed operators are independent attempts on the ORIGINAL goal — a failed
+                // `exact` must not prevent trying `apply`. Trajectory steps chain proof states,
+                // so their failure is divergence: stop.
+                return { stop: !continueOnFail };
             }
-            const record = graph.applyPatch(new Patch({ op: 'tactic', node: graph.rootId, replacement: tactic, scope: 'goal', meta: { via: 'reuse-transfer', lemma: name, transferVia: via, newGoals: res.newGoals ?? [] } }));
-            onReuse?.({ type: 'store_reuse_transfer', lemmaId, lemma: name, tactic, via, newGoals: res.newGoals?.length ?? 0, ok: true });
-            if (graph.isRootSolved()) {
+            onReuse?.({ type: 'store_reuse_transfer', lemmaId, lemma: name, tactic, via, ok: true, newGoals: res.newGoals?.length ?? 0 });
+            if ((res.newGoals?.length ?? 0) === 0) {
                 return { stop: true, solved: true };
             }
+            current = { ...res.newGoals[0], type: res.newGoals[0].type, context: res.newGoals[0].context ?? [], sessionKey: current?.sessionKey };
             return { stop: false };
         };
 
         if (this.reuseTransfer) {
             for (const op of TRANSFER_OPS) {
-                const r = await applyOne(op.tactic(name), op.via);
-                if (r.stop) {
-                    if (r.solved) return { result: { solved: true, lemma: name }, transferOps: ops };
-                    return { result: null, transferOps: ops };
-                }
+                current = rootGoal; // each operator is an independent attempt on the ORIGINAL goal
+                const r = await applyOne(op.tactic(name), op.via, { continueOnFail: true });
+                if (r.stop) return { solved: r.solved === true, transferOps: ops };
             }
-            const trajectory = stored.tacticTrajectory ?? (stored.entry?.tacticTrajectory ?? []);
+            current = rootGoal; // the trajectory replays from the original goal
+            const trajectory = stored.tacticTrajectory ?? [];
             for (const t of trajectory.slice(0, this.maxTransferOps)) {
                 const r = await applyOne(t, 'trajectory');
-                if (r.stop) {
-                    if (r.solved) return { result: { solved: true, lemma: name }, transferOps: ops };
-                    return { result: null, transferOps: ops };
-                }
+                if (r.stop) return { solved: r.solved === true, transferOps: ops };
             }
         }
-        return { result: null, transferOps: ops };
+        return { solved: false, transferOps: ops };
     }
 
     // One candidate through the full transfer chain: session transfer first (cheap — the
@@ -138,9 +138,9 @@ export class ReuseEngine {
     // there — so every accepted path records the kernel-verified ASSEMBLED source as the
     // direct source (the commit gate verifies it instead of re-assembling). Returns
     // { result, checks, transferOps }.
-    async _tryCandidate({ statement, stored, graph, lemmaId, onReuse, maxChecks = 4 }) {
+    async _tryCandidate({ statement, stored, graph, lemmaId, onReuse, maxChecks = 4, rootGoal = null }) {
         // Mode 1+2 first: session ops are ~seconds; source checks are 30-200s fresh builds.
-        const transfer = await this._tryTransfer({ stored, graph, lemmaId, onReuse, budget: TRANSFER_OPS.length + this.maxTransferOps });
+        const transfer = await this._tryTransfer({ stored, lemmaId, onReuse, budget: TRANSFER_OPS.length + this.maxTransferOps, rootGoal });
 
         const storedHash = hashStatement(stored.statement);
         // Each variant pairs its assembled source with the directProof the commit gate must
