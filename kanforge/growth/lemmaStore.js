@@ -193,7 +193,7 @@ export class LemmaStore {
         if (!hash) return null;
         const entry = this.store.get(hash);
         if (!entry) return null;
-        return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null };
+        return { statementHash: hash, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null, tacticTrajectory: entry.tacticTrajectory ?? [] };
     }
 
     // Ranked retrieval for reuse (the §2.8 specialization/generalization modes, live): BM25
@@ -230,7 +230,7 @@ export class LemmaStore {
             if (r.score <= 0) continue;
             const entry = this._rankByName.get(r.name);
             if (!entry) continue;
-            out.push({ score: r.score, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null });
+            out.push({ score: r.score, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null, tacticTrajectory: entry.tacticTrajectory ?? [] });
         }
         return out;
     }

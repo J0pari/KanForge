@@ -334,6 +334,8 @@ async function main() {
     const rankedReuse = !args.includes('--no-ranked-reuse') && reg.effectiveValue('rankedReuse');
     const reuseRankLimit = Number(reg.effectiveValue('reuseRankLimit'));
     const reuseRankedChecks = Number(reg.effectiveValue('reuseRankedChecks'));
+    const reuseTransfer = !args.includes('--no-reuse-transfer') && reg.effectiveValue('reuseTransfer');
+    const maxTransferOps = Number(reg.effectiveValue('maxTransferOps'));
     // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
     // chain); 60s is a warm-worker budget only. Default from the registry (ablation-measurable);
     // covers the cold case with margin.
@@ -361,7 +363,7 @@ async function main() {
                 maxLlmCalls: Number(reg.effectiveValue('maxLlmCalls')),
                 repulsion, premises, tacticMenu: menu, predictors: reg.effectiveValue('predictors'),
                 exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory,
-                rankedReuse, reuseRankLimit, reuseRankedChecks,
+                rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps,
                 checkTimeoutMs, concurrency
             },
             budget: { maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, maxRounds, concurrency, checkTimeoutMs },
@@ -406,7 +408,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, premisesEnabled: premises },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, premisesEnabled: premises },
             maxRounds,
             provenance
         });

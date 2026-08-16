@@ -794,6 +794,20 @@ first-inserted-wins exact path never tries. Registry components: `rankedReuse` (
 (`--ablate=...,rankedReuse`). Ranked candidates are retrieval, never truth; the kernel remains
 the sole accept authority.
 
+**Proof-pattern transfer (implemented).** Source inlining transfers a stored *proof*, which
+only proves its own statement — the probe showed the deep core needs reasoning transfer
+instead. The reuse engine now runs three deterministic session operators over each retrieved
+candidate BEFORE any source assembly, all kernel-gated through the live proof session (seconds
+per op, no fresh envs): `exact <name>` / `apply <name>` / `rw [<name>]` (the elaborator
+instantiates the stored lemma's binders by unification — the specialization class) and
+trajectory replay (the stored proof's `tacticTrajectory` replayed against the root goal,
+kernel-checked per step, stopping on divergence — this transfers multi-step reasoning
+patterns). Verified live: `Even (2^(2^(k+1)))` closes via one `exact twopow_even_exp` where
+every inlining variant failed. Transfers flow through the graph contract as `tactic` patches,
+so a transfer that decomposes the root is progress the search continues on. Registry
+components: `reuseTransfer` (toggle), `maxTransferOps` (per-attempt cap) — ablation-measurable
+(`--ablate=...,reuseTransfer`).
+
 ---
 
 ## 3. Lean backend interface
@@ -1096,8 +1110,9 @@ Components: `recipe` (dropdown: `loop`/`bestofn`/`swiss`/`swiss+repulsion`/`bfs`
 `searchStructure` (dropdown: `transposition`/`egraph`), `maxTacticsPerGoal`,
 `maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`, `premiseLocked`,
 `premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`, `repair`,
-`safeLadder`, `campaignMemory`, `rankedReuse` (toggles), `reuseRankLimit`, `reuseRankedChecks`,
-`checkTimeoutMs` (sliders), `compressionMetrics` (toggles). A component's `recommended` is `null`
+`safeLadder`, `campaignMemory`, `rankedReuse`, `reuseTransfer` (toggles), `reuseRankLimit`,
+`reuseRankedChecks`, `maxTransferOps`, `checkTimeoutMs` (sliders), `compressionMetrics` (toggles).
+A component's `recommended` is `null`
 until evidence sets it; `default` is the safe initial. Components absent from the registry are
 not configurable by any consumer.
 

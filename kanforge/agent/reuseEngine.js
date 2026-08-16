@@ -1,14 +1,26 @@
-// ReuseEngine (architecture.md §4 role split, §2.8): the root-level lemma-store reuse path. A
-// previously-proven lemma whose conclusion matches the root goal is inlined — declaration +
-// proof + its DEPENDENCY CLOSURE (the stored proof references its own lemmas, so the closure
-// must be declared for the combined source to verify in a fresh env) — and proved by
-// `exact <name>`; the kernel re-verifies the combined source, so retrieval never bypasses
-// verification and cross-problem reuse works in any fresh session.
+// ReuseEngine (architecture.md §4 role split, §2.8): the root-level lemma-store reuse path.
+// Three escalating transfer modes, all kernel-gated:
+//   1. Session transfer (cheap): `exact`/`apply`/`rw [<name>]` against the LIVE root goal —
+//      the elaborator instantiates the stored lemma's binders by unification (the
+//      specialization class: `Even (2^n)` closes `Even (2^(2^(k+1)))` via one `apply`).
+//   2. Trajectory replay (reasoning transfer): replay the stored proof's tactic trajectory
+//      against the root goal, kernel-checked per step, stopping on divergence — this moves
+//      multi-step reasoning patterns, not conclusions.
+//   3. Source inlining (authoritative): the assembled closure+declaration source, fresh-checked.
+// Exact conclusion match runs first; ranked BM25 candidates second; the kernel is the sole
+// accept authority for every mode.
 import { hashStatement } from '../lean/pin.js';
 import { buildReuseSource } from '../core/state.js';
+import { Patch } from '../core/patch.js';
+
+const TRANSFER_OPS = [
+    { name: 'exact', tactic: n => `exact ${n}`, via: 'exact' },
+    { name: 'apply', tactic: n => `apply ${n}`, via: 'apply' },
+    { name: 'rw', tactic: n => `rw [${n}]`, via: 'rw' }
+];
 
 export class ReuseEngine {
-    constructor({ backend, store = null, rejectMemo = null, goalMemory = null, rankedReuse = true, rankLimit = 3, maxRankedChecks = 4 } = {}) {
+    constructor({ backend, store = null, rejectMemo = null, goalMemory = null, rankedReuse = true, rankLimit = 3, maxRankedChecks = 4, reuseTransfer = true, maxTransferOps = 4 } = {}) {
         this.backend = backend;
         this.store = store;
         this.rejectMemo = rejectMemo; // shared per-pass set (statement hash -> rejected): churned stubs skip the doomed re-check
@@ -16,6 +28,8 @@ export class ReuseEngine {
         this.rankedReuse = rankedReuse !== false; // §2.8 ranked fallback toggle (registry component)
         this.rankLimit = rankLimit; // top-K ranked fallback candidates (§2.8 specialization/generalization)
         this.maxRankedChecks = maxRankedChecks; // global fresh-check cap across ranked candidates
+        this.reuseTransfer = reuseTransfer !== false; // session transfer operators + trajectory replay (registry component)
+        this.maxTransferOps = maxTransferOps; // cap on session tactic applications per attempt
     }
 
     _recordUnknownIdentifier(error) {
@@ -38,7 +52,7 @@ export class ReuseEngine {
         // Path A: exact normalized-conclusion match (cheapest, proven path).
         const stored = this.store.findByGoal(rootGoal.type);
         if (stored?.lemmaName) {
-            const hit = await this._tryCandidate({ statement, stored, graph });
+            const hit = await this._tryCandidate({ statement, stored, graph, lemmaId, onReuse });
             if (hit?.result) {
                 onReuse?.({ type: 'store_reuse', lemmaId, lemma: stored.lemmaName, via: 'exact' });
                 return hit.result;
@@ -54,7 +68,7 @@ export class ReuseEngine {
             let checks = 0;
             for (const cand of ranked) {
                 if (!cand.lemmaName || cand.lemmaName === stored?.lemmaName) continue;
-                const hit = await this._tryCandidate({ statement, stored: cand, graph, maxChecks: Math.max(1, this.maxRankedChecks - checks) });
+                const hit = await this._tryCandidate({ statement, stored: cand, graph, lemmaId, onReuse, maxChecks: Math.max(1, this.maxRankedChecks - checks) });
                 checks += hit?.checks ?? 0;
                 if (hit?.result) {
                     onReuse?.({ type: 'store_reuse', lemmaId, lemma: cand.lemmaName, via: 'ranked', score: cand.score });
@@ -70,10 +84,61 @@ export class ReuseEngine {
         return null;
     }
 
-    // One candidate through the variant chain, kernel-verified. Returns { result, checks } on
-    // success, null on failure. Fresh-only: reuse sources carry import lines and the repl
-    // forbids `import` over an env continuation.
-    async _tryCandidate({ statement, stored, graph, maxChecks = 4 }) {
+    // Session transfer (mode 1+2): apply the stored lemma to the LIVE root goal via the
+    // leased proof session — `exact <name>` / `apply <name>` / `rw [<name>]`, then the stored
+    // proof's tactic trajectory, kernel-checked per step. Tactic applications flow through the
+    // graph contract (Patch records), so a transfer that decomposes the root into subgoals is
+    // PROGRESS the search continues on, and a transfer that closes it is a full proof.
+    // Returns { result, transferOps } — result set only when the root closed.
+    async _tryTransfer({ stored, graph, lemmaId, onReuse, budget }) {
+        const name = stored.lemmaName;
+        let ops = 0;
+        const applyOne = async (tactic, via) => {
+            if (ops >= budget) return { stop: true };
+            ops++;
+            const goal = graph.currentGoal(graph.rootId);
+            if (!goal) return { stop: true };
+            const res = await this.backend.applyTactic(goal, tactic);
+            if (res.status !== 'ok') {
+                this._recordUnknownIdentifier(res.error);
+                return { stop: false };
+            }
+            const record = graph.applyPatch(new Patch({ op: 'tactic', node: graph.rootId, replacement: tactic, scope: 'goal', meta: { via: 'reuse-transfer', lemma: name, transferVia: via, newGoals: res.newGoals ?? [] } }));
+            onReuse?.({ type: 'store_reuse_transfer', lemmaId, lemma: name, tactic, via, newGoals: res.newGoals?.length ?? 0, ok: true });
+            if (graph.isRootSolved()) {
+                return { stop: true, solved: true };
+            }
+            return { stop: false };
+        };
+
+        if (this.reuseTransfer) {
+            for (const op of TRANSFER_OPS) {
+                const r = await applyOne(op.tactic(name), op.via);
+                if (r.stop) {
+                    if (r.solved) return { result: { solved: true, lemma: name }, transferOps: ops };
+                    return { result: null, transferOps: ops };
+                }
+            }
+            const trajectory = stored.tacticTrajectory ?? (stored.entry?.tacticTrajectory ?? []);
+            for (const t of trajectory.slice(0, this.maxTransferOps)) {
+                const r = await applyOne(t, 'trajectory');
+                if (r.stop) {
+                    if (r.solved) return { result: { solved: true, lemma: name }, transferOps: ops };
+                    return { result: null, transferOps: ops };
+                }
+            }
+        }
+        return { result: null, transferOps: ops };
+    }
+
+    // One candidate through the full transfer chain: session transfer first (cheap — the
+    // elaborator instantiates binders by unification), then the source-inline variants
+    // (authoritative whole-source verification). Returns { result, checks }.
+    async _tryCandidate({ statement, stored, graph, lemmaId, onReuse, maxChecks = 4 }) {
+        // Mode 1+2 first: session ops are ~seconds; source checks are 30-200s fresh builds.
+        const transfer = await this._tryTransfer({ stored, graph, lemmaId, onReuse, budget: TRANSFER_OPS.length + this.maxTransferOps });
+        if (transfer.result) return { result: transfer.result, checks: 0, transferOps: transfer.transferOps };
+
         const storedHash = hashStatement(stored.statement);
         // Each variant pairs its assembled source with the directProof the commit gate must
         // record when THAT variant verifies: the by-name variants reference the stored lemma;
@@ -95,11 +160,11 @@ export class ReuseEngine {
                     rootClass.state = 'SOLVED';
                     graph.setDirectProof(graph.rootId, v.directProof);
                 }
-                return { result: { solved: true, directProof: v.directProof, lemma: stored.lemmaName }, checks };
+                return { result: { solved: true, directProof: v.directProof, lemma: stored.lemmaName }, checks, transferOps: transfer.transferOps };
             }
             this.lastRejectError = check.error ?? null;
             this._recordUnknownIdentifier(check.error);
         }
-        return { result: null, checks };
+        return { result: null, checks, transferOps: transfer.transferOps };
     }
 }
