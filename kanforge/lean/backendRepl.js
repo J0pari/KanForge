@@ -265,7 +265,7 @@ export class BackendRepl {
         // so its env accumulation is unbounded across a long pass. Recycle it after this many
         // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
         // warmup automatically. A long verification sweep can no longer OOM the box.
-        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 6;
+        this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 3;
         this.coldChecks = 0;
         this.warmCheckTotal = 0;
         this.coldCheckTotal = 0;
