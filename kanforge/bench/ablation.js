@@ -56,7 +56,7 @@ import { PremiseRetriever } from '../search/premises.js';
 import { PREMISE_CORPORA } from './premisesCorpus.js';
 import { compilePredictors } from '../optimization/causal.js';
 import { auditAblationReport } from './reportAudit.js';
-import { saveRecommendedDefaults, loadRecommendedDefaults } from '../config/registry.js';
+import { saveRecommendedDefaults, loadRecommendedDefaults, applyOverrides, effectiveValue } from '../config/registry.js';
 import { assembleProvenance, missingProvenanceKeys, MANDATORY_PROVENANCE_KEYS } from '../core/provenance.js';
 
 export const RECIPES = ['loop', 'bestofn', 'swiss', 'swiss+repulsion', 'bfs', 'bfs+repulsion', 'mcgs', 'mcgs+repulsion'];
@@ -111,10 +111,13 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         searchStructure: overrides.searchStructure ?? 'transposition',
         safeLadder: overrides.safeLadder ?? false,
         rankedReuse: overrides.rankedReuse ?? true,
-        reuseRankLimit: overrides.reuseRankLimit ?? 3,
-        reuseRankedChecks: overrides.reuseRankedChecks ?? 4,
+        reuseRankLimit: overrides.reuseRankLimit ?? Number(effectiveValue('reuseRankLimit')),
+        reuseRankedChecks: overrides.reuseRankedChecks ?? Number(effectiveValue('reuseRankedChecks')),
         reuseTransfer: overrides.reuseTransfer ?? true,
-        maxTransferOps: overrides.maxTransferOps ?? 4,
+        maxTransferOps: overrides.maxTransferOps ?? Number(effectiveValue('maxTransferOps')),
+        reuseMaxInline: overrides.reuseMaxInline ?? Number(effectiveValue('reuseMaxInline')),
+        predictorExploration: overrides.predictorExploration ?? Number(effectiveValue('predictorExploration')),
+        retryTacticBudget: overrides.retryTacticBudget ?? Number(effectiveValue('retryTacticBudget')),
         writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
         onEvent: e => { cellEvents.push(e); }
     });
@@ -438,6 +441,11 @@ async function main() {
     const menuArg = process.argv.find(a => a.startsWith('--menu='));
     const rowTimeoutArg = process.argv.find(a => a.startsWith('--row-timeout-ms='));
     const predictorsArg = process.argv.find(a => a.startsWith('--predictors='));
+    const overrideArg = process.argv.find(a => a.startsWith('--override='));
+    if (overrideArg) {
+        const applied = applyOverrides(overrideArg.split('=')[1]);
+        console.log(`[ablation] applied ${applied} registry override(s)`);
+    }
     const ablateArg = process.argv.find(a => a.startsWith('--ablate'));
 
     // --pass-report=<run-dir>: consume a campaign's pass telemetry (passes.ndjson +

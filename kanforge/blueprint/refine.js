@@ -91,7 +91,7 @@ export class BlueprintRefiner {
         this.outDir = outDir;
         this.loopOptions = { concurrency: 1, maxTacticsPerGoal: 8, maxGoalsPerLemma: 100, onEvent: () => {}, ...loopOptions };
         this.maxRounds = maxRounds;
-        this.skeleton = new SkeletonGenerator({ llm, backend });
+        this.skeleton = new SkeletonGenerator({ llm, backend, maxRetries: this.loopOptions.skeletonMaxRetries ?? 2 });
         this.lemmaStore = lemmaStore ?? null;
         this.dataset = dataset ?? null;
         this.checkpoint = checkpoint ?? (outDir ? new RunCheckpoint(outDir) : null);
@@ -158,9 +158,21 @@ export class BlueprintRefiner {
         // single writer (working.lemmas / checkpoint / hash chain). One pool worker stays warm
         // for one-shot checks, so lanes = concurrency - 1.
         const lanes = Math.max(1, this.loopOptions.concurrency - 1);
-        const retryBudget = Math.max(2, Math.min(4, this.loopOptions.maxTacticsPerGoal ?? 8));
+        const retryBudget = Math.max(1, this.loopOptions.retryTacticBudget ?? 4);
+        const idleLimit = this.loopOptions.dependencyIdleThreshold ?? 3;
+        const stallFraction = Math.min(1, Math.max(0.1, this.loopOptions.stallRetryFraction ?? 0.5));
+        const resplitBase = this.loopOptions.reSplitBaseBudget ?? 3;
+        const resplitBonus = this.loopOptions.reSplitProveBonus ?? 1;
         const inFlight = new Set();
         const retriedIds = new Set();
+        // Per-stub re-split accounting (dynamic budget — derived from the rounds history, so it
+        // survives passes without a new persistence field): a stub may be re-split
+        // base + bonus * provedChildren times; beyond that it is PARKED (prove-or-stall
+        // retries only, no further growth) until its situation changes.
+        const resplitCount = new Map();
+        for (const r of rounds) if (r.resplit) {
+            resplitCount.set(r.id, (resplitCount.get(r.id) ?? 0) + 1);
+        }
 
         while (guard < this.maxRounds) {
             const drift = checkDrift(working.lemmas);
@@ -185,51 +197,9 @@ export class BlueprintRefiner {
             const provenIds = new Set(working.lemmas.filter(l => l.proof).map(l => l.id));
             const byId = new Map(working.lemmas.map(l => [l.id, l]));
             const rank = new Map(order.map((id, i) => [id, i]));
-            const readyPool = order.map(id => byId.get(id))
-                .filter(l => l && !l.proof && !l.stalled && !inFlight.has(l.id)
-                    && (l.deps ?? []).every(d => provenIds.has(d)));
-            if (readyPool.length === 0) {
-                const stillWorkable = working.lemmas.find(l => !l.proof && !l.stalled
-                    && !inFlight.has(l.id)
-                    && (l.deps ?? []).every(d => provenIds.has(d)));
-                if (!stillWorkable) {
-                    // Deadlock-release path: every non-stalled unproved lemma is dependency-
-                    // blocked, and the only READY lemmas are stalled ones. A stalled lemma is
-                    // the only path forward (its deps are proved; a fresh attempt may succeed).
-                    // This is NOT the anti-waste case — that rule forbids re-attempting stalled
-                    // lemmas while other work exists. The retry budget is ONE attempt per lemma
-                    // per refine cycle; retries run with a reduced tactic budget and a deepened
-                    // re-split (prior children fed back to the skeleton) so a failed retry still
-                    // grows the DAG instead of repeating the same dead end.
-                    const stalledReady = working.lemmas.filter(l => !l.proof && l.stalled
-                        && !stalledRetried.has(l.id) && !inFlight.has(l.id)
-                        && (l.deps ?? []).every(d => provenIds.has(d)));
-                    if (stalledReady.length) {
-                        const released = stalledReady.slice(0, lanes);
-                        for (const l of released) {
-                            l.stalled = false;
-                            stalledRetried.add(l.id);
-                            retriedIds.add(l.id);
-                        }
-                        console.log(`[refine] deadlock-release: re-attempting ${released.length} stalled lemma(s) of ${stalledReady.length} ready-stalled`);
-                        continue; // next iteration dispatches them as a batch
-                    }
-                    this.stopReason = 'no-ready-lemma';
-                    break;
-                }
-                // A lemma is ready but blocked on deps — idle; don't count as a real round.
-                idleCount++;
-                if (idleCount >= 3) {
-                    this.stopReason = 'dependency-idle';
-                    break;
-                }
-                continue;
-            }
-            idleCount = 0;
-
-            // Batch pick: descendant-weighted (unblocking power) among ready lemmas, topological
-            // order as tiebreak. Descendant counts are cheap at this scale and computed per
-            // iteration so merges are always reflected.
+            // Descendant counts (unblocking power) + proved-children counts (subtree
+            // productivity — the re-split budget's dynamic term) are cheap at this scale and
+            // recomputed per iteration so merges are always reflected.
             const descCache = new Map();
             const descOf = (id) => {
                 if (descCache.has(id)) return descCache.get(id);
@@ -247,6 +217,55 @@ export class BlueprintRefiner {
                 descCache.set(id, seen.size);
                 return seen.size;
             };
+            const provedChildrenOf = (id) => working.lemmas
+                .filter(l => l.proof && (l.deps ?? []).includes(id)).length;
+            const resplitBudgetFor = (stub) => resplitBase + resplitBonus * provedChildrenOf(stub.id);
+            const readyPool = order.map(id => byId.get(id))
+                .filter(l => l && !l.proof && !l.stalled && !inFlight.has(l.id)
+                    && (l.deps ?? []).every(d => provenIds.has(d)));
+            if (readyPool.length === 0) {
+                const stillWorkable = working.lemmas.find(l => !l.proof && !l.stalled
+                    && !inFlight.has(l.id)
+                    && (l.deps ?? []).every(d => provenIds.has(d)));
+                if (!stillWorkable) {
+                    // Deadlock-release path: every non-stalled unproved lemma is dependency-
+                    // blocked, and the only READY lemmas are stalled ones. A stalled lemma is
+                    // the only path forward (its deps are proved; a fresh attempt may succeed).
+                    // The retry budget is DYNAMIC (registry stallRetryFraction): each cycle
+                    // releases a descendant-ranked fraction of the ready-stalled set, so a
+                    // 46-deep stall set no longer forces a full 46-attempt pass. Retries run a
+                    // reduced tactic budget and (while their re-split budget allows) a deepened
+                    // re-split.
+                    const stalledReady = working.lemmas.filter(l => !l.proof && l.stalled
+                        && !stalledRetried.has(l.id) && !inFlight.has(l.id)
+                        && (l.deps ?? []).every(d => provenIds.has(d)));
+                    if (stalledReady.length) {
+                        const budget = Math.max(lanes, Math.ceil(stalledReady.length * stallFraction));
+                        stalledReady.sort((a, b) => (descOf(b.id) - descOf(a.id)) || (rank.get(a.id) - rank.get(b.id)));
+                        const released = stalledReady.slice(0, budget);
+                        for (const l of released) {
+                            l.stalled = false;
+                            stalledRetried.add(l.id);
+                            retriedIds.add(l.id);
+                        }
+                        console.log(`[refine] deadlock-release: re-attempting ${released.length} stalled lemma(s) of ${stalledReady.length} ready-stalled (fraction ${stallFraction})`);
+                        continue; // next iteration dispatches them as a batch
+                    }
+                    this.stopReason = 'no-ready-lemma';
+                    break;
+                }
+                // A lemma is ready but blocked on deps — idle; don't count as a real round.
+                idleCount++;
+                if (idleCount >= idleLimit) {
+                    this.stopReason = 'dependency-idle';
+                    break;
+                }
+                continue;
+            }
+            idleCount = 0;
+
+            // Batch pick: descendant-weighted (unblocking power) among ready lemmas, topological
+            // order as tiebreak.
             const budgetLeft = this.maxRounds - guard;
             const batch = readyPool
                 .sort((a, b) => (descOf(b.id) - descOf(a.id)) || (rank.get(a.id) - rank.get(b.id)))
@@ -258,11 +277,18 @@ export class BlueprintRefiner {
 
             // Parallel attempt phase: lanes run independently; a lane crash degrades to a
             // failed round (the DAG and checkpoint are never mutated by a lane directly).
-            const results = await Promise.all(batch.map(stub =>
-                this._attempt(stub, working, { retry: retriedIds.has(stub.id), retryBudget })
+            // The re-split budget is DYNAMIC: base + bonus * provedChildren. A stub past its
+            // budget is PARKED — the attempt runs prove-or-stall (no skeleton call, no growth),
+            // so a sterile subtree stops compounding the DAG while its retries continue.
+            const results = await Promise.all(batch.map(stub => {
+                const allowed = (resplitCount.get(stub.id) ?? 0) < resplitBudgetFor(stub);
+                if (!allowed) {
+                    console.log(`[refine] parked stub ${stub.id.slice(0, 8)}… (re-splits ${resplitCount.get(stub.id) ?? 0} >= budget ${resplitBudgetFor(stub)}); prove-or-stall attempt`);
+                }
+                return this._attempt(stub, working, { retry: retriedIds.has(stub.id), retryBudget, resplitAllowed: allowed })
                     .then(r => ({ stub, r }))
-                    .catch(err => ({ stub, r: { proved: false, resplit: false, added: 0, children: [], error: err?.message ?? String(err) } }))
-            ));
+                    .catch(err => ({ stub, r: { proved: false, resplit: false, added: 0, children: [], error: err?.message ?? String(err) } }));
+            }));
 
             // Serial merge (single writer): children, cycle repair, rounds, hash chain,
             // checkpoint, stall bookkeeping, premise harvest.
@@ -290,6 +316,26 @@ export class BlueprintRefiner {
                     }
                 }
                 const addedNow = Math.max(0, working.lemmas.length - before);
+                // DAG reachability hygiene: old children whose dependency edges this re-split
+                // dropped become orphan debris unless another lemma still depends on them.
+                // Prune unproved orphans immediately — branches with no assembly path to the
+                // root contribute nothing, and their absence keeps the DAG honest.
+                if (r.oldDeps?.length) {
+                    const prunedOrphans = [];
+                    for (const d of r.oldDeps) {
+                        const orphan = working.lemmas.find(l => l.id === d);
+                        if (!orphan || orphan.proof) continue;
+                        const stillReferenced = working.lemmas.some(l => (l.deps ?? []).includes(d));
+                        if (!stillReferenced) {
+                            working.lemmas.splice(working.lemmas.indexOf(orphan), 1);
+                            prunedOrphans.push(d.slice(0, 10));
+                        }
+                    }
+                    if (prunedOrphans.length) {
+                        console.log(`[refine]   pruned ${prunedOrphans.length} orphan branch(es) (${prunedOrphans.join(', ')}) — no assembly path to the root`);
+                    }
+                }
+                if (r.resplit) resplitCount.set(stub.id, (resplitCount.get(stub.id) ?? 0) + 1);
                 console.log(`[refine] round ${guard}/${this.maxRounds} lemma ${stub.id.slice(0, 10)}… proved=${r.proved} resplit=${r.resplit} added=${addedNow} error=${r.error ?? '(none)'}`);
                 rounds.push({ id: stub.id, ok: r.proved, resplit: r.resplit, added: addedNow, error: r.error ?? null });
                 if (r.hashChainEntry) hashChain.push(r.hashChainEntry);
@@ -379,8 +425,8 @@ export class BlueprintRefiner {
                 // over an env continuation — the warm path can never accept them. Rejections are
                 // memoized per pass so a churned stub pays the check at most once.
                 const variants = [
-                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript, closureOf: stmtHash }),
-                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript })
+                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript, closureOf: stmtHash, maxInline: this.loopOptions.reuseMaxInline ?? 24 }),
+                    buildReuseSource({ store: this.lemmaStore, statement: stub.statement, proofScript: reused.proofScript, maxInline: this.loopOptions.reuseMaxInline ?? 24 })
                 ];
                 let reuseCheck = null;
                 for (const fullSource of variants) {
@@ -463,7 +509,15 @@ export class BlueprintRefiner {
         const priorChildren = (stub.deps ?? [])
             .map(d => working.lemmas.find(w => w.id === d)?.statement)
             .filter(Boolean);
-        const sub = await this.skeleton.generate(stub.statement, opts.retry ? { priorChildren } : {});
+        const oldDeps = [...(stub.deps ?? [])];
+        const sub = opts.resplitAllowed !== false
+            ? await this.skeleton.generate(stub.statement, opts.retry ? { priorChildren } : {})
+            : null;
+        if (!sub) {
+            // resplitAllowed=false (parked stub) or the skeleton call failed: prove-or-stall,
+            // no growth. The old children stay — they are the stub's acknowledged gaps.
+            return { proved: false, resplit: false, added: 0, children: [], error: loopError };
+        }
         if (!sub.ok) {
             console.log(`[refine]   skeleton re-split failed: ${sub.error ?? 'unknown'}`);
             return { proved: false, resplit: false, added: 0, children: [], error: loopError };
@@ -483,7 +537,9 @@ export class BlueprintRefiner {
         // existing edges — the prior children remain the stub's valid subgoals.
         const newDeps = (subRoot.deps ?? []).filter(d => d !== stub.id);
         if (newDeps.length > 0) stub.deps = newDeps;
-        return { proved: false, resplit: true, added: children.length, children };
+        // The previous children whose edges this overwrite dropped become orphan branches
+        // debris unless some OTHER lemma still depends on them — the merge prunes them.
+        return { proved: false, resplit: true, added: children.length, children, oldDeps };
     }
 
     // §5.2 live premise harvest: mathlib names a verified proof actually used are resolved via
@@ -493,7 +549,7 @@ export class BlueprintRefiner {
     async _harvestPremises(stub, proofScript) {
         if (!this.loopOptions.premises?.length || !this.backend?.check) return;
         const known = new Set(this.loopOptions.premises.map(p => p.name));
-        const candidates = harvestableIdentifiers(proofScript, known).slice(0, 5);
+        const candidates = harvestableIdentifiers(proofScript, known).slice(0, this.loopOptions.harvestCandidateLimit ?? 5);
         if (!candidates.length) return;
         const fresh = [];
         for (const name of candidates) {

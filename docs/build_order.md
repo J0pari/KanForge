@@ -189,6 +189,22 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   stub's existing children are fed back to the skeleton prompt so a failed retry proposes a
   different decomposition instead of repeating the dead end. `watchdog.mjs` supervises
   multi-pass runs (per-pass wall cap, zero-progress stop, resume-by-checkpoint).
+- **Forward-assembly discipline (derivation reachability).** The DAG's value is NOT its
+  node count: a branch matters only if its proved leaves assemble through valid derivation
+  edges back to the original theorem. Three mechanisms enforce this continuously:
+  1. **Dynamic re-split budget** — `reSplitBaseBudget + reSplitProveBonus × provedChildren`
+     per stub, derived from the rounds history (survives passes); past the budget the stub is
+     PARKED (prove-or-stall retries, no further growth). Sterile subtrees stop compounding;
+     productive ones earn more growth.
+  2. **Orphan pruning at the source** — when a re-split overwrites a stub's dependency edges,
+     its old children that no other lemma depends on are pruned immediately (unproved only).
+     Debris never accumulates; it is removed the moment it is created.
+  3. **Gap-annotated assembly (`blueprint/assemble.js`)** — the whole DAG reassembles into one
+     lean4web-pasteable Lean file at any time: imports at top, dependency order, proved lemmas
+     with proofs, unproved ones as explicit `sorry` gaps, root LAST. The kernel checks the
+     assembled file; the ONLY issues it should raise are the sorries — any error is a real
+     defect. The pertinence audit reports every lemma with no assembly path to the root.
+     `run.js` writes it after every pass; the CLI runs it on demand.
 
 ### 4.3 Digestion (first cut)
 - Implement `digest/writeup.js`: parse statements/writeups → render proof

@@ -1111,10 +1111,20 @@ Components: `recipe` (dropdown: `loop`/`bestofn`/`swiss`/`swiss+repulsion`/`bfs`
 `maxGoalsPerLemma`, `maxLlmCalls` (sliders), `repulsion`, `premises`, `premiseLocked`,
 `premiseTopK`, `tacticMenu`, `predictors`, `exemplars`, `ttrl`, `monitor`, `repair`,
 `safeLadder`, `campaignMemory`, `rankedReuse`, `reuseTransfer` (toggles), `reuseRankLimit`,
-`reuseRankedChecks`, `maxTransferOps`, `checkTimeoutMs` (sliders), `compressionMetrics` (toggles).
+`reuseRankedChecks`, `maxTransferOps`, `checkTimeoutMs`, `reSplitBaseBudget`,
+`reSplitProveBonus`, `stallRetryFraction`, `dependencyIdleThreshold`, `retryTacticBudget`,
+`coldCheckRecycleThreshold`, `warmupTimeoutMs`, `rewarmDebounceMs`, `spawnRetryDelayMs`,
+`harvestCandidateLimit`, `skeletonMaxRetries`, `predictorExploration`, `reuseMaxInline`
+(sliders), `compressionMetrics` (toggles).
 A component's `recommended` is `null`
 until evidence sets it; `default` is the safe initial. Components absent from the registry are
 not configurable by any consumer.
+
+**Override channel (injection without code edits).** Both the live path and the ablation
+harness accept `--override=name=value,name=value` — `applyOverrides` validates each against the
+component schema (kind/range/options) and the override wins over `recommended ?? default` for
+the process. Every numeric decision the live path makes at a wiring seam is a registry
+component; there are no magic numbers left outside the schema.
 
 ---
 

@@ -266,6 +266,8 @@ export class BackendRepl {
         // cold (env: null) checks — the replacement spawns and re-warms from the pool's last
         // warmup automatically. A long verification sweep can no longer OOM the box.
         this.coldCheckRecycleThreshold = options.coldCheckRecycleThreshold ?? 3;
+        this.rewarmDebounceMs = options.rewarmDebounceMs ?? 1500;
+        this.spawnRetryDelayMs = options.spawnRetryDelayMs ?? 15000;
         this.coldChecks = 0;
         this.warmCheckTotal = 0;
         this.coldCheckTotal = 0;
@@ -314,7 +316,7 @@ export class BackendRepl {
                 this._spawnRetryTimer = setTimeout(() => {
                     this._spawnRetryTimer = null;
                     if (!this._draining) this._spawnWorker();
-                }, 15000);
+                }, this.spawnRetryDelayMs);
             }
             return null;
         }
@@ -564,7 +566,7 @@ export class BackendRepl {
             this.warm(this._lastWarmup)
                 .catch(() => {})
                 .finally(() => { this._rewarming = false; });
-        }, 1500);
+        }, this.rewarmDebounceMs);
     }
 
     // Establish (or refresh) the statement-mode session: warm the repl with the statement's

@@ -33,17 +33,66 @@ export const COMPONENTS = {
     reuseTransfer: { kind: 'toggle', default: true, recommended: null, label: 'Session proof-pattern transfer (exact/apply/rw + trajectory replay over retrieved lemmas)' },
     maxTransferOps: { kind: 'slider', min: 1, max: 12, step: 1, default: 4, recommended: null, label: 'Transfer tactic applications per attempt' },
     checkTimeoutMs: { kind: 'slider', min: 60000, max: 600000, step: 30000, default: 240000, recommended: null, label: 'Kernel check timeout (ms)' },
-    compressionMetrics: { kind: 'toggle', default: true, recommended: null, label: 'Compression-quality metrics' }
+    compressionMetrics: { kind: 'toggle', default: true, recommended: null, label: 'Compression-quality metrics' },
+    // --- DAG-growth / retry dynamics (the re-split budget and stall-retry policies) ---
+    reSplitBaseBudget: { kind: 'slider', min: 1, max: 8, step: 1, default: 3, recommended: null, label: 'Base re-splits per stub before parking' },
+    reSplitProveBonus: { kind: 'slider', min: 0, max: 4, step: 1, default: 1, recommended: null, label: 'Extra re-splits per proved child (subtree productivity bonus)' },
+    stallRetryFraction: { kind: 'slider', min: 0.1, max: 1, step: 0.1, default: 0.5, recommended: null, label: 'Fraction of ready-stalled lemmas retried per pass (descendant-ranked)' },
+    dependencyIdleThreshold: { kind: 'slider', min: 1, max: 10, step: 1, default: 3, recommended: null, label: 'Idle iterations before dependency-idle stop' },
+    retryTacticBudget: { kind: 'slider', min: 1, max: 16, step: 1, default: 4, recommended: null, label: 'Tactic proposals per stalled-retry attempt' },
+    // --- Pool / kernel / reuse internals (injected at the backend and reuse seams) ---
+    coldCheckRecycleThreshold: { kind: 'slider', min: 1, max: 20, step: 1, default: 3, recommended: null, label: 'Warm-worker env builds before recycle' },
+    warmupTimeoutMs: { kind: 'slider', min: 60000, max: 600000, step: 30000, default: 180000, recommended: null, label: 'Repl worker warmup timeout (ms)' },
+    rewarmDebounceMs: { kind: 'slider', min: 500, max: 10000, step: 500, default: 1500, recommended: null, label: 'Background re-warm debounce (ms)' },
+    spawnRetryDelayMs: { kind: 'slider', min: 1000, max: 60000, step: 1000, default: 15000, recommended: null, label: 'Worker spawn retry delay (ms)' },
+    harvestCandidateLimit: { kind: 'slider', min: 0, max: 20, step: 1, default: 5, recommended: null, label: 'Premise harvest #check candidates per proof' },
+    skeletonMaxRetries: { kind: 'slider', min: 0, max: 6, step: 1, default: 2, recommended: null, label: 'Skeleton decomposition retries' },
+    predictorExploration: { kind: 'slider', min: 0, max: 0.2, step: 0.01, default: 0.02, recommended: null, label: 'Predictor counterfactual re-test rate' },
+    reuseMaxInline: { kind: 'slider', min: 1, max: 100, step: 1, default: 24, recommended: null, label: 'Max inlined declarations per reuse source' }
 };
+
+// Runtime overrides (CLI --override=name=value): the uniform injection channel for the
+// ablation harness and the live path alike — a run can act on ANY registry component without
+// hand-editing defaults.json. Overrides are process-local, validated against the component
+// schema (kind/min/max/options), and win over recommended/default.
+const _overrides = new Map();
+
+export function applyOverrides(spec) {
+    let applied = 0;
+    for (const part of String(spec ?? '').split(',')) {
+        const eq = part.indexOf('=');
+        if (eq <= 0) continue;
+        const name = part.slice(0, eq).trim();
+        const raw = part.slice(eq + 1).trim();
+        const c = COMPONENTS[name];
+        if (!c) throw new Error(`unknown registry component: ${name}`);
+        if (c.kind === 'toggle') {
+            if (raw !== 'true' && raw !== 'false') throw new Error(`toggle ${name} expects true/false`);
+            _overrides.set(name, raw === 'true');
+            applied++;
+        } else if (c.kind === 'slider') {
+            const v = Number(raw);
+            if (!Number.isFinite(v) || v < c.min || v > c.max) throw new Error(`slider ${name} out of range [${c.min}, ${c.max}]: ${raw}`);
+            _overrides.set(name, v);
+            applied++;
+        } else if (c.kind === 'dropdown') {
+            if (!(c.options ?? []).includes(raw)) throw new Error(`dropdown ${name} expects one of ${(c.options ?? []).join(', ')}`);
+            _overrides.set(name, raw);
+            applied++;
+        }
+    }
+    return applied;
+}
 
 export function componentNames() {
     return Object.keys(COMPONENTS);
 }
 
-// The recommended value wins when measured; the safe default otherwise.
+// The runtime override wins; then the recommended value when measured; then the safe default.
 export function effectiveValue(name) {
     const c = COMPONENTS[name];
     if (!c) throw new Error(`unknown component: ${name}`);
+    if (_overrides.has(name)) return _overrides.get(name);
     return c.recommended ?? c.default;
 }
 

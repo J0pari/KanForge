@@ -19,7 +19,7 @@ const TRANSFER_OPS = [
 ];
 
 export class ReuseEngine {
-    constructor({ backend, store = null, rejectMemo = null, goalMemory = null, rankedReuse = true, rankLimit = 3, maxRankedChecks = 4, reuseTransfer = true, maxTransferOps = 4 } = {}) {
+    constructor({ backend, store = null, rejectMemo = null, goalMemory = null, rankedReuse = true, rankLimit = 3, maxRankedChecks = 4, reuseTransfer = true, maxTransferOps = 4, maxInline = 24 } = {}) {
         this.backend = backend;
         this.store = store;
         this.rejectMemo = rejectMemo; // shared per-pass set (statement hash -> rejected): churned stubs skip the doomed re-check
@@ -29,6 +29,7 @@ export class ReuseEngine {
         this.maxRankedChecks = maxRankedChecks; // global fresh-check cap across ranked candidates
         this.reuseTransfer = reuseTransfer !== false; // session transfer operators + trajectory replay (registry component)
         this.maxTransferOps = maxTransferOps; // cap on session tactic applications per attempt
+        this.maxInline = maxInline; // registry reuseMaxInline: inlined declarations per reuse source
     }
 
     _recordUnknownIdentifier(error) {
@@ -148,10 +149,10 @@ export class ReuseEngine {
         // the body variants inline the stored proof, so their directProof is the proof itself.
         // The verified source itself is recorded as the directSource (reuse prelude).
         const variants = [
-            { source: buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: storedHash, includeClosureRoot: true }), directProof: `by exact ${stored.lemmaName}` },
-            { source: buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript, closureOf: storedHash }), directProof: stored.proofScript },
-            { source: buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}` }), directProof: `by exact ${stored.lemmaName}` },
-            { source: buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript }), directProof: stored.proofScript }
+            { source: buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, closureOf: storedHash, includeClosureRoot: true, maxInline: this.maxInline }), directProof: `by exact ${stored.lemmaName}` },
+            { source: buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript, closureOf: storedHash, maxInline: this.maxInline }), directProof: stored.proofScript },
+            { source: buildReuseSource({ store: this.store, statement, proofScript: `by exact ${stored.lemmaName}`, maxInline: this.maxInline }), directProof: `by exact ${stored.lemmaName}` },
+            { source: buildReuseSource({ store: this.store, statement, proofScript: stored.proofScript, maxInline: this.maxInline }), directProof: stored.proofScript }
         ];
         let checks = 0;
         for (const v of variants) {

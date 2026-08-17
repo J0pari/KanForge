@@ -26,6 +26,7 @@ import { PREMS_STEP_1 } from '../bench/premisesCorpus.js';
 import { mergePremiseCorpora, premisesFromLemmas, loadHarvestFile } from '../search/livePremises.js';
 import { assembleProvenance } from '../core/provenance.js';
 import { computePassKpis } from '../optimization/kpis.js';
+import { assembleGapAnnotated } from './assemble.js';
 import * as reg from '../config/registry.js';
 
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -159,6 +160,21 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // Per-pass KPI series — the verification-throughput curve (§5.7 KPIs): every pass appends
     // one line so cost-per-verified-theorem trends are readable without replaying events.
     fs.appendFileSync(path.join(workDir, 'kpis.ndjson'), JSON.stringify(passSummary.passKpis) + '\n');
+    // Gap-annotated assembly (§4 assembly audit): every pass writes the WHOLE DAG
+    // reassembled into one lean4web-pasteable file — proved lemmas with proofs, unproved ones
+    // as acknowledged `sorry` gaps, root last — plus the pertinence audit (orphan branches
+    // count as debris, not progress). The kernel's verdict on the assembled file is the
+    // forward-assembly condition made continuous.
+    try {
+        const assembly = assembleGapAnnotated({ lemmas: refined.refined.lemmas, rootStatement: theorem });
+        const assemblyDir = path.join(workDir, 'assembly');
+        fs.mkdirSync(assemblyDir, { recursive: true });
+        fs.writeFileSync(path.join(assemblyDir, 'assembled.lean'), assembly.source, 'utf8');
+        fs.writeFileSync(path.join(assemblyDir, 'assembly-report.json'), JSON.stringify(assembly, null, 2), 'utf8');
+        console.log(`[blueprint] gap-annotated assembly: ${assembly.provedCount}/${assembly.lemmaCount} proved, ${assembly.gapCount} gaps, ${assembly.orphanCount} orphan branches -> ${assemblyDir}`);
+    } catch (err) {
+        console.log(`[blueprint] assembly skipped: ${err?.message ?? err}`);
+    }
 
     if (!refined.ok) {
         // DoD (§7.4, build_order "Definition of done (a live pipeline test)"): the digest +
@@ -336,6 +352,29 @@ async function main() {
     const reuseRankedChecks = Number(reg.effectiveValue('reuseRankedChecks'));
     const reuseTransfer = !args.includes('--no-reuse-transfer') && reg.effectiveValue('reuseTransfer');
     const maxTransferOps = Number(reg.effectiveValue('maxTransferOps'));
+    // Registry overrides (§5.8 injection channel): --override=name=value,... acts on ANY
+    // registry component — the same channel the ablation harness uses — so a measured
+    // recommendation or a manual experiment changes the run without code edits.
+    const overrideArg = argValue(args, '--override=');
+    if (overrideArg) {
+        const applied = reg.applyOverrides(overrideArg);
+        console.log(`[blueprint] applied ${applied} registry override(s)`);
+    }
+    // DAG-growth / retry dynamics + internals: every numeric decision the live path makes is a
+    // registry component — no magic numbers at the wiring seams.
+    const retryTacticBudget = Number(reg.effectiveValue('retryTacticBudget'));
+    const stallRetryFraction = Number(reg.effectiveValue('stallRetryFraction'));
+    const dependencyIdleThreshold = Number(reg.effectiveValue('dependencyIdleThreshold'));
+    const reSplitBaseBudget = Number(reg.effectiveValue('reSplitBaseBudget'));
+    const reSplitProveBonus = Number(reg.effectiveValue('reSplitProveBonus'));
+    const harvestCandidateLimit = Number(reg.effectiveValue('harvestCandidateLimit'));
+    const skeletonMaxRetries = Number(reg.effectiveValue('skeletonMaxRetries'));
+    const predictorExploration = Number(reg.effectiveValue('predictorExploration'));
+    const reuseMaxInline = Number(reg.effectiveValue('reuseMaxInline'));
+    const coldCheckRecycleThreshold = Number(reg.effectiveValue('coldCheckRecycleThreshold'));
+    const warmupTimeoutMs = Number(reg.effectiveValue('warmupTimeoutMs'));
+    const rewarmDebounceMs = Number(reg.effectiveValue('rewarmDebounceMs'));
+    const spawnRetryDelayMs = Number(reg.effectiveValue('spawnRetryDelayMs'));
     // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
     // chain); 60s is a warm-worker budget only. Default from the registry (ablation-measurable);
     // covers the cold case with margin.
@@ -343,7 +382,7 @@ async function main() {
 
     // The repl pool must survive the COLD mathlib import of the target's statement (the
     // autoformalizer harness uses 180s for the same reason); 60s is a warm-worker budget only.
-    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency: Math.max(2, concurrency), timeoutMs: checkTimeoutMs, workerPerProblem: true });
+    const pool = createBackend({ type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN, leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency: Math.max(2, concurrency), timeoutMs: checkTimeoutMs, workerPerProblem: true, coldCheckRecycleThreshold, warmupTimeoutMs, rewarmDebounceMs, spawnRetryDelayMs });
     const llmConfig = loadLLMConfig(ENV);
     const llm = createLLM({ ...llmConfig, retries: 3 });
 
@@ -364,6 +403,9 @@ async function main() {
                 repulsion, premises, tacticMenu: menu, predictors: reg.effectiveValue('predictors'),
                 exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory,
                 rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps,
+                retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus,
+                harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline,
+                coldCheckRecycleThreshold, warmupTimeoutMs, rewarmDebounceMs, spawnRetryDelayMs,
                 checkTimeoutMs, concurrency
             },
             budget: { maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, maxRounds, concurrency, checkTimeoutMs },
@@ -408,7 +450,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, premisesEnabled: premises },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, premisesEnabled: premises },
             maxRounds,
             provenance
         });
