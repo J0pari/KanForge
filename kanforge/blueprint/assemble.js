@@ -64,16 +64,23 @@ export function assembleGapAnnotated({ lemmas, rootStatement, rootId = null }) {
         const k = seenNames.get(n) + 1;
         seenNames.set(n, k);
         const fresh = `${n}_v${k}`;
-        renamed.push({ id: l.id, from: n, to: fresh });
+        // A PROVED duplicate's rename is a reference-ambiguity hazard: any proof referencing
+        // the name resolves to the FIRST declaration in file order — if the referent meant the
+        // renamed one, the kernel flags a type mismatch on the assembled file (reported, never
+        // masked). Unproved duplicates rename freely (sorries reference nothing).
+        renamed.push({ id: l.id, from: n, to: fresh, proved: !!l.proof, ambiguityHazard: !!l.proof });
         return fresh;
     };
 
     // Body: topological order, deps first, root LAST (it is the target, everything feeds it).
+    // Each part's OWN import lines are stripped — they are already in the hoisted union at the
+    // top, and the kernel rejects `import` anywhere else in the file.
+    const stripImports = (s) => String(s).split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n');
     const body = [];
     const gaps = [];
     const emit = (l, isRoot) => {
         const name = nameFor(l);
-        let stmt = l.statement.trim();
+        let stmt = stripImports(l.statement.trim());
         if (name && name !== declName(l.statement)) {
             stmt = stmt.replace(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.']*)/, `theorem ${name}`);
         }

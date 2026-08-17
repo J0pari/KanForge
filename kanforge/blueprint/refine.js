@@ -317,7 +317,7 @@ export class BlueprintRefiner {
                 }
                 const addedNow = Math.max(0, working.lemmas.length - before);
                 // DAG reachability hygiene: old children whose dependency edges this re-split
-                // dropped become orphan debris unless another lemma still depends on them.
+                // dropped become orphan branches unless another lemma still depends on them.
                 // Prune unproved orphans immediately — branches with no assembly path to the
                 // root contribute nothing, and their absence keeps the DAG honest.
                 if (r.oldDeps?.length) {
@@ -538,7 +538,7 @@ export class BlueprintRefiner {
         const newDeps = (subRoot.deps ?? []).filter(d => d !== stub.id);
         if (newDeps.length > 0) stub.deps = newDeps;
         // The previous children whose edges this overwrite dropped become orphan branches
-        // debris unless some OTHER lemma still depends on them — the merge prunes them.
+        // orphan branches unless some OTHER lemma still depends on them — the merge prunes them.
         return { proved: false, resplit: true, added: children.length, children, oldDeps };
     }
 

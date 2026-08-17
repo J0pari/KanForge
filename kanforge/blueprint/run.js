@@ -160,18 +160,27 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // Per-pass KPI series — the verification-throughput curve (§5.7 KPIs): every pass appends
     // one line so cost-per-verified-theorem trends are readable without replaying events.
     fs.appendFileSync(path.join(workDir, 'kpis.ndjson'), JSON.stringify(passSummary.passKpis) + '\n');
-    // Gap-annotated assembly (§4 assembly audit): every pass writes the WHOLE DAG
-    // reassembled into one lean4web-pasteable file — proved lemmas with proofs, unproved ones
-    // as acknowledged `sorry` gaps, root last — plus the pertinence audit (orphan branches
-    // count as debris, not progress). The kernel's verdict on the assembled file is the
-    // forward-assembly condition made continuous.
+    // Gap-annotated assembly (§4 assembly audit): every pass writes the WHOLE DAG reassembled
+    // into one lean4web-pasteable Lean file — proved lemmas with proofs, unproved ones as
+    // acknowledged `sorry` gaps, root last — plus the pertinence audit (orphan branches are
+    // reported, never counted as progress). The assembled file is kernel-checked here, so the
+    // forward-assembly condition — "the whole DAG typechecks with sorries as its only open
+    // points" — is verified continuously, not just on demand.
     try {
         const assembly = assembleGapAnnotated({ lemmas: refined.refined.lemmas, rootStatement: theorem });
         const assemblyDir = path.join(workDir, 'assembly');
         fs.mkdirSync(assemblyDir, { recursive: true });
         fs.writeFileSync(path.join(assemblyDir, 'assembled.lean'), assembly.source, 'utf8');
+        try {
+            const assemblyCheck = await backend.check(assembly.source, { useWarmEnv: false, timeoutMs: 600_000 });
+            assembly.kernelStatus = assemblyCheck.status;
+            assembly.kernelError = assemblyCheck.status !== 'verified' ? (assemblyCheck.error?.message ?? 'verification failed') : null;
+        } catch (checkErr) {
+            assembly.kernelStatus = 'error';
+            assembly.kernelError = `assembly check threw: ${checkErr?.message ?? checkErr}`;
+        }
         fs.writeFileSync(path.join(assemblyDir, 'assembly-report.json'), JSON.stringify(assembly, null, 2), 'utf8');
-        console.log(`[blueprint] gap-annotated assembly: ${assembly.provedCount}/${assembly.lemmaCount} proved, ${assembly.gapCount} gaps, ${assembly.orphanCount} orphan branches -> ${assemblyDir}`);
+        console.log(`[blueprint] gap-annotated assembly: ${assembly.provedCount}/${assembly.lemmaCount} proved, ${assembly.gapCount} gaps, ${assembly.orphanCount} orphan branches, kernel ${assembly.kernelStatus} -> ${assemblyDir}`);
     } catch (err) {
         console.log(`[blueprint] assembly skipped: ${err?.message ?? err}`);
     }

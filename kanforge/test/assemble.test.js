@@ -29,7 +29,7 @@ test('assembly orders deps first, root last, proved lemmas carry proofs', () => 
     assert.ok(r.source.trimEnd().endsWith(':= by sorry'), 'root gap acknowledged with sorry');
 });
 
-test('orphan branches are flagged as debris, never counted as pertinence', () => {
+test('orphan branches are flagged as orphan branches, never counted as pertinence', () => {
     const lemmas = [
         lem(H1, [], 'by\n  rfl'),
         lem(ORPH, [], null),
