@@ -90,6 +90,33 @@ async function main() {
         console.error(`run dir not found: ${runDir}`);
         process.exit(4);
     }
+    // Instance lock: exactly one watchdog per problem. A stale second instance would write the
+    // same checkpoint from two refine loops (observed corruption hazard). The lock is a pid
+    // file; a dead pid's file is taken over.
+    const lockFile = path.join(runDir, 'watchdog.lock');
+    try {
+        const existing = fs.existsSync(lockFile) ? Number(fs.readFileSync(lockFile, 'utf8').trim()) : null;
+        if (existing && Number.isInteger(existing)) {
+            let alive = false;
+            try { process.kill(existing, 0); alive = true; } catch {}
+            if (alive) {
+                console.error(`watchdog already running for ${problem} (pid ${existing}); refusing to start a second instance`);
+                process.exit(4);
+            }
+        }
+        fs.writeFileSync(lockFile, String(process.pid), 'utf8');
+    } catch (err) {
+        console.error(`watchdog lock failed: ${err?.message ?? err}`);
+        process.exit(4);
+    }
+    const releaseLock = () => {
+        try {
+            if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, 'utf8').trim() === String(process.pid)) {
+                fs.unlinkSync(lockFile);
+            }
+        } catch {}
+    };
+    process.on('exit', releaseLock);
     const runArgs = [`--problem=${problem}`, `--statement-file=${statementFile}`, `--recipe=${recipe}`, `--max-tactics=${maxTactics}`];
     if (concurrency) runArgs.push(`--concurrency=${concurrency}`);
     if (args.includes('--premises')) runArgs.push('--premises');
