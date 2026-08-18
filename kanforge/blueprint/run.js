@@ -342,7 +342,7 @@ async function main() {
         const ok = probes?.probes?.length > 0 && probes.probes.every(p => p.status === 'verified');
         if (!ok) {
             console.error(`[blueprint] INTAKE GATE: no verified instance probes for ${problemId ?? outDir}.`);
-            console.error(`[blueprint]   generate them with: node blueprint/probes.js --statement-file=<path> [--fc-file=<source>] --out=${probesPath}`);
+            console.error('[blueprint]   generate them with the intake path: node bench/validateFormalization.js --fc-file=<source> --emit-mission=<dir> (writes statement.txt + probes.json from the ONE autoformalizer entry).');
             console.error('[blueprint]   the mission may not enter the pipeline without a kernel-verified instance ledger.');
             process.exit(3);
         }

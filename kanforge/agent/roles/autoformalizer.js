@@ -83,6 +83,28 @@ export function stripImports(statement) {
     return String(statement ?? '').split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n').trim();
 }
 
+// Instance-ledger extraction from a FormalConjectures source file: the `@[category test]`
+// theorems are the author's membership instances. Each becomes an instance string for the
+// autoformalizer's probe step — phrased against the SET IN THE STATEMENT (the LLM probe
+// builder resolves the concrete decidable example against the statement's set literal).
+export function extractTestInstancesFromFc(fcText) {
+    const out = [];
+    const blocks = String(fcText ?? '').split(/(?=@\[category test\])/g);
+    for (const b of blocks) {
+        const m = b.match(/theorem\s+\w+[\s\S]*?:\s*(\d+)\s*(∈|∉)\s*([A-Za-z_][A-Za-z0-9_.']*)/);
+        if (!m) continue;
+        out.push({ n: Number(m[1]), in: m[2] === '∈' });
+    }
+    return out;
+}
+
+// Instance strings for the ledger/probe step from extracted membership facts. Phrased
+// generically — the set literal does not exist until the statement is formalized; the
+// formalization prompt and the probe builder both consume these.
+export function instanceStringsFor(facts) {
+    return facts.map(f => `the number ${f.n} ${f.in ? 'is' : 'is not'} an element of the set described in the statement`);
+}
+
 // --- prompts ---
 
 function buildFormalizationPrompt(prose, instances, repair = null) {

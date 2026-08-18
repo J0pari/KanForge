@@ -8,8 +8,29 @@ import {
     parseFormalizationJson,
     assembleStatement,
     parseProbeJson,
+    extractTestInstancesFromFc,
+    instanceStringsFor,
     Autoformalizer
 } from '../agent/roles/autoformalizer.js';
+
+test('extractTestInstancesFromFc parses test-category membership theorems', () => {
+    const fc = `/- header -/\nnamespace Erdos9\ndef Erdos9A : Set ℕ := ∅\n@[category test, AMS 5 11]\ntheorem erdos9A_contains_one : 1 ∈ Erdos9A := by\n  sorry\n@[category test, AMS 5 11]\ntheorem erdos9A_not_contains_five : 5 ∉ Erdos9A := by\n  sorry\n@[category research solved]\ntheorem erdos_9.variants.infinite : Erdos9A.Infinite := by\n  sorry\nend Erdos9`;
+    const facts = extractTestInstancesFromFc(fc);
+    assert.deepStrictEqual(facts, [{ n: 1, in: true }, { n: 5, in: false }]);
+});
+
+test('extractTestInstancesFromFc ignores non-test theorems and malformed blocks', () => {
+    assert.deepStrictEqual(extractTestInstancesFromFc('theorem plain : True := by sorry'), []);
+    assert.deepStrictEqual(extractTestInstancesFromFc(''), []);
+});
+
+test('instanceStringsFor phrases membership facts generically for the ledger', () => {
+    const out = instanceStringsFor([{ n: 1, in: true }, { n: 5, in: false }]);
+    assert.deepStrictEqual(out, [
+        'the number 1 is an element of the set described in the statement',
+        'the number 5 is not an element of the set described in the statement'
+    ]);
+});
 
 test('staticValidateStatement accepts a well-formed sorry-stub', () => {
     const ok = staticValidateStatement('import Mathlib.Data.Nat.Prime\n\ntheorem t (n : Nat) : Nat.Prime n → n > 1 := by sorry');
