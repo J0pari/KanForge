@@ -17,6 +17,10 @@ export function buildSkeletonPrompt(theoremStatement, opts = {}) {
     const deepenBlock = prior.length
         ? `\n\nA previous decomposition into the following lemmas did not suffice (they remain unproved):\n\n${prior.map(s => `- ${s.split('\n').filter(l => l.trim() && !/^\s*import\s/.test(l)).join(' ')}`).join('\n')}\n\nPropose a DIFFERENT decomposition — different lemma boundaries, different helper statements, or a finer/coarser split. Do not repeat the prior children verbatim.`
         : '';
+    const falsified = (opts.falsifiedExamples ?? []).filter(Boolean);
+    const falsifyBlock = falsified.length
+        ? `\n\nThe following proposed lemmas were FALSIFIED by bounded counterexample search (kernel-verified counterexamples shown). Your decomposition must avoid these constructions and their close variants:\n\n${falsified.map(f => `- ${f.name ?? 'lemma'}: falsified by \`${f.counterexample}\``).join('\n')}\n\nChoose a different family or restriction — do not restate a falsified claim under a new name.`
+        : '';
     return [
         {
             role: 'system',
@@ -31,7 +35,7 @@ export function buildSkeletonPrompt(theoremStatement, opts = {}) {
         },
         {
             role: 'user',
-            content: `Decompose this theorem into kernel-typechecked helper lemma stubs:\n\n${theoremStatement}${deepenBlock}\n\nReturn the JSON decomposition.`
+            content: `Decompose this theorem into kernel-typechecked helper lemma stubs:\n\n${theoremStatement}${deepenBlock}${falsifyBlock}\n\nReturn the JSON decomposition.`
         }
     ];
 }
@@ -134,23 +138,25 @@ export class SkeletonGenerator {
         const imports = allImports.map(m => `import ${m}`).join('\n');
 
         let lastErrors = [];
+        const falsifiedEvidence = [];
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-            const outcome = await this._attempt(rootStatement, imports, opts);
+            const outcome = await this._attempt(rootStatement, imports, { ...opts, falsifiedEvidence });
             if (outcome.ok) {
                 if (this.outDir) this._write(outcome.blueprint);
                 return outcome;
             }
             lastErrors = outcome.errors;
         }
-        return { ok: false, error: `decomposition failed after ${this.maxRetries + 1} attempts`, errors: lastErrors, blueprint: null };
+        return { ok: false, error: `decomposition failed after ${this.maxRetries + 1} attempts`, errors: lastErrors, falsifiedEvidence, blueprint: null };
     }
 
     async _attempt(rootStatement, imports = [], opts = {}) {
         const warnings = [];
+        const evidenceBefore = opts.falsifiedEvidence?.length ?? 0;
         let response;
         try {
             const t0 = Date.now();
-            response = await this.llm.complete(buildSkeletonPrompt(rootStatement, opts));
+            response = await this.llm.complete(buildSkeletonPrompt(rootStatement, { ...opts, falsifiedExamples: opts.falsifiedEvidence ?? [] }));
             const ms = Date.now() - t0;
             if (ms > 20000) console.log(`[skeleton] slow LLM call: ${(ms/1000).toFixed(1)}s`);
         } catch (err) {
@@ -185,6 +191,19 @@ export class SkeletonGenerator {
             if (check.status !== 'verified') {
                 warnings.push(`dropped lemma ${cand.name}: does not typecheck (${check.error?.message ?? check.error})`);
                 continue;
+            }
+            // Falsification gate (blueprint/falsify.js): a typechecking candidate may still be
+            // FALSE — the most expensive failure class (the erdos10 mission spent 400+ rounds
+            // on a false bridging lemma before this gate existed). Bounded counterexample
+            // search with kernel evidence; falsified children are dropped and the decomposition
+            // is retried with the counterexample as evidence, never the same construction.
+            if (opts.falsify && typeof opts.falsify.enabled === 'function') {
+                const verdict = await opts.falsify.enabled(stub);
+                if (verdict.falsified) {
+                    warnings.push(`FALSIFIED lemma ${cand.name}: counterexample \`${verdict.counterexample}\` verified by the kernel`);
+                    opts.falsifiedEvidence?.push({ name: cand.name, statement: stub, counterexample: verdict.counterexample });
+                    continue;
+                }
             }
             byId.set(id, { id, statement: stub, name: cand.name, deps: [] });
             nameToId.set(cand.name, id);
@@ -226,6 +245,18 @@ export class SkeletonGenerator {
         const audit = validateBlueprint(blueprint);
         if (!audit.ok) {
             return { ok: false, errors: audit.errors, warnings };
+        }
+        // A falsification drop is an audit failure: the surviving decomposition is missing the
+        // work the falsified lemma was carrying, so retrying with the counterexample evidence
+        // is mandatory, never optional. Only drops from THIS attempt count — the evidence array
+        // is shared across retries and earlier drops are already reflected in the prompt.
+        const newEvidence = (opts.falsifiedEvidence?.length ?? 0) - evidenceBefore;
+        if (newEvidence > 0) {
+            return {
+                ok: false,
+                errors: opts.falsifiedEvidence.slice(evidenceBefore).map(f => `falsified candidate ${f.name}: kernel-verified counterexample \`${f.counterexample}\``),
+                warnings
+            };
         }
         return { ok: true, blueprint, warnings };
     }

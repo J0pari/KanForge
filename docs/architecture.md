@@ -56,10 +56,21 @@ all hold; each is a mechanical or kernel-grounded check, not an appeal to the LL
    most checkable units. An undefined or misdefined term cannot be smuggled in as a bare symbol.
 
 3. **Behavioral probes (instance ledger).** The informal problem is accompanied by concrete
-   instances the source asserts are true and are false. The formalization states 3–5 of each;
+   instances the source asserts are true and are false. The formalization states 3�?"5 of each;
    every instance becomes an `example` the kernel must verify or refute (via `norm_num`,
    `native_decide`, or a one-line proof). A formalization that flips an asserted instance is
    wrong, automatically. Probes pin *meaning* where syntax alone cannot.
+
+4. **Falsification gate (implemented).** The probe discipline applies not only to formalization
+   but to EVERY candidate lemma the blueprint invents: before any tactic search, every
+   newly-emitted stub that is falsifiable in shape (universal Nat claims with decidable
+   arithmetic content) goes through bounded counterexample search (`blueprint/falsify.js`) —
+   the LLM proposes concrete instances, the kernel `decide`-verifies each, and a single verified
+   counterexample marks the candidate FALSIFIED. The skeleton drops falsified candidates and
+   retries the decomposition with the counterexample as prompt evidence, so a hallucinated
+   construction (the erdos10 mission's `two_pow_two_pow_ne_sum`, false at k=0) never receives
+   hundreds of proof-search rounds. The kernel is the only evidence; the LLM's role is instance
+   generation, never judgment.
 
 4. **Dual-formalization consensus.** Two independent formalization attempts of the same prose
    target are produced (the generalist orchestrator and the critic). If the kernel cannot prove
@@ -792,7 +803,9 @@ have a BM25-ranked candidate, and 19 conclusions have multiple store entries the
 first-inserted-wins exact path never tries. Registry components: `rankedReuse` (toggle),
 `reuseRankLimit` (candidates), `reuseRankedChecks` (fresh-check cap) — all ablation-measurable
 (`--ablate=...,rankedReuse`). Ranked candidates are retrieval, never truth; the kernel remains
-the sole accept authority.
+the sole accept authority. The store's canonicalization policy: at equal BM25 score, the entry
+with the SHORTEST proof trajectory wins — the canonical form of a fact is the one-prover, not
+the rediscovery.
 
 **Proof-pattern transfer (implemented).** Source inlining transfers a stored *proof*, which
 only proves its own statement — the probe showed the deep core needs reasoning transfer
@@ -1059,7 +1072,10 @@ and every comparison cost-normalized:
   repl restarts / verified, goal expansions / verified, reuse hit rate, and the pool's
   warm/cold check ratio — each recomputed from the event stream + backend health counters, not
   sampled. The warm/cold ratio is the leading indicator of kernel-import waste; the per-verified
-  costs are the check on "better or merely more expensive".
+  costs are the check on "better or merely more expensive". Each pass row also carries the
+  **failure taxonomy**: `math` / `search` / `infrastructure` counts of lemma failures,
+  classified from the error text — a worker timeout is never a mathematical judgment, and a
+  naive failure rate hides exactly that.
 - **Component ablation GRAPH, not a ladder** (`bench/ablation.js --ablate=<comps>`). There is no
   known hierarchy of merit among components, and component effects are neither assumed additive
   nor assumed commutative — the experiment must *measure* that. So the design is a factorial graph

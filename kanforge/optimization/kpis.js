@@ -31,10 +31,29 @@ export function computePassKpis({ events = [], rounds = [], backendInfos = null 
     const cold = backendInfos?.coldChecks ?? null;
     const totalChecks = (warm ?? 0) + (cold ?? 0);
 
+    // Failure taxonomy (mathematical vs search vs infrastructure): the distinction a naive
+    // failure rate hides. lemma_failed error strings are classified mechanically — an infra
+    // failure is never a mathematical judgment.
+    const classify = (msg) => {
+        const m = String(msg ?? '');
+        if (/repl|worker|timeout|timed out|acquire|session|process|spawn|paging|memory|no repl/i.test(m)) return 'infrastructure';
+        if (/unexpected token|parse error|extractGoals/i.test(m)) return 'infrastructure';
+        if (/guardrails rejected|KERNEL_REJECTED|Unknown identifier|unknown constant/i.test(m)) return 'math';
+        if (/budget|exhausted|not solved after search|could not extract/i.test(m)) return 'search';
+        return 'search';
+    };
+    const failureTaxonomy = { math: 0, search: 0, infrastructure: 0 };
+    for (const e of events) {
+        if (e.type === 'lemma_failed') {
+            failureTaxonomy[classify(e.error?.message ?? e.error)]++;
+        }
+    }
+
     return {
         passKpis: {
             verified,
             failed,
+            failureTaxonomy,
             roundsRun: rounds.length,
             llmCallsPerVerified: per(proposed),
             kernelOpsPerVerified: per(kernelOps),

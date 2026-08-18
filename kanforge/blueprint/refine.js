@@ -19,6 +19,7 @@ import { GoalMemory } from '../core/goalMemory.js';
 import { lemmaTrajectory } from '../optimization/causal.js';
 import { trajectoriesFromEvents, groupAdvantages } from '../optimization/grpo.js';
 import { harvestableIdentifiers, appendHarvestFile } from '../search/livePremises.js';
+import { falsifyCandidate } from './falsify.js';
 
 // Cycle repair: repeatedly find a dependency cycle and remove the NEWEST UNPROVED lemma in
 // it (children are appended to the array, so array position is the recency proxy). Proved
@@ -510,8 +511,11 @@ export class BlueprintRefiner {
             .map(d => working.lemmas.find(w => w.id === d)?.statement)
             .filter(Boolean);
         const oldDeps = [...(stub.deps ?? [])];
+        const falsifyGate = this.loopOptions.falsify
+            ? { enabled: (stmt) => falsifyCandidate(stmt, { llm: this.llm, backend: this.backend, maxInstances: this.loopOptions.falsifyMaxInstances ?? 6 }) }
+            : null;
         const sub = opts.resplitAllowed !== false
-            ? await this.skeleton.generate(stub.statement, opts.retry ? { priorChildren } : {})
+            ? await this.skeleton.generate(stub.statement, opts.retry ? { priorChildren, falsify: falsifyGate } : { falsify: falsifyGate })
             : null;
         if (!sub) {
             // resplitAllowed=false (parked stub) or the skeleton call failed: prove-or-stall,

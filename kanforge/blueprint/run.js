@@ -24,6 +24,7 @@ import { compilePredictorsFromDataset } from '../optimization/causal.js';
 import { STUB_TACTIC_MODULES } from '../search/tacticMenu.js';
 import { PREMS_STEP_1 } from '../bench/premisesCorpus.js';
 import { mergePremiseCorpora, premisesFromLemmas, loadHarvestFile } from '../search/livePremises.js';
+import { falsifyCandidate } from './falsify.js';
 import { assembleProvenance } from '../core/provenance.js';
 import { computePassKpis } from '../optimization/kpis.js';
 import { assembleGapAnnotated } from './assemble.js';
@@ -97,8 +98,10 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         } catch { /* corrupt blueprint.json — fall through to fresh skeleton */ }
     }
     if (!generated) {
-        const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir });
-        generated = await skeleton.generate(theorem);
+        const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir, maxRetries: loopOptions.skeletonMaxRetries ?? 2 });
+        generated = await skeleton.generate(theorem, loopOptions.falsify
+            ? { falsify: { enabled: (stmt) => falsifyCandidate(stmt, { llm, backend, maxInstances: loopOptions.falsifyMaxInstances ?? 6 }) } }
+            : {});
         if (!generated.ok) {
             return { ok: false, stage: 'skeleton', error: generated.error, errors: generated.errors ?? [], workDir, stored: { lemmas: 0, samples: 0 } };
         }
@@ -384,6 +387,8 @@ async function main() {
     const warmupTimeoutMs = Number(reg.effectiveValue('warmupTimeoutMs'));
     const rewarmDebounceMs = Number(reg.effectiveValue('rewarmDebounceMs'));
     const spawnRetryDelayMs = Number(reg.effectiveValue('spawnRetryDelayMs'));
+    const falsify = !args.includes('--no-falsify') && reg.effectiveValue('falsify');
+    const falsifyMaxInstances = Number(reg.effectiveValue('falsifyMaxInstances'));
     // Cold mathlib imports on a fresh worker can take 3-4 minutes (measured on the Finite.Basic
     // chain); 60s is a warm-worker budget only. Default from the registry (ablation-measurable);
     // covers the cold case with margin.
@@ -414,6 +419,7 @@ async function main() {
                 rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps,
                 retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus,
                 harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline,
+                falsify, falsifyMaxInstances,
                 coldCheckRecycleThreshold, warmupTimeoutMs, rewarmDebounceMs, spawnRetryDelayMs,
                 checkTimeoutMs, concurrency
             },
@@ -459,7 +465,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, premisesEnabled: premises },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, falsify, falsifyMaxInstances, premisesEnabled: premises },
             maxRounds,
             provenance
         });

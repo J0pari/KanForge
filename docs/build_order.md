@@ -171,6 +171,13 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   emit `blueprint.json` + `blueprint.md`.
 - **Acceptance:** a multi-lemma development (10+ lemmas) yields an acyclic blueprint whose stubs
   all typecheck under Lean (statement hash pinned per stub).
+- **Status (falsification gate, implemented).** Typecheck alone is not sufficient: a stub may
+  typecheck and be FALSE (the most expensive failure class — the erdos10 mission burned 400+
+  rounds on a bridging lemma false at k=0 before this gate existed). `blueprint/falsify.js`
+  runs bounded counterexample search on every falsifiable-shaped candidate: the LLM proposes
+  concrete instances, the kernel `decide`-verifies each, and one verified counterexample marks
+  the candidate FALSIFIED — the skeleton drops it and retries the decomposition with the
+  counterexample as prompt evidence (`falsify`/`falsifyMaxInstances` registry components).
 
 ### 4.2 Refine loop
 - `blueprint/refine.js`: repeatedly pick the lowest unproved stub → Phase 3 agent loop → fill or

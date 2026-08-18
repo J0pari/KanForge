@@ -48,7 +48,9 @@ export const COMPONENTS = {
     harvestCandidateLimit: { kind: 'slider', min: 0, max: 20, step: 1, default: 5, recommended: null, label: 'Premise harvest #check candidates per proof' },
     skeletonMaxRetries: { kind: 'slider', min: 0, max: 6, step: 1, default: 2, recommended: null, label: 'Skeleton decomposition retries' },
     predictorExploration: { kind: 'slider', min: 0, max: 0.2, step: 0.01, default: 0.02, recommended: null, label: 'Predictor counterfactual re-test rate' },
-    reuseMaxInline: { kind: 'slider', min: 1, max: 100, step: 1, default: 24, recommended: null, label: 'Max inlined declarations per reuse source' }
+    reuseMaxInline: { kind: 'slider', min: 1, max: 100, step: 1, default: 24, recommended: null, label: 'Max inlined declarations per reuse source' },
+    falsify: { kind: 'toggle', default: true, recommended: null, label: 'Falsification gate (bounded counterexample search on candidate lemmas)' },
+    falsifyMaxInstances: { kind: 'slider', min: 2, max: 12, step: 1, default: 6, recommended: null, label: 'Counterexample instances per candidate probe' }
 };
 
 // Runtime overrides (CLI --override=name=value): the uniform injection channel for the

@@ -232,6 +232,10 @@ export class LemmaStore {
             if (!entry) continue;
             out.push({ score: r.score, proofScript: entry.proofScript, statement: entry.statement, lemmaName: entry.lemmaName ?? null, tacticTrajectory: entry.tacticTrajectory ?? [] });
         }
+        // Canonicalization (the store's normalization policy): among candidates with equal
+        // score, prefer the entry with the SHORTEST proof trajectory — the canonical form of a
+        // fact is the one-prover, not the rediscovery.
+        out.sort((a, b) => (b.score - a.score) || ((a.tacticTrajectory?.length ?? 99) - (b.tacticTrajectory?.length ?? 99)) || String(a.lemmaName).localeCompare(String(b.lemmaName)));
         return out;
     }
 
