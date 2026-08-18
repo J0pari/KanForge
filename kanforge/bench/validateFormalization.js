@@ -29,6 +29,8 @@ const emitMission = argV('--emit-mission=');
 
 let prose = proseArg;
 let fcInstances = [];
+let targetStatement = null;
+let fcContext = null;
 if (fcFile) {
     const text = fs.readFileSync(fcFile, 'utf8');
     const facts = extractTestInstancesFromFc(text);
@@ -44,6 +46,16 @@ if (fcFile) {
     }
     const doc = (target.match(/\/--([\s\S]*?)-?\*\//) ?? [])[1] ?? '';
     prose = doc.replace(/\s+/g, ' ').trim() || `the statement of the theorem in ${fcFile}`;
+    // Statement grounding: fc-file targets carry the ACTUAL Lean statement. Extract it and hand
+    // it to the formalizer so the port is faithful (the prose-only path once formalized the
+    // famous open Erdős 10 from this file's solved variant — prose alone is not the statement).
+    const stmtMatch = target.match(/theorem\s+([\w.']+)\s*:\s*([\s\S]*?):=\s*by/);
+    if (stmtMatch) {
+        targetStatement = `theorem ${stmtMatch[1]} : ${stmtMatch[2].replace(/\s+/g, ' ').trim()} := by sorry`;
+        // Definition context: the file portion BEFORE the target block (namespace header,
+        // imports, and the definitions the statement references) — bounded for prompt size.
+        fcContext = text.slice(0, text.indexOf(target)).slice(0, 2500);
+    }
 }
 if (!prose) { console.error('usage: --prose="..." or --fc-file=<path> [--instances=...] [--source=id] [--emit-mission=<dir>]'); process.exit(2); }
 
@@ -52,11 +64,11 @@ const backend = createBackend({
     type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
     leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency: 1, timeoutMs: 180000
 });
-const af = new Autoformalizer({ llm, backend, checkTimeoutMs: 180000, onAttempt: a => console.log('[attempt]', JSON.stringify(a)) });
+const af = new Autoformalizer({ llm, backend, checkTimeoutMs: 180000, maxAttempts: 4, onAttempt: a => console.log('[attempt]', JSON.stringify(a)) });
 
 const t0 = Date.now();
 const ledger = [...instances, ...instanceStringsFor(fcInstances)];
-const r = await af.formalize(prose, { instances: ledger, source });
+const r = await af.formalize(prose, { instances: ledger, source, targetStatement, context: fcContext });
 console.log(JSON.stringify({ totalSec: +((Date.now() - t0) / 1000).toFixed(1), ok: r.ok }, null, 1));
 if (r.ok) {
     console.log('statement:');

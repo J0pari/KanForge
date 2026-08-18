@@ -86,6 +86,8 @@ export function normalizeFormalization(imports, theorem) {
 export const SYMBOL_MODULES = {
     'Finset.sum': { modules: ['Mathlib.Algebra.BigOperators.Ring.Finset'], notationFix: 'use the big-operator notation `∑ x ∈ s, f x` instead of `s.sum f`' },
     'Finset.card': { modules: ['Mathlib.Data.Finset.Card'], notationFix: 'use `s.card` (valid) — or `Finset.card s`' },
+    'Set.Infinite': { modules: ['Mathlib.Data.Set.Finite'] },
+    'Multiset.sum': { modules: ['Mathlib.Data.Multiset.Sum'] },
     'ℕ': { modules: ['Mathlib.Data.Nat.Basic'] }
 };
 

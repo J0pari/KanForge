@@ -116,21 +116,6 @@ export function extractTestInstancesFromFc(fcText) {
     return out;
 }
 
-// Extract the set literal from a `Set.Infinite { ... }` statement by brace counting.
-export function extractSetLiteral(statement) {
-    const text = String(statement ?? "");
-    const k = text.indexOf("Set.Infinite");
-    if (k === -1) return null;
-    const open = text.indexOf("{", k);
-    if (open === -1) return null;
-    let depth = 0;
-    for (let i = open; i < text.length; i++) {
-        const ch = text[i];
-        if (ch === "{") depth++;
-        else if (ch === "}") { depth--; if (depth === 0) return text.slice(open, i + 1); }
-    }
-    return null;
-}
 // Instance strings for the ledger/probe step from extracted membership facts. Phrased
 // generically — the set literal does not exist until the statement is formalized; the
 // formalization prompt and the probe builder both consume these.
@@ -140,7 +125,7 @@ export function instanceStringsFor(facts) {
 
 // --- prompts ---
 
-function buildFormalizationPrompt(prose, instances, repair = null) {
+function buildFormalizationPrompt(prose, instances, repair = null, target = null) {
     const instText = (instances?.length ?? 0)
         ? `\n\nAsserted instances (the instance ledger — each must hold under your formalization):\n${instances.map(i => `- ${i}`).join('\n')}`
         : '';
@@ -150,6 +135,13 @@ function buildFormalizationPrompt(prose, instances, repair = null) {
           + (repair.suggestModules?.length ? `\n- Add these imports (the symbol is missing from the current environment): ${repair.suggestModules.join(', ')}` : '')
           + (repair.notationFix ? `\n- Rewrite: ${repair.notationFix}` : '')
           + '\nFix ONLY what the reason identifies and return the corrected JSON.'
+        : '';
+    const targetText = target?.targetStatement
+        ? `\n\nTARGET STATEMENT (formalize EXACTLY this, do not invent a different proposition):\n\`\`\`\n${target.targetStatement}\n\`\`\``
+          + `\n- Keep the theorem name and proposition verbatim; the body must be exactly \`by sorry\`.\n`
+          + `- The final theorem must be SELF-CONTAINED: expand any non-mathlib definitions the proposition references INLINE (from the source context below) so only mathlib identifiers remain — the output is still exactly ONE \`theorem ... := by sorry\`.\n`
+          + `- Adapt namespaces to the target project; use only identifiers available in mathlib.\n`
+          + (target.context ? `\nSOURCE CONTEXT (definitions and neighboring declarations):\n\`\`\`\n${String(target.context).slice(0, 2500)}\n\`\`\`` : '')
         : '';
     return [
         {
@@ -163,7 +155,7 @@ function buildFormalizationPrompt(prose, instances, repair = null) {
                 '- Do NOT strengthen or weaken the proposition.\n' +
                 '- Do NOT use `open`/`open scoped`; modules come via imports only.\n' +
                 '- Use only identifiers available in mathlib.' +
-                instText + repairText
+                instText + targetText + repairText
         },
         {
             role: 'user',
@@ -235,13 +227,16 @@ export class Autoformalizer {
         });
     }
 
-    // formalize(prose, { instances, source }) → { ok, statement, shortlistEntry, error? }
+    // formalize(prose, { instances, source, targetStatement, context }) → { ok, statement, shortlistEntry, error? }
     // pipeline: propose (strict JSON) → static-validate → kernel-check → probes (batched) →
     // entry. Repair is classified and targeted; maxAttempts bounds the loop.
-    async formalize(prose, { instances = [], source = null } = {}) {
+    // targetStatement grounds fc-file ingestion: when present, the formalization must PORT the
+    // given statement verbatim (with any needed definitions from context) instead of inventing
+    // one from prose — the ported text is still kernel-checked, so this is not a bypass.
+    async formalize(prose, { instances = [], source = null, targetStatement = null, context = null } = {}) {
         let last = null;
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
-            const proposed = await this._propose(prose, instances, last);
+            const proposed = await this._propose(prose, instances, last, { targetStatement, context });
             if (!proposed.ok) {
                 last = { stage: 'parse', reason: proposed.error };
                 this._attempt(attempt, last);
@@ -308,23 +303,23 @@ export class Autoformalizer {
             let ledgerInstances = instances;
             let autoProbeResults = [];
             if (!ledgerInstances?.length) {
-                const setLit = extractSetLiteral(statement);
-                if (setLit) {
-                    const imports = statement.split("\n").filter(l => /^\s*import\s+\S/.test(l)).join("\n");
-                    for (const n of [1, 2, 3, 4, 5]) {
-                        const inSrc = `${imports}${imports ? "\n\n" : ""}example : (${n} : Nat) \u2208 ${setLit} := by decide`;
-                        const notSrc = `${imports}${imports ? "\n\n" : ""}example : (${n} : Nat) \u2209 ${setLit} := by decide`;
-                        try {
-                            const inChk = await this.backend.check(inSrc, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
-                            if (inChk.status === "verified") { autoProbeResults.push({ instance: `the number ${n} is an element of the set`, verified: true }); continue; }
-                            const notChk = await this.backend.check(notSrc, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
-                            if (notChk.status === "verified") autoProbeResults.push({ instance: `the number ${n} is not an element of the set`, verified: true });
-                        } catch { /* undecidable or infra failure: skip this candidate */ }
-                    }
+                // No caller-provided instances: membership in these sets is an unbounded
+                // existential, so `decide` is impossible — probe small-number membership BOTH
+                // ways through the standard probe builder, and keep only kernel-VERIFIED
+                // probes. The ledger stays evidence-backed, and the intake gate stays
+                // fail-closed when nothing verifies.
+                const candidates = [];
+                for (const n of [1, 2, 3, 4, 5]) {
+                    candidates.push(`the number ${n} is an element of the set`);
+                    candidates.push(`the number ${n} is not an element of the set`);
                 }
+                const pr = await this._verifyProbes(statement, candidates);
+                autoProbeResults = (pr.results ?? []).filter(r => r.verified);
                 ledgerInstances = autoProbeResults.map(r => r.instance);
             }
-            const probes = await this._verifyProbes(statement, ledgerInstances);
+            const probes = autoProbeResults.length
+                ? { ok: true, results: autoProbeResults }
+                : await this._verifyProbes(statement, ledgerInstances);
 
             if (!probes.ok) {
                 // Per §0.1: a probe failure is a formalization failure WITH evidence, never
@@ -344,9 +339,9 @@ export class Autoformalizer {
         return { ok: false, error: last ? `${last.stage}: ${last.reason}` : 'formalization failed', shortlistEntry: null };
     }
 
-    async _propose(prose, instances, repair = null) {
+    async _propose(prose, instances, repair = null, target = null) {
         try {
-            const resp = await this.llm.complete(buildFormalizationPrompt(prose, instances, repair));
+            const resp = await this.llm.complete(buildFormalizationPrompt(prose, instances, repair, target));
             return parseFormalizationJson(resp?.text);
         } catch (err) {
             return { ok: false, error: `LLM call failed: ${err?.message ?? String(err)}` };
@@ -360,9 +355,19 @@ export class Autoformalizer {
         const stripped = stripImports(statement);
         const fast = await this.backend.check(stripped, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
         if (fast.status === 'verified') return { ok: true };
-        if (!/expected token/i.test(fast.error?.message ?? '')) {
-            const msg = String(fast.error?.message ?? fast.error ?? 'unknown error');
+        const fastMsg = String(fast.error?.message ?? fast.error ?? 'unknown error');
+        if (/already been declared|already declared/i.test(fastMsg)) {
+            // The warm session already holds this declaration (a prior attempt left it in the
+            // chained env). Reset the warm chain and verify on a fresh env — the session is
+            // poisoned for this name, not the statement.
+            if ('warmEnvId' in this.backend) this.backend.warmEnvId = null;
+            const fresh = await this.backend.check(statement, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
+            if (fresh.status === 'verified') return { ok: true };
+            const msg = String(fresh.error?.message ?? fresh.error ?? 'unknown error');
             return { ok: false, error: msg.slice(0, 1500) };
+        }
+        if (!/expected token/i.test(fastMsg)) {
+            return { ok: false, error: fastMsg.slice(0, 1500) };
         }
         // Repl quirk: fall back to fresh env with imports.
         const fresh = await this.backend.check(statement, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
