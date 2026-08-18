@@ -116,6 +116,21 @@ export function extractTestInstancesFromFc(fcText) {
     return out;
 }
 
+// Extract the set literal from a `Set.Infinite { ... }` statement by brace counting.
+export function extractSetLiteral(statement) {
+    const text = String(statement ?? "");
+    const k = text.indexOf("Set.Infinite");
+    if (k === -1) return null;
+    const open = text.indexOf("{", k);
+    if (open === -1) return null;
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") { depth--; if (depth === 0) return text.slice(open, i + 1); }
+    }
+    return null;
+}
 // Instance strings for the ledger/probe step from extracted membership facts. Phrased
 // generically — the set literal does not exist until the statement is formalized; the
 // formalization prompt and the probe builder both consume these.
@@ -290,7 +305,27 @@ export class Autoformalizer {
                 this._attempt(attempt, last);
                 continue;
             }
-            const probes = await this._verifyProbes(statement, instances);
+            let ledgerInstances = instances;
+            let autoProbeResults = [];
+            if (!ledgerInstances?.length) {
+                const setLit = extractSetLiteral(statement);
+                if (setLit) {
+                    const imports = statement.split("\n").filter(l => /^\s*import\s+\S/.test(l)).join("\n");
+                    for (const n of [1, 2, 3, 4, 5]) {
+                        const inSrc = `${imports}${imports ? "\n\n" : ""}example : (${n} : Nat) \u2208 ${setLit} := by decide`;
+                        const notSrc = `${imports}${imports ? "\n\n" : ""}example : (${n} : Nat) \u2209 ${setLit} := by decide`;
+                        try {
+                            const inChk = await this.backend.check(inSrc, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
+                            if (inChk.status === "verified") { autoProbeResults.push({ instance: `the number ${n} is an element of the set`, verified: true }); continue; }
+                            const notChk = await this.backend.check(notSrc, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
+                            if (notChk.status === "verified") autoProbeResults.push({ instance: `the number ${n} is not an element of the set`, verified: true });
+                        } catch { /* undecidable or infra failure: skip this candidate */ }
+                    }
+                }
+                ledgerInstances = autoProbeResults.map(r => r.instance);
+            }
+            const probes = await this._verifyProbes(statement, ledgerInstances);
+
             if (!probes.ok) {
                 // Per §0.1: a probe failure is a formalization failure WITH evidence, never
                 // silently corrected — but a fixable probe-set is retried once (targeted).
@@ -303,7 +338,7 @@ export class Autoformalizer {
             return {
                 ok: true,
                 statement,
-                shortlistEntry: this._entry(statement, prose, { source, instances, probes: probes.results, attempts: attempt })
+                shortlistEntry: this._entry(statement, prose, { source, instances, probes: autoProbeResults.length ? autoProbeResults : probes.results, attempts: attempt })
             };
         }
         return { ok: false, error: last ? `${last.stage}: ${last.reason}` : 'formalization failed', shortlistEntry: null };

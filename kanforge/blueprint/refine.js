@@ -19,11 +19,16 @@ import { GoalMemory } from '../core/goalMemory.js';
 import { lemmaTrajectory } from '../optimization/causal.js';
 import { trajectoriesFromEvents, groupAdvantages } from '../optimization/grpo.js';
 import { harvestableIdentifiers, appendHarvestFile } from '../search/livePremises.js';
-import { falsifyCandidate } from './falsify.js';
+import { falsifyCandidate, isFalsifiableStatement } from './falsify.js';
 
 // Cycle repair: repeatedly find a dependency cycle and remove the NEWEST UNPROVED lemma in
 // it (children are appended to the array, so array position is the recency proxy). Proved
 // lemmas are never pruned — only unproved, newest-first. Returns the pruned ids.
+function declNameOf(statement) {
+    const m = String(statement ?? "").match(/^(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.']*)/m);
+    return m ? m[1] : null;
+}
+
 export function repairCycles(lemmas) {
     const working = lemmas; // mutated in place
     const pruned = [];
@@ -316,6 +321,16 @@ export class BlueprintRefiner {
                         console.log(`[refine]   merged re-split created a cycle; pruned ${pruned.length} child lemma(s): ${pruned.map(id => id.slice(0, 10)).join(', ')}`);
                     }
                 }
+                if (r.falsified) {
+                    this._falsifiedEvidence = this._falsifiedEvidence ?? [];
+                    this._falsifiedEvidence.push({ name: declNameOf(stub.statement), statement: stub.statement, counterexample: r.counterexample });
+                    const idx = working.lemmas.indexOf(stub);
+                    if (idx !== -1) working.lemmas.splice(idx, 1);
+                    for (const l of working.lemmas) {
+                        l.deps = (l.deps ?? []).filter(d => d !== stub.id);
+                    }
+                    console.log(`[refine]   pruned falsified stub ${stub.id.slice(0, 10)}…; evidence recorded for parent re-splits`);
+                }
                 const addedNow = Math.max(0, working.lemmas.length - before);
                 // DAG reachability hygiene: old children whose dependency edges this re-split
                 // dropped become orphan branches unless another lemma still depends on them.
@@ -413,6 +428,18 @@ export class BlueprintRefiner {
         // accepted (retrieval never bypasses verification); a store entry that fails here is a
         // stale entry and the stub falls through to a fresh proof.
         const stmtHash = hashStatement(stub.statement);
+        // Attempt-entry falsification: a stub that survived into the DAG (resumed from an
+        // older run, or a child of an older decomposition) is itself gated before any
+        // search — a kernel-verified counterexample prunes it and the evidence feeds its
+        // parent's re-split. Memoized per pass.
+        if (this.loopOptions.falsify && !stub.proof && !(this._falsifiedChecked ??= new Set()).has(stub.id) && isFalsifiableStatement(stub.statement)) {
+            this._falsifiedChecked.add(stub.id);
+            const verdict = await falsifyCandidate(stub.statement, { llm: this.llm, backend: this.backend, maxInstances: this.loopOptions.falsifyMaxInstances ?? 6 });
+            if (verdict.falsified) {
+                console.log(`[refine]   FALSIFIED stub ${stub.id.slice(0, 10)}… by kernel counterexample: ${verdict.counterexample}`);
+                return { proved: false, resplit: false, added: 0, children: [], falsified: true, counterexample: verdict.counterexample };
+            }
+        }
         const reused = this.lemmaStore?.get(stmtHash);
         this.reuseRejectedThisPass ??= new Set();
         if (reused?.proofScript && !this.reuseRejectedThisPass.has(stmtHash)) {
@@ -515,7 +542,7 @@ export class BlueprintRefiner {
             ? { enabled: (stmt) => falsifyCandidate(stmt, { llm: this.llm, backend: this.backend, maxInstances: this.loopOptions.falsifyMaxInstances ?? 6 }) }
             : null;
         const sub = opts.resplitAllowed !== false
-            ? await this.skeleton.generate(stub.statement, opts.retry ? { priorChildren, falsify: falsifyGate } : { falsify: falsifyGate })
+            ? await this.skeleton.generate(stub.statement, { priorChildren, falsify: falsifyGate, falsifiedEvidence: (this._falsifiedEvidence ?? []).slice(-8) })
             : null;
         if (!sub) {
             // resplitAllowed=false (parked stub) or the skeleton call failed: prove-or-stall,
