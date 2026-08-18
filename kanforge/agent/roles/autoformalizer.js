@@ -89,11 +89,29 @@ export function stripImports(statement) {
 // builder resolves the concrete decidable example against the statement's set literal).
 export function extractTestInstancesFromFc(fcText) {
     const out = [];
-    const blocks = String(fcText ?? '').split(/(?=@\[category test\])/g);
+    const text = String(fcText ?? "");
+    // Split on test-category blocks by the plain marker text, then read each block's
+    // theorem line and classify the membership symbol by its code point.
+    const marker = "category test";
+    const blocks = [];
+    let start = 0;
+    for (let i = text.indexOf(marker); i !== -1; i = text.indexOf(marker, i + marker.length)) {
+        blocks.push(text.slice(start, i));
+        start = i;
+    }
+    blocks.push(text.slice(start));
     for (const b of blocks) {
-        const m = b.match(/theorem\s+\w+[\s\S]*?:\s*(\d+)\s*(∈|∉)\s*([A-Za-z_][A-Za-z0-9_.']*)/);
-        if (!m) continue;
-        out.push({ n: Number(m[1]), in: m[2] === '∈' });
+        const th = b.indexOf("theorem ");
+        if (th === -1) continue;
+        for (const rawLine of b.slice(th).split("\n")) {
+            const line = rawLine.trim();
+            const head = line.match(/^theorem\s+\w+\s*:\s*(\d+)\s*(.)\s*([A-Za-z_][A-Za-z0-9_.]*)/);
+            if (!head) continue;
+            const cp = head[2].charCodeAt(0);
+            if (cp !== 0x2208 && cp !== 0x2209) continue;
+            out.push({ n: Number(head[1]), in: cp === 0x2208 });
+            break;
+        }
     }
     return out;
 }
