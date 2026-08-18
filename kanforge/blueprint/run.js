@@ -167,7 +167,7 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // forward-assembly condition — "the whole DAG typechecks with sorries as its only open
     // points" — is verified continuously, not just on demand.
     try {
-        const assembly = assembleGapAnnotated({ lemmas: refined.refined.lemmas, rootStatement: theorem });
+        const assembly = assembleGapAnnotated({ lemmas: refined.refined.lemmas, rootStatement: theorem, store: effectiveStore });
         const assemblyDir = path.join(workDir, 'assembly');
         fs.mkdirSync(assemblyDir, { recursive: true });
         fs.writeFileSync(path.join(assemblyDir, 'assembled.lean'), assembly.source, 'utf8');

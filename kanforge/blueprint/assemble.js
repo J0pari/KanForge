@@ -32,9 +32,29 @@ function declName(statement) {
 // The only issues lean4web should raise for the emitted file are the `sorry` warnings —
 // anything else is a REAL defect (an ill-typed edge, a duplicate name, a drifted root) and is
 // reported, never papered over.
-export function assembleGapAnnotated({ lemmas, rootStatement, rootId = null }) {
+export function assembleGapAnnotated({ lemmas, rootStatement, rootId = null, store = null }) {
     const byId = new Map(lemmas.map(l => [l.id, l]));
-    const order = topologicalOrder(lemmas);
+    // Ordering constraint: a lemma's declaration must precede every lemma whose PROOF
+    // references it — dependency edges alone are not enough (proof-level references without a
+    // deps edge produce forward references, which the kernel rejects). Augment the edges with
+    // proof-reference ownership, then topologically order the union; fall back to the deps-only
+    // order if the augmented graph is cyclic (the kernel then reports the residual defect).
+    const ownerByName = new Map();
+    for (const l of lemmas) {
+        const n = declName(l.statement);
+        if (n && !ownerByName.has(n)) ownerByName.set(n, l.id);
+    }
+    const augmented = lemmas.map(l => {
+        const extra = new Set();
+        if (l.proof) {
+            for (const id of extractIdentifiers(String(l.proof))) {
+                const o = ownerByName.get(id);
+                if (o && o !== l.id) extra.add(o);
+            }
+        }
+        return { id: l.id, deps: [...new Set([...(l.deps ?? []), ...extra])] };
+    });
+    const order = topologicalOrder(augmented) ?? topologicalOrder(lemmas);
     if (!order) throw new Error('assemble: dependency DAG is cyclic — nothing coherent to assemble');
 
     const rootLemma = rootId ? byId.get(rootId) : lemmas.find(l => l.id === hashStatement(rootStatement));
@@ -72,45 +92,31 @@ export function assembleGapAnnotated({ lemmas, rootStatement, rootId = null }) {
         return fresh;
     };
 
-    // Body: topological order, deps first, root LAST (it is the target, everything feeds it).
-    // Each part's OWN import lines are stripped — they are already in the hoisted union at the
-    // top, and the kernel rejects `import` anywhere else in the file.
+    // Pertinence walk FIRST (structure drives emission, not the other way around): backward
+    // reachability from the ROOT over dependency edges AND proof-script references. Every
+    // pertinent lemma gets { depth } = distance from the root; everything else is an orphan
+    // branch. Also compute usedBy (which lemmas reference this one) for the annotation cues.
     const stripImports = (s) => String(s).split(/\r?\n/).filter(l => !/^\s*import\s+\S/.test(l)).join('\n');
-    const body = [];
-    const gaps = [];
-    const emit = (l, isRoot) => {
-        const name = nameFor(l);
-        let stmt = stripImports(l.statement.trim());
-        if (name && name !== declName(l.statement)) {
-            stmt = stmt.replace(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.']*)/, `theorem ${name}`);
-        }
-        if (l.proof) {
-            body.push(buildProofSource(stmt, l.proof));
-        } else {
-            gaps.push({ id: l.id, name, statement: stmt, stalled: !!l.stalled, root: !!isRoot });
-            body.push(stmt);
-        }
-    };
-    for (const id of order) {
-        const l = byId.get(id);
-        if (!l || id === rootLemma.id) continue;
-        emit(l, false);
-    }
-    emit(rootLemma, true);
-
-    const source = `${[...imports].join('\n')}\n\n${body.join('\n\n')}\n`;
-
-    // Pertinence audit: reference graph over declaration names (who references whom in proof
-    // scripts), then reachability from the ROOT backwards to every lemma. A lemma is PERTINENT
-    // when the root's assembly path references it (transitively); otherwise it is an orphan
-    // branch — a disconnected subgraph with no derivation path to the root.
     const nameById = new Map();
     for (const l of lemmas) {
         const n = declName(l.statement);
         if (n) nameById.set(l.id, n);
     }
-    // Backward reachability: start from the root lemma; a lemma is reachable if the root (or a
-    // reachable lemma) references its name. The root itself is always pertinent.
+    const usedBy = new Map();
+    for (const l of lemmas) usedBy.set(l.id, new Set());
+    for (const l of lemmas) {
+        const ownerName = declName(l.statement);
+        const refs = new Set([...(l.deps ?? [])]);
+        if (l.proof) {
+            for (const id of extractIdentifiers(String(l.proof))) refs.add(id);
+        }
+        for (const [cid, cname] of nameById) {
+            if (refs.has(cname) && ownerName && ownerName !== cname) {
+                usedBy.get(cid)?.add(ownerName);
+            }
+        }
+    }
+    for (const [id, s] of usedBy) usedBy.set(id, [...s]);
     const pertinent = new Map([[rootLemma.id, { depth: 0 }]]);
     let frontier = [rootLemma.id];
     let depth = 0;
@@ -137,9 +143,103 @@ export function assembleGapAnnotated({ lemmas, rootStatement, rootId = null }) {
         }
         frontier = next;
     }
-    const orphans = lemmas
-        .filter(l => l.id !== rootLemma.id && !pertinent.has(l.id))
-        .map(l => ({ id: l.id, name: declName(l.statement), proved: !!l.proof, stalled: !!l.stalled, statement: l.statement.split('\n').pop() }));
+
+    // ---- Structured emission: the file reads as the proof plan, not a findings list. ----
+    const sections = [];
+    const banner = (text) => `/- ${text} -/`;
+    const gaps = [];
+    const emitLemma = (l, { isRoot = false, isOrphan = false } = {}) => {
+        const name = nameFor(l);
+        let stmt = stripImports(l.statement.trim());
+        if (name && name !== declName(l.statement)) {
+            stmt = stmt.replace(/(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.']*)/, `theorem ${name}`);
+        }
+        const d = isRoot ? 0 : (pertinent.get(l.id)?.depth ?? null);
+        const users = usedBy.get(l.id) ?? [];
+        const role = isRoot
+            ? `ROOT — the mission statement; everything above assembles forward into this`
+            : (l.proof
+                ? `[depth ${d}] ${name} — used by: ${users.length ? users.join(', ') : '(nothing yet — near the frontier)'}`
+                : `[depth ${d}] GAP (sorry) ${name} — needed by: ${users.length ? users.join(', ') : '(no current users — pending parent re-split)'}`);
+        sections.push(banner(role), l.proof ? buildProofSource(stmt, l.proof) : stmt);
+        if (!l.proof) {
+            gaps.push({ id: l.id, name, statement: stmt, stalled: !!l.stalled, root: !!isRoot, depth: d, usedBy: users });
+        }
+    };
+
+    sections.push(banner('==============================================================================='));
+    sections.push(banner('GAP-ANNOTATED PROOF ASSEMBLY — the whole working DAG, structured as a derivation'));
+    sections.push(banner(`root: ${declName(rootLemma.statement)}`));
+    sections.push(banner(`proved ${lemmas.filter(l => l.proof).length}/${lemmas.length} — gaps (sorries): every unproved lemma below`));
+    sections.push(banner('reading order: dependency order, leaves first, the ROOT last — every declaration'));
+    sections.push(banner('is annotated with its distance to the root and the lemmas that use it.'));
+    sections.push(banner('every `sorry` below is an ACKNOWLEDGED gap — the ONLY open points this file'));
+    sections.push(banner('should present to the kernel.'));
+    sections.push(banner('==============================================================================='));
+
+    for (const id of order) {
+        const l = byId.get(id);
+        if (!l || id === rootLemma.id || !pertinent.has(id)) continue;
+        emitLemma(l);
+    }
+    sections.push(banner('==============================================================================='));
+    sections.push(banner('ROOT — the mission statement. Everything above assembles forward into this.'));
+    sections.push(banner('==============================================================================='));
+    emitLemma(rootLemma, { isRoot: true });
+
+    const orphanIds = order.filter(id => id !== rootLemma.id && !pertinent.has(id));
+    if (orphanIds.length) {
+        sections.push(banner('==============================================================================='));
+        sections.push(banner(`ORPHAN BRANCHES (${orphanIds.length}) — no derivation path to the root. Assembled for`));
+        sections.push(banner('typechecking completeness only; they are NOT part of the proof plan.'));
+        sections.push(banner('==============================================================================='));
+        for (const id of orphanIds) emitLemma(byId.get(id), { isOrphan: true });
+    }
+
+    // Closure appendix: names referenced by reuse-proved lemmas whose declarations live only in
+    // the store (not the DAG). Recursively appended, deduped against names already declared.
+    const declaredHere = new Set(seenNames.keys());
+    let appendix = [];
+    if (store && typeof store.get === 'function') {
+        const all = typeof store.list === 'function' ? store.list() : [];
+        const byName = new Map();
+        for (const e of all) {
+            const n = declName(e?.statement ?? '');
+            if (n && !byName.has(n)) byName.set(n, e);
+        }
+        const referenced = () => {
+            const names = new Set();
+            for (const part of [...sections, ...appendix]) {
+                for (const id of extractIdentifiers(String(part))) names.add(id);
+            }
+            return names;
+        };
+        let guard = 0;
+        for (;;) {
+            if (guard++ > 50) break;
+            const missing = [...referenced()].filter(n => !declaredHere.has(n) && byName.has(n));
+            if (!missing.length) break;
+            for (const n of missing) {
+                const entry = byName.get(n);
+                if (!entry?.proofScript || String(entry.proofScript).includes('sorry')) continue;
+                try {
+                    appendix.push(stripImports(buildProofSource(entry.statement, entry.proofScript)));
+                    declaredHere.add(n);
+                } catch { /* malformed store entry — the kernel reports the residual error */ }
+            }
+        }
+    }
+    if (appendix.length) {
+        sections.push(banner('==============================================================================='));
+        sections.push(banner('CLOSURE APPENDIX — store declarations referenced by reuse-proved lemmas above.'));
+        sections.push(banner('==============================================================================='));
+        for (const decl of appendix) sections.push(decl);
+    }
+
+    const source = `${[...imports].join('\n')}\n\n${sections.join('\n\n')}\n`;
+
+    const orphans = orphanIds
+        .map(id => { const l = byId.get(id); return { id: l.id, name: declName(l.statement), proved: !!l.proof, stalled: !!l.stalled, statement: l.statement.split('\n').pop() }; });
 
     return {
         source,
@@ -176,7 +276,9 @@ async function main() {
     const rootStatement = fs.readFileSync(statementFile, 'utf8').trim();
     const checkpointPath = path.join(PACKAGE_ROOT, '..', 'runs', problem, 'checkpoint.json');
     const ck = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
-    const report = assembleGapAnnotated({ lemmas: ck.lemmas, rootStatement });
+    const { LemmaStore } = await import('../growth/lemmaStore.js');
+    const store = new LemmaStore({ dir: path.join(PACKAGE_ROOT, '..', 'runs', 'lemma-store') });
+    const report = assembleGapAnnotated({ lemmas: ck.lemmas, rootStatement, store });
 
     const backend = createBackend({
         type: 'repl',

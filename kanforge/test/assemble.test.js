@@ -26,7 +26,8 @@ test('assembly orders deps first, root last, proved lemmas carry proofs', () => 
     assert.strictEqual(r.gapCount, 1);
     assert.strictEqual(r.gaps[0].root, true);
     assert.strictEqual(r.allProved, false);
-    assert.ok(r.source.trimEnd().endsWith(':= by sorry'), 'root gap acknowledged with sorry');
+    assert.ok(r.source.includes('ROOT — the mission statement'), 'root section marker present');
+    assert.ok(r.source.includes('theorem mission_root (a : Nat) : a + 0 = a := by sorry'), 'root gap acknowledged with sorry');
 });
 
 test('orphan branches are flagged as orphan branches, never counted as pertinence', () => {
