@@ -2,11 +2,12 @@
 // loop attempts. The root theorem carries its imports — the loop's extractGoals opens a leased
 // session with them, exactly like a blueprint root. Cells measure pass rate + cost per recipe
 // and component mask on the REAL mission, not a harness problem.
-// Source: corpus/index/corpus.json + the autoformalizer's pinned statement (Erdős #10, the
-// even/prime+two-powers formalization from google-deepmind/formal-conjectures).
+// Source: corpus/index/corpus.json — the Erdős-10 variant statement (the solved "infinitely
+// many even integers not a prime plus two powers of 2" formalization from
+// google-deepmind/formal-conjectures, file ErdosProblems/10.lean, `erdos_10.variants.two_pows`).
 export const MISSION_PROBLEMS = [
     {
-        id: 'erdos10',
+        id: 'erdos10-variant-two-pows',
         tier: 'mission',
         statement: [
             'import Mathlib.Algebra.Group.Even',

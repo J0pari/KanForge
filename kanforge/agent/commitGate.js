@@ -53,9 +53,8 @@ export async function runCommitGate({
     // stateless `check` here would need a second pool worker while the session holds its
     // lease — a self-inflicted pool block on single-worker configurations. The verify result
     // carries the compose errors just as well; the source head is logged with any failure.)
-    // A parse-class rejection on a WELL-FORMED source is a transient repl artifact (observed
-    // on the mission box under kill/recycle churn: `unexpected token '+'` on trivial sources
-    // that extractGoals accepted) — retry once before treating it as a real rejection.
+    // A parse-class rejection on a WELL-FORMED source is a transient repl artifact — retry
+    // once before treating it as a real rejection.
     let verification = await backend.verifyProof(source, lemmaId);
     if (verification.status !== 'verified') {
         const msg = String(verification.error?.message ?? verification.error ?? '');

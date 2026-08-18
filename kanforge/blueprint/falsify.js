@@ -1,8 +1,7 @@
-// Falsification gate (build_order.md §4.1 safeguard): before any tactic search touches a
-// candidate lemma, the pipeline asks whether the candidate is even TRUE. A bridging lemma
-// that is false (a hallucinated construction, an over-universal claim) is the most expensive
-// class of failure the system can make — the erdos10 mission spent 400+ rounds trying to
-// prove `two_pow_two_pow_ne_sum`, which is false at k=0 (4 = 2 + 2^0 + 2^0).
+// Falsification gate: before any tactic search touches a candidate lemma, the pipeline asks
+// whether the candidate is even TRUE. A bridging lemma that is false (a hallucinated
+// construction, an over-universal claim) is the most expensive class of failure the system
+// can make — proof search cannot detect it, only counterexamples can.
 //
 // The mechanism is kernel-grounded, never trust-based:
 //   1. The LLM is asked for concrete falsifying INSTANCES (small assignments), not judgments —

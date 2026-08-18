@@ -172,7 +172,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - **Acceptance:** a multi-lemma development (10+ lemmas) yields an acyclic blueprint whose stubs
   all typecheck under Lean (statement hash pinned per stub).
 - **Status (falsification gate, implemented).** Typecheck alone is not sufficient: a stub may
-  typecheck and be FALSE (the most expensive failure class — the erdos10 mission burned 400+
+  typecheck and be FALSE (the most expensive failure class — proof search cannot detect a false claim)
   rounds on a bridging lemma false at k=0 before this gate existed). `blueprint/falsify.js`
   runs bounded counterexample search on every falsifiable-shaped candidate: the LLM proposes
   concrete instances, the kernel `decide`-verifies each, and one verified counterexample marks
@@ -185,7 +185,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
 - Drift detection: `blueprint/drift.js` periodically re-hashes stub statements.
 - **Acceptance:** the 10+ lemma development is fully proved bottom-up with no `sorry`; blueprint
   is invariant across the run (statement set unchanged).
-- **Status (live-path hardening, erdos10 mission).** The sequential round became a
+- **Status (live-path hardening).** The sequential round became a
   **frontier-parallel batch**: up to `concurrency − 1` ready stubs are attempted in parallel
   lanes (pure units — children are returned, never pushed), with a serial merge that applies
   children, repairs cycles, appends rounds/hash chain, and checkpoints. Lane crashes degrade to
@@ -293,7 +293,7 @@ results*, not by code volume. The product scope is unchanged — this is orderin
   `tauto_elim` flips FAILED→SOLVED on the first call under both best-of-N and MCGS, and the whole
   set goes 4/5→5/5 at LOWER cost (best-of-N 15→10 calls, MCGS 6→5). Coverage widens recall; for
   arg-less closers that is the whole fix.
-- **Status (live corpus wiring, erdos10 mission).** The ablation corpora were the only corpus
+- **Status (live corpus wiring).** The ablation corpora were the only corpus
   source; the live refine path never built one, so the wired retrieval seam
   (`TacticLoop → SearchEngine → buildPremisePrompt`) ran inert in production. Closed by
   `search/livePremises.js` + `blueprint/run.js --premises`: curated base + mission-proved lemmas
@@ -501,7 +501,7 @@ about dead code.
   + the reuse engine's ranked fallback (top-K candidates through the kernel-verified variant
   chain, global fresh-check cap) behind the `rankedReuse` registry toggle with `reuseRankLimit`
   / `reuseRankedChecks` sliders — all ablation-measurable (`--ablate=...,rankedReuse`). Measured
-  opportunity on the erdos10 mission: 100% of exact-miss unproved stubs have a ranked candidate;
+  opportunity measured live: 100% of exact-miss unproved stubs have a ranked candidate;
   19 conclusions have multiple store entries the first-inserted exact path never tries. The
   kernel remains the sole accept authority; ranked candidates are retrieval, never truth.
 The content-addressed `growth/lemmaStore.js` (statement hash → artifact) evolves into a retrieval

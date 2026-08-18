@@ -66,11 +66,11 @@ all hold; each is a mechanical or kernel-grounded check, not an appeal to the LL
    newly-emitted stub that is falsifiable in shape (universal Nat claims with decidable
    arithmetic content) goes through bounded counterexample search (`blueprint/falsify.js`) —
    the LLM proposes concrete instances, the kernel `decide`-verifies each, and a single verified
-   counterexample marks the candidate FALSIFIED. The skeleton drops falsified candidates and
-   retries the decomposition with the counterexample as prompt evidence, so a hallucinated
-   construction (the erdos10 mission's `two_pow_two_pow_ne_sum`, false at k=0) never receives
-   hundreds of proof-search rounds. The kernel is the only evidence; the LLM's role is instance
-   generation, never judgment.
+    counterexample marks the candidate FALSIFIED. The skeleton drops falsified candidates and
+    retries the decomposition with the counterexample as prompt evidence, so a hallucinated
+    construction (e.g. a bridging claim false at a small instance) never receives
+    hundreds of proof-search rounds. The kernel is the only evidence; the LLM's role is instance
+    generation, never judgment.
 
 4. **Dual-formalization consensus.** Two independent formalization attempts of the same prose
    target are produced (the generalist orchestrator and the critic). If the kernel cannot prove
@@ -781,9 +781,8 @@ reuse path (`agent/reuseEngine.js`) additionally matches by goal-shape: a stub w
 normalizes (semanticNormalize) to a stored lemma's conclusion is proved by `exact <stored name>`.
 Both paths assemble their verification source with `buildReuseSource` (`core/state.js`), which
 inlines the stored proof's **dependency closure** — a stored proof references its own lemmas, and
-inlining only the stored lemma made fresh-env re-verification fail (observed as the
-`store_reuse_rejected` churn; measured on the erdos10 mission: ~50 of ~124 unproved stubs had
-conclusions matching a proved lemma). The closure is cycle-guarded, count-capped, and skips
+inlining only the stored lemma makes fresh-env re-verification fail (the closure inlines the
+dependencies so the assembled source is self-contained). The closure is cycle-guarded, count-capped, and skips
 declaration-name collisions; the kernel re-verifies the assembled text (warm env first, fresh env
 as the authoritative fallback), so a bad closure costs one check, never truth. Reuse rejections
 are memoized per statement hash per pass, so a churned stub does not re-pay the verification
@@ -798,7 +797,7 @@ conclusion match exists (or the exact candidate's hypotheses do not align and th
 rejects it), the store ranks every proved entry with the same BM25 scorer premise retrieval
 uses (`LemmaStore.rankByGoal`), keyed on goal type + context, and the reuse engine walks the
 top-K candidates through the same variant chain (closure → body-inline), kernel-verified, under
-a global fresh-check cap. Measured on the erdos10 mission: 100% of exact-miss unproved stubs
+a global fresh-check cap. Measured on a live mission: 100% of exact-miss unproved stubs
 have a BM25-ranked candidate, and 19 conclusions have multiple store entries the
 first-inserted-wins exact path never tries. Registry components: `rankedReuse` (toggle),
 `reuseRankLimit` (candidates), `reuseRankedChecks` (fresh-check cap) — all ablation-measurable

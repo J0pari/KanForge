@@ -6,7 +6,7 @@
 //      [--recipe=...] [--use-swiss] [--swiss-n=<n>] [--repulsion]
 //
 // --statement-file: read the theorem from a file instead of argv — unicode Lean statements are
-// mangled by some shells' argv encoding (observed: Windows PowerShell corrupts ∀ ∧ → ≠), so the
+// mangled by some shells' argv encoding (PowerShell corrupts ∀ ∧ → ≠), so the
 // file form is the robust path for corpus statements.
 
 import path from 'node:path';
@@ -54,10 +54,10 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
     // the reject gate cannot be contaminated by this cycle's outcomes. The compiled matcher is
     // subject to the §6 support/confidence gates; without enough prior data it is inert.
     const heldOutPredictors = compilePredictorsFromDataset(effectiveDataset.samples);
-    if (heldOutPredictors.count > 0) {
+    if (heldOutPredictors.count > 0 && reg.effectiveValue('predictors') !== false) {
         console.log(`[blueprint] predictors mined from prior data: ${heldOutPredictors.count} active (${heldOutPredictors.inert} inert)`);
     }
-    if (heldOutPredictors.count > 0) loopOptions.predictors = heldOutPredictors;
+    if (heldOutPredictors.count > 0 && reg.effectiveValue('predictors') !== false) loopOptions.predictors = heldOutPredictors;
 
     // Incremental event log: every loop event (goal_selected, tactic_proposed, tactic_failed,
     // etc.) is appended to events.jsonl as it happens, so a crashed run leaves the full
@@ -332,6 +332,22 @@ async function main() {
         process.exit(2);
     }
     const outDir = argValue(args, '--out-dir=') ?? (problemId ? path.join(PACKAGE_ROOT, '..', 'runs', problemId) : null);
+    // Intake gate (architecture.md §0.1 instance ledger, fail-closed): a mission statement
+    // may not enter the pipeline without kernel-verified instance probes. The gate refuses the
+    // run with a loud error; `--no-probes-required` exists ONLY for dev/test harnesses (the
+    // unit tests drive runBlueprintTheorem directly and never touch this path).
+    if (outDir && !args.includes('--no-probes-required')) {
+        const probesPath = path.join(outDir, 'probes.json');
+        const probes = fs.existsSync(probesPath) ? JSON.parse(fs.readFileSync(probesPath, 'utf8')) : null;
+        const ok = probes?.probes?.length > 0 && probes.probes.every(p => p.status === 'verified');
+        if (!ok) {
+            console.error(`[blueprint] INTAKE GATE: no verified instance probes for ${problemId ?? outDir}.`);
+            console.error(`[blueprint]   generate them with: node blueprint/probes.js --statement-file=<path> [--fc-file=<source>] --out=${probesPath}`);
+            console.error('[blueprint]   the mission may not enter the pipeline without a kernel-verified instance ledger.');
+            process.exit(3);
+        }
+        console.log(`[blueprint] intake gate: ${probes.probes.length} verified instance probes for ${problemId ?? outDir}`);
+    }
     if (fresh && outDir) {
         const backup = `${outDir}.archive.${Date.now()}`;
         if (fs.existsSync(outDir)) {
@@ -465,7 +481,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, falsify, falsifyMaxInstances, premisesEnabled: premises },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, compressionMetrics: reg.effectiveValue('compressionMetrics') !== false, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, falsify, falsifyMaxInstances, premisesEnabled: premises },
             maxRounds,
             provenance
         });

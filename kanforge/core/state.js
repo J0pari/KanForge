@@ -151,8 +151,7 @@ export function buildProofSource(statement, script) {
 
 // Transitive reuse source (§2.8 compression back-reference): a stored proof almost never
 // stands alone — it references its own dependency lemmas. Inlining only the stored lemma makes
-// the combined source fail fresh-env verification (observed as the store_reuse_rejected
-// churn), so this assembles the dependency CLOSURE (each dep's statement + proof, recursively,
+// the combined source fail fresh-env verification, so this assembles the dependency CLOSURE (each dep's statement + proof, recursively,
 // deepest first) and appends the target stub whose script references the inlined declarations
 // by name. Cycle-guarded, count-capped, and collision-aware: an entry whose declaration name
 // is already present is skipped (duplicate declarations would reject the whole source).

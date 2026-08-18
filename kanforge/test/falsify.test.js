@@ -1,6 +1,5 @@
 // blueprint/falsify.js — the falsification gate: bounded counterexample search on candidate
-// lemmas, kernel-evidence only (the erdos10 bridging lemma `two_pow_two_pow_ne_sum` is false
-// at k=0; this gate exists so that class never costs 400+ proof-search rounds again).
+// lemmas, kernel-evidence only.
 import test from 'node:test';
 import assert from 'node:assert';
 import {

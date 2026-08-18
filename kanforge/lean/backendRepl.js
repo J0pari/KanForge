@@ -308,7 +308,7 @@ export class BackendRepl {
         } catch (err) {
             // Process spawn can fail under system memory pressure. The pool must NEVER shrink
             // silently (a missing warm worker starves one-shot checks behind leased sessions —
-            // observed as multi-hour _acquire livelock). Retry with backoff until a worker
+            // ). Retry with backoff until a worker
             // exists; the retry loop is capped and drains on shutdown.
             console.log(`[${ts()}] [repl-pool] worker spawn failed (${err?.message ?? err}); retrying in 15s`);
             this._spawnRetries = (this._spawnRetries ?? 0) + 1;
@@ -476,11 +476,10 @@ export class BackendRepl {
             this.coldChecks++;
             if (this.coldChecks >= this.coldCheckRecycleThreshold && this._warmWorker) {
                 // Recycle without killing an in-flight request: the warm worker is ALWAYS busy
-                // under sustained load (a busy-guard starved the recycle — observed 3GB), but
-                // killing it mid-request produced 'repl worker busy'/worker-exit failures in
-                // the lease path. The pending-retire flag fires on the NEXT request completion
-                // (the finally below), so memory is reclaimed within one request and no caller
-                // ever holds a dead worker.
+                // under sustained load (a busy-guard would starve the recycle), but killing it
+                // mid-request produces worker-exit failures in the lease path. The pending-retire
+                // flag fires on the NEXT request completion (the finally below), so memory is
+                // reclaimed within one request and no caller ever holds a dead worker.
                 this.coldChecks = 0;
                 if (this._warmWorker.busy) {
                     this._retirePending = this._warmWorker;

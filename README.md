@@ -11,6 +11,8 @@ KanForge is a pull-based, lazily-evaluated proof refinement system that uses LLM
 - **REPL integration**: Direct interaction with the Lean kernel via `leanprover-community/repl`
 - **Causal telemetry**: Every event (tactic proposal, application, goal solving) is traced with parent links
 - **Guardrails enforcement**: Statement pinning prevents weakening; kernel verification ensures correctness
+- **Intake gate (fail-closed)**: a mission may not enter the pipeline without a kernel-verified instance-probe ledger (`runs/<problem>/probes.json`; generate with `blueprint/probes.js`)
+- **Falsification gate**: candidate lemmas from the skeleton are probed for concrete counterexamples before any tactic search — a kernel-verified counterexample drops the candidate and retries the decomposition
 - **Checkpoint/resume**: Each refine round is saved to `runs/<problem>/checkpoint.json`; a re-run with `--problem=<id>` resumes automatically (proved lemmas skipped, stalled lemmas restored)
 - **Error-driven repair**: Failed tactics are classified and retried through a repair prompt before giving up
 

@@ -117,7 +117,6 @@ async function driveCell({ backend, llm, statement, recipe, N, maxLlmCalls, pred
         maxTransferOps: overrides.maxTransferOps ?? Number(effectiveValue('maxTransferOps')),
         reuseMaxInline: overrides.reuseMaxInline ?? Number(effectiveValue('reuseMaxInline')),
         predictorExploration: overrides.predictorExploration ?? Number(effectiveValue('predictorExploration')),
-        retryTacticBudget: overrides.retryTacticBudget ?? Number(effectiveValue('retryTacticBudget')),
         writeAuditPacks: false, // the ablation report is the record; no per-cell audit-pack trees
         onEvent: e => { cellEvents.push(e); }
     });
@@ -521,7 +520,7 @@ async function main() {
     // mathlib imports AND heavy statement elaboration: they need the mission pool config
     // (300s kernel timeout, worker-per-problem). A checkpoint set misconfigured as `core`
     // starves its rows: every extractGoals times out at 60s on the cold import with 0 LLM /
-    // 0 kernel calls — the all-failed erdos10_frontier run was exactly this.
+    // 0 kernel calls — a checkpoint set starved as core pays the cold import inside the measured row.
     const missionLike = set === 'mathlib' || set === 'mission' || set.startsWith('checkpoint:');
     // Consume the registry's recommended defaults (the failure-taxonomy output surface writes
     // runs/defaults.json; the live run.js path applies it — the ablation must apply it too or

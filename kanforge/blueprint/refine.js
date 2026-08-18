@@ -234,7 +234,7 @@ export class BlueprintRefiner {
                     // the only path forward (its deps are proved; a fresh attempt may succeed).
                     // The retry budget is DYNAMIC (registry stallRetryFraction): each cycle
                     // releases a descendant-ranked fraction of the ready-stalled set, so a
-                    // 46-deep stall set no longer forces a full 46-attempt pass. Retries run a
+                    // large stall set forces a full retry sweep per pass. Retries run a
                     // reduced tactic budget and (while their re-split budget allows) a deepened
                     // re-split.
                     const stalledReady = working.lemmas.filter(l => !l.proof && l.stalled

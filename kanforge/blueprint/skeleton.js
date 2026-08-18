@@ -28,8 +28,10 @@ export function buildSkeletonPrompt(theoremStatement, opts = {}) {
                 '- Every lemma statement must be a valid standalone Lean statement of the form `lemma <name> : <proposition> := by sorry`.\n' +
                 '- `deps` lists the NAMES of other helper lemmas this one needs; never list a lemma you did not define.\n' +
                 '- `rootDeps` lists the helper-lemma names the theorem itself needs (omit for none).\n' +
-                '- Use UNIQUE lemma names �?" do NOT reuse names already in mathlib (e.g. `pow_two_pos`, `prime_eq_two_of_even`, `set_infinite_iff_forall_exists_ge`).\n' +
+                '- Use UNIQUE lemma names — do NOT reuse names already in mathlib (e.g. `pow_two_pos`, `prime_eq_two_of_even`, `set_infinite_iff_forall_exists_ge`).\n' +
                 '- Prefer descriptive compound names like `twopow_even` or `not_sum_of_prime_and_two_pows`.\n' +
+                '- For Set.Infinite claims, use ONLY these admissible proof patterns, explicitly as helper lemmas: (1) exhibit an infinite family via an injective map from Nat; (2) map a known-infinite set into the target set via an injective function; or (3) an obstruction construction — a modulus/congruence argument that rules out the forbidden representation for an entire residue class, plus the fact that the class is infinite. A family-identity lemma of the form "every member of family F avoids property P" is admissible ONLY under pattern (1) and must come with its injectivity lemma.\n' +
+                '- Every universal claim over Nat should be small enough to be plausibly checkable; prefer claims whose counterexamples (if any) would appear at small values.\n' +
                 '- Return ONLY a JSON object, no prose, no markdown fences.\n' +
                 'Format: {"lemmas":[{"name":"...","statement":"lemma ... := by sorry","deps":["..."]}],"rootDeps":["..."]}'
         },
@@ -193,10 +195,9 @@ export class SkeletonGenerator {
                 continue;
             }
             // Falsification gate (blueprint/falsify.js): a typechecking candidate may still be
-            // FALSE — the most expensive failure class (the erdos10 mission spent 400+ rounds
-            // on a false bridging lemma before this gate existed). Bounded counterexample
+            // FALSE — and proof search cannot detect a false claim. Bounded counterexample
             // search with kernel evidence; falsified children are dropped and the decomposition
-            // is retried with the counterexample as evidence, never the same construction.
+            // is retried with the counterexample as evidence.
             if (opts.falsify && typeof opts.falsify.enabled === 'function') {
                 const verdict = await opts.falsify.enabled(stub);
                 if (verdict.falsified) {

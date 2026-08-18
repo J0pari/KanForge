@@ -398,7 +398,7 @@ export class SearchEngine {
             if (proof && isMultiLineProof(proof)) {
                 const fullSource = buildProofSource(statement, `by\n${proof}`);
                 // Fresh-only: import-bearing source over a continuation env always fails (repl
-                // rule) — the warm attempt is doomed spend plus a wasted warm-chain wipe.
+                // rule) — the warm attempt cannot accept them.
                 const lemmaCheck = await this.backend.check(fullSource, { useWarmEnv: false });
                 if (lemmaCheck.status === 'verified') {
                     console.log(`[${ts()}] [loop] lemma-level repair ACCEPTED`);

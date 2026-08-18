@@ -134,7 +134,15 @@ export class LemmaStore {
         const conclusion = extractConclusion(lemmaData?.statement ?? '');
         if (conclusion) {
             const norm = semanticNormalize(conclusion);
-            if (!this._normIndex.has(norm)) this._normIndex.set(norm, hash);
+            // Canonical preference: the normalized conclusion maps to the entry with the
+            // SHORTEST proof trajectory — the canonical form of a fact is its one-prover.
+            // A later rediscovery replaces the mapping only when it is strictly better.
+            const existing = this._normIndex.has(norm) ? this.store.get(this._normIndex.get(norm)) : null;
+            const existingLen = existing?.tacticTrajectory?.length ?? Infinity;
+            const newLen = lemmaData?.tacticTrajectory?.length ?? Infinity;
+            if (!this._normIndex.has(norm) || newLen < existingLen) {
+                this._normIndex.set(norm, hash);
+            }
         }
         const dir = path.join(this.dir, 'lemmas');
         fs.mkdirSync(dir, { recursive: true });
