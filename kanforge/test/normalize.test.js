@@ -65,22 +65,24 @@ const SYNTHETIC_INDEX = {
     ])
 };
 
-test('suggestImportsForError resolves via the derived index (tier 1: exact full name)', () => {
+test('suggestImportsForError: curated Set.Infinite entry wins over the derived index', () => {
+    // The derived index historically pointed at Mathlib.Data.Finite.Defs, which does NOT
+    // provide Set.Infinite in the pinned tree; the curated entry (real-tree-correct) wins.
     const r = suggestImportsForError('Unknown constant `Set.Infinite`', { index: SYNTHETIC_INDEX });
     assert.ok(r && r.symbol === 'Set.Infinite');
-    assert.ok(r.modules.includes('Mathlib.Data.Finite.Defs'));
-    assert.strictEqual(r.derived, 1);
+    assert.ok(r.modules.includes('Mathlib.Data.Set.Finite.Basic'));
+    assert.strictEqual(r.derived, 0);
     const prime = suggestImportsForError('unknown identifier `Nat.Prime`', { index: SYNTHETIC_INDEX });
     assert.ok(prime && prime.modules.includes('Mathlib.Data.Nat.Prime.Defs'));
 });
 
-test('suggestImportsForError resolves via the derived index (tier 2: basename convention)', () => {
-    // `Even` is to_additive-generated — no declaration line exists in any source file; only the
-    // module-basename convention resolves it (unqualified query → basename tier).
+test('suggestImportsForError: curated Even entry wins (real-tree-verified module)', () => {
+    // Even is to_additive-generated; the curated entry names the module verified against the
+    // pinned tree (Mathlib.Algebra.Ring.Parity) instead of the basename convention.
     const r = suggestImportsForError("Hint: The identifier `Even` is unknown", { index: SYNTHETIC_INDEX });
     assert.ok(r && r.symbol === 'Even');
-    assert.ok(r.modules.includes('Mathlib.Algebra.Group.Even'));
-    assert.strictEqual(r.derived, 2);
+    assert.ok(r.modules.includes('Mathlib.Algebra.Ring.Parity'));
+    assert.strictEqual(r.derived, 0);
 });
 
 test('suggestImportsForError: curated notation fix wins over the derived module', () => {
@@ -93,7 +95,7 @@ test('suggestImportsForError: curated notation fix wins over the derived module'
 
 test('suggestImportsForError without an index degrades to the curated table only', () => {
     const r = suggestImportsForError('Unknown constant `Set.Infinite`');
-    assert.strictEqual(r, null); // no index, no curated entry for Set.Infinite → null
+    assert.ok(r && r.modules.includes('Mathlib.Data.Set.Finite.Basic')); // curated, real-tree-correct
     const sum = suggestImportsForError('Unknown constant `Finset.sum`');
     assert.ok(sum && sum.modules.includes('Mathlib.Algebra.BigOperators.Ring.Finset'));
 });

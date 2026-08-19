@@ -354,27 +354,23 @@ export class Autoformalizer {
     }
 
     async _verifyStatement(statement) {
-        // Try the fast chained path first (strip imports, warm env — 0.4s). If the repl quirk
-        // surfaces for this particular statement shape, fall back to the fresh-env path (full
-        // statement with imports — cold, ~200s but correct).
+        // Fast chained path first (strip imports, warm env). The warm session is an
+        // OPTIMIZATION ONLY: it may be stale (built from a different import set, or holding
+        // a prior declaration of this name), so ANY fast-path failure falls through to the
+        // authoritative fresh-env check — a warm miss is never treated as a kernel verdict.
         const stripped = stripImports(statement);
-        const fast = await this.backend.check(stripped, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
-        if (fast.status === 'verified') return { ok: true };
-        const fastMsg = String(fast.error?.message ?? fast.error ?? 'unknown error');
-        if (/already been declared|already declared/i.test(fastMsg)) {
-            // The warm session already holds this declaration (a prior attempt left it in the
-            // chained env). Reset the warm chain and verify on a fresh env — the session is
-            // poisoned for this name, not the statement.
+        let fast = null;
+        try {
+            fast = await this.backend.check(stripped, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
+        } catch {
+            fast = null;
+        }
+        if (fast?.status === 'verified') return { ok: true };
+        if (/already been declared|already declared/i.test(String(fast?.error?.message ?? ''))) {
+            // The chained env holds this name from a prior attempt: drop the chain so the
+            // probe step of a later attempt does not inherit the poisoned session.
             if ('warmEnvId' in this.backend) this.backend.warmEnvId = null;
-            const fresh = await this.backend.check(statement, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
-            if (fresh.status === 'verified') return { ok: true };
-            const msg = String(fresh.error?.message ?? fresh.error ?? 'unknown error');
-            return { ok: false, error: msg.slice(0, 1500) };
         }
-        if (!/expected token/i.test(fastMsg)) {
-            return { ok: false, error: fastMsg.slice(0, 1500) };
-        }
-        // Repl quirk: fall back to fresh env with imports.
         const fresh = await this.backend.check(statement, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
         if (fresh.status === 'verified') return { ok: true };
         const msg = String(fresh.error?.message ?? fresh.error ?? 'unknown error');
@@ -410,20 +406,26 @@ export class Autoformalizer {
                 const example = stripImports(full);
                 let verified = false, error = null;
                 try {
-                    const fast = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
-                    if (fast.status === 'verified') {
+                    // Fast warm check is an optimization; a stale warm session (built from
+                    // different imports, or holding a prior declaration) must never be treated
+                    // as a verdict — any fast failure falls through to the fresh-env check.
+                    let fast = null;
+                    try {
+                        fast = await this.backend.check(example, { timeoutMs: this.checkTimeoutMs, useWarmEnv: true });
+                    } catch {
+                        fast = null;
+                    }
+                    if (fast?.status === 'verified') {
                         verified = true;
-                    } else if (/expected token/i.test(fast.error?.message ?? '')) {
+                    } else {
                         const fresh = await this.backend.check(full, { timeoutMs: this.checkTimeoutMs, useWarmEnv: false });
                         verified = fresh.status === 'verified';
                         error = verified ? null : (fresh.error?.message ?? 'unverified');
-                    } else {
-                        error = fast.error?.message ?? 'unverified';
                     }
                 } catch (err) {
                     error = err?.message ?? String(err);
                 }
-                results.push({ instance: instances[i], example, verified, error });
+                results.push({ instance: instanceLabel, example, verified, error });
             }
             const failed = results.filter(r => !r.verified);
             return failed.length ? { ok: false, error: `probe failed: ${failed[0].instance} (${failed[0].error ?? 'unverified'})`, results } : { ok: true, results };

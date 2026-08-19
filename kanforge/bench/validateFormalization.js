@@ -64,7 +64,7 @@ const backend = createBackend({
     type: 'repl', replBin: ENV.KANFORGE_REPL_BIN, toolchain: ENV.KANFORGE_LEAN_TOOLCHAIN,
     leanProject: ENV.KANFORGE_LEAN_PROJECT, concurrency: 1, timeoutMs: 300000
 });
-const af = new Autoformalizer({ llm, backend, checkTimeoutMs: 300000, maxAttempts: 4, onAttempt: a => console.log('[attempt]', JSON.stringify(a)) });
+const af = new Autoformalizer({ llm, backend, checkTimeoutMs: 300000, maxAttempts: 6, onAttempt: a => console.log('[attempt]', JSON.stringify(a)) });
 
 const t0 = Date.now();
 const ledger = [...instances, ...instanceStringsFor(fcInstances)];
