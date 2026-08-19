@@ -326,6 +326,15 @@ export class Autoformalizer {
                 const pr = await this._verifyProbes(statement, candidates, { allowPartial: true });
                 autoProbeResults = (pr.results ?? []).filter(r => r.verified);
                 ledgerInstances = autoProbeResults.map(r => r.instance);
+                // A probe-builder failure with NO verified evidence must not degrade to an
+                // empty ledger silently (the intake gate would refuse without saying why):
+                // surface it as a probe-stage failure so the attempt budget retries it.
+                if (!autoProbeResults.length && !pr.ok) {
+                    last = { stage: 'probe', reason: pr.error };
+                    this._attempt(attempt, last);
+                    if (attempt < this.maxAttempts) continue;
+                    return { ok: false, error: pr.error, probes: [], shortlistEntry: null };
+                }
             }
             const probes = autoProbeResults.length
                 ? { ok: true, results: autoProbeResults }
