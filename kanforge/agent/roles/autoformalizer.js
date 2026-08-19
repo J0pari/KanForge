@@ -165,7 +165,7 @@ function buildFormalizationPrompt(prose, instances, repair = null, target = null
     ];
 }
 
-function buildProbePrompt(statement, instances, { allowPartial = false } = {}) {
+function buildProbePrompt(statement, instances, { allowPartial = false, repair = null } = {}) {
     return [
         {
             role: 'system',
@@ -177,9 +177,13 @@ function buildProbePrompt(statement, instances, { allowPartial = false } = {}) {
                 '- Do NOT assume the theorem; each example must be an independent kernel-checked claim.\n' +
                 '- Use `by native_decide` / `norm_num` / `omega` / `simp` when the instance is decidable.\n' +
                 '- For membership of a small concrete number in a set expression, first unfold the membership (`rw [Set.mem_diff]`, `simp [Set.mem_setOf_eq]`, `push_neg`), then finish with norm_num/omega/decide on the concrete arithmetic.\n' +
+                '- Copy the set expression EXACTLY from the statement (balanced braces and parentheses; every `{` closed by `}` before the `:= by`).\n' +
                 '- Use the SAME imports as the statement.' +
                 (allowPartial
                     ? '\n- You MAY return FEWER examples than instances: when an instance\'s proposition is false, OMIT it or prove the TRUE fact instead (e.g. if the number is NOT in the set, prove its non-membership — the kernel decides what holds; write the example so its literal membership direction matches the proven fact). Only ever emit examples you believe the kernel will verify.'
+                    : '') +
+                (repair
+                    ? `\n- Your previous examples were REJECTED by the kernel: ${repair}. Fix ONLY the broken example(s) and return the corrected JSON.`
                     : '')
         },
         {
@@ -323,7 +327,13 @@ export class Autoformalizer {
                 for (const n of [1, 2, 3, 4, 5]) {
                     candidates.push(`the number ${n} is an element of the set`);
                 }
-                const pr = await this._verifyProbes(statement, candidates, { allowPartial: true });
+                let pr = await this._verifyProbes(statement, candidates, { allowPartial: true });
+                if (!(pr.results ?? []).some(r => r.verified) && pr.error) {
+                    // Targeted probe repair: the examples were produced but failed (syntax,
+                    // unclosed proof, parse) — retry the probe step alone with the failure
+                    // detail instead of re-formalizing the whole statement.
+                    pr = await this._verifyProbes(statement, candidates, { allowPartial: true, repair: pr.error });
+                }
                 autoProbeResults = (pr.results ?? []).filter(r => r.verified);
                 ledgerInstances = autoProbeResults.map(r => r.instance);
                 // A probe-builder failure with NO verified evidence must not degrade to an
@@ -393,13 +403,13 @@ export class Autoformalizer {
 
     // One batched LLM call produces all probe examples; each is kernel-checked on the warm
     // worker. A failed probe is recorded WITH evidence (never silently corrected).
-    async _verifyProbes(statement, instances, { allowPartial = false } = {}) {
+    async _verifyProbes(statement, instances, { allowPartial = false, repair = null } = {}) {
         if (!instances?.length) return { ok: true, results: [] };
         try {
             let resp = null;
             for (let i = 0; i < 3; i++) {
                 try {
-                    resp = await this.llm.complete(buildProbePrompt(statement, instances, { allowPartial }));
+                    resp = await this.llm.complete(buildProbePrompt(statement, instances, { allowPartial, repair }));
                     if (resp?.text) break;
                 } catch (err) {
                     if (i === 2) throw err;
