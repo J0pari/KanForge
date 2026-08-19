@@ -13,6 +13,7 @@
 import { hashStatement, makePin } from '../../lean/pin.js';
 import { swissRank, parseJudgeVerdict } from '../../search/swiss.js';
 import { normalizeFormalization, suggestImportsForError, SYMBOL_MODULES } from './normalize.js';
+import { alignPartialExamples } from './probeAlign.js';
 import { LOGICAL_OPS } from '../../search/tacticMenu.js';
 
 // LOGICAL_OPS is the canonical operator set (search/tacticMenu.js): → ↔ ∨ ∧ ¬ ∀ ∃.
@@ -164,7 +165,7 @@ function buildFormalizationPrompt(prose, instances, repair = null, target = null
     ];
 }
 
-function buildProbePrompt(statement, instances) {
+function buildProbePrompt(statement, instances, { allowPartial = false } = {}) {
     return [
         {
             role: 'system',
@@ -175,7 +176,11 @@ function buildProbePrompt(statement, instances) {
                 '- One example per asserted instance, same length.\n' +
                 '- Do NOT assume the theorem; each example must be an independent kernel-checked claim.\n' +
                 '- Use `by native_decide` / `norm_num` / `omega` / `simp` when the instance is decidable.\n' +
-                '- Use the SAME imports as the statement.'
+                '- For membership of a small concrete number in a set expression, first unfold the membership (`rw [Set.mem_diff]`, `simp [Set.mem_setOf_eq]`, `push_neg`), then finish with norm_num/omega/decide on the concrete arithmetic.\n' +
+                '- Use the SAME imports as the statement.' +
+                (allowPartial
+                    ? '\n- You MAY return FEWER examples than instances: when an instance\'s proposition is false, OMIT it or prove the TRUE fact instead (e.g. if the number is NOT in the set, prove its non-membership — the kernel decides what holds; write the example so its literal membership direction matches the proven fact). Only ever emit examples you believe the kernel will verify.'
+                    : '')
         },
         {
             role: 'user',
@@ -184,7 +189,7 @@ function buildProbePrompt(statement, instances) {
     ];
 }
 
-export function parseProbeJson(text, expectedCount) {
+export function parseProbeJson(text, expectedCount, { allowPartial = false } = {}) {
     const t = String(text ?? '');
     const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
     const candidate = fenced ? fenced[1] : t;
@@ -198,9 +203,10 @@ export function parseProbeJson(text, expectedCount) {
         return { ok: false, error: 'probe output is not parseable JSON' };
     }
     const examples = Array.isArray(parsed.examples) ? parsed.examples.filter(x => typeof x === 'string') : [];
-    if (examples.length !== expectedCount) {
+    if (!allowPartial && examples.length !== expectedCount) {
         return { ok: false, error: `expected ${expectedCount} probe examples, got ${examples.length}` };
     }
+    if (examples.length > expectedCount) return { ok: false, error: `expected at most ${expectedCount} probe examples, got ${examples.length}` };
     return { ok: true, examples };
 }
 
@@ -311,9 +317,8 @@ export class Autoformalizer {
                 const candidates = [];
                 for (const n of [1, 2, 3, 4, 5]) {
                     candidates.push(`the number ${n} is an element of the set`);
-                    candidates.push(`the number ${n} is not an element of the set`);
                 }
-                const pr = await this._verifyProbes(statement, candidates);
+                const pr = await this._verifyProbes(statement, candidates, { allowPartial: true });
                 autoProbeResults = (pr.results ?? []).filter(r => r.verified);
                 ledgerInstances = autoProbeResults.map(r => r.instance);
             }
@@ -378,15 +383,30 @@ export class Autoformalizer {
 
     // One batched LLM call produces all probe examples; each is kernel-checked on the warm
     // worker. A failed probe is recorded WITH evidence (never silently corrected).
-    async _verifyProbes(statement, instances) {
+    async _verifyProbes(statement, instances, { allowPartial = false } = {}) {
         if (!instances?.length) return { ok: true, results: [] };
         try {
-            const resp = await this.llm.complete(buildProbePrompt(statement, instances));
-            const parsed = parseProbeJson(resp?.text, instances.length);
+            let resp = null;
+            for (let i = 0; i < 3; i++) {
+                try {
+                    resp = await this.llm.complete(buildProbePrompt(statement, instances, { allowPartial }));
+                    if (resp?.text) break;
+                } catch (err) {
+                    if (i === 2) throw err;
+                    await new Promise(r => setTimeout(r, 15000));
+                }
+            }
+            const parsed = parseProbeJson(resp?.text, instances.length, { allowPartial });
             if (!parsed.ok) return { ok: false, error: parsed.error };
             const results = [];
+            const aligned = allowPartial ? alignPartialExamples(parsed.examples, instances) : null;
             for (let i = 0; i < instances.length; i++) {
-                const full = parsed.examples[i];
+                const full = aligned ? (aligned[i]?.example ?? null) : parsed.examples[i];
+                const instanceLabel = aligned ? (aligned[i]?.instance ?? instances[i]) : instances[i];
+                if (!full) {
+                    results.push({ instance: instanceLabel, example: null, verified: false, error: 'omitted by probe builder' });
+                    continue;
+                }
                 const example = stripImports(full);
                 let verified = false, error = null;
                 try {

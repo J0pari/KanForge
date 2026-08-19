@@ -87,7 +87,7 @@ export const SYMBOL_MODULES = {
     'Finset.sum': { modules: ['Mathlib.Algebra.BigOperators.Ring.Finset'], notationFix: 'use the big-operator notation `∑ x ∈ s, f x` instead of `s.sum f`' },
     'Finset.card': { modules: ['Mathlib.Data.Finset.Card'], notationFix: 'use `s.card` (valid) — or `Finset.card s`' },
     'Set.Infinite': { modules: ['Mathlib.Data.Set.Finite'] },
-    'Multiset.sum': { modules: ['Mathlib.Data.Multiset.Sum'] },
+    'Even': { modules: ['Mathlib.Algebra.Ring.Parity'] },
     'ℕ': { modules: ['Mathlib.Data.Nat.Basic'] }
 };
 
@@ -117,6 +117,11 @@ export function defaultSymbolIndex() {
 // cannot exist without the tree (it is BUILT from it), so derived hits only occur grounded.
 export function suggestImportsForError(message, { index } = {}) {
     const msg = String(message ?? '');
+    // Context-sensitive repair: a `sum` projection failing on a Multiset expression is the
+    // multiset-sum module, whatever the error names the field's owner (e.g. `Quot.sum`).
+    if (/Multiset/i.test(msg) && /\bsum\b/i.test(msg)) {
+        return { symbol: 'Multiset.sum', modules: ['Mathlib.Algebra.BigOperators.Group.Multiset.Defs'], notationFix: 'Multiset.sum needs Mathlib.Algebra.BigOperators.Group.Multiset.Defs', derived: 0, treeVerified: mathlibTreePresent() };
+    }
     // Prefer the LONGEST backticked token (e.g. `Finset.sum` over `sum`).
     const tokens = [...msg.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)`/g)].map(m => m[1]);
     // Explicit `index: null` disables the derived index; the default (undefined) loads the
