@@ -241,6 +241,9 @@ export class Autoformalizer {
     // one from prose — the ported text is still kernel-checked, so this is not a bypass.
     async formalize(prose, { instances = [], source = null, targetStatement = null, context = null } = {}) {
         let last = null;
+        const suggestedAccum = []; // repair-suggested modules ACCUMULATE across attempts: each
+        // missing-symbol fix persists, or the LLM's next proposal drops it and the loop
+        // oscillates between the same two failures forever.
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
             const proposed = await this._propose(prose, instances, last, { targetStatement, context });
             if (!proposed.ok) {
@@ -250,12 +253,14 @@ export class Autoformalizer {
             }
             // Normalize the candidate: resolve imports to modules that exist in the pinned
             // mathlib, and normalize the theorem text (unicode/LaTeX/ASCII → canonical Lean).
-            // Merge any repair-suggested modules (missing-symbol fixes) into the import set,
+            // Merge every repair-suggested module (missing-symbol fixes) into the import set,
             // PREFERRING them over the LLM's heavy imports (the suggested module is the light
             // symbol-providing one, e.g. Data.Finset.Sum over BigOperators.Group.Finset.Defs).
-            const extraImports = last?.suggestModules ?? [];
-            const suggested = new Set(extraImports);
-            const proposedImports = [...extraImports, ...(proposed.imports ?? []).filter(i => !suggested.has(i))];
+            for (const m of last?.suggestModules ?? []) {
+                if (!suggestedAccum.includes(m)) suggestedAccum.push(m);
+            }
+            const suggested = new Set(suggestedAccum);
+            const proposedImports = [...suggestedAccum, ...(proposed.imports ?? []).filter(i => !suggested.has(i))];
             const normalized = normalizeFormalization(proposedImports, proposed.theorem);
             if (!normalized.imports.length && proposedImports.length > 0) {
                 last = { stage: 'imports', reason: `no proposed import resolved: ${proposedImports.join(', ')}; propose modules that exist in mathlib` };
