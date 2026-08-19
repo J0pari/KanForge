@@ -1,12 +1,13 @@
 // Align partial probe-example lists with their candidate instances. The probe builder may omit
 // candidates whose proposition it cannot verify; index alignment is then lost, so each example
 // is matched MECHANICALLY against its instance label: the example text contains the literal
-// `(N : Nat) ∈` / `(N : Nat) ∉` pair, from which the number and membership direction are read
-// (no LLM text is trusted beyond what the kernel already verified).
+// membership direction (`example : N ∉ ...` or `example : (N : Nat) ∈ ...`), from which the
+// number and direction are read (no LLM text is trusted beyond what the kernel already verified).
 const IN_SYM = String.fromCharCode(0x2208); // ∈
 const NOT_IN_SYM = String.fromCharCode(0x2209); // ∉
 
-const PATTERN = new RegExp('\\(\\s*(\\d+)\\s*:\\s*Nat\\s*\\)\\s*([\u2208\u2209])');
+// Handles both `example : 1 ∉ S` and `example : (1 : Nat) ∉ S` (the type ascription is optional).
+const PATTERN = new RegExp('example\\s*:\\s*\\(?\\s*(\\d+)\\s*(?::\\s*[\\w\u2115. ]+)?\\)?\\s*([\u2208\u2209])');
 
 export function alignPartialExamples(examples, instances) {
     const out = [];
