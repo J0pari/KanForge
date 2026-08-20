@@ -76,7 +76,7 @@ async function main() {
     const problem = argValue(args, '--problem=');
     const statementFile = argValue(args, '--statement-file=');
     if (!problem || !statementFile) {
-        console.error('usage: node watchdog.mjs --problem=<id> --statement-file=<path> [--pass-timeout-ms=<ms>] [--max-passes=<n>] [--zero-progress-limit=<n>] [--recipe=loop] [--max-tactics=8] [--concurrency=<n>] [--premises]');
+        console.error('usage: node watchdog.mjs --problem=<id> --statement-file=<path> [--pass-timeout-ms=<ms>] [--max-passes=<n>] [--zero-progress-limit=<n>] [--recipe=loop] [--max-tactics=8] [--concurrency=<n>] [--check-timeout=<ms>] [--premises]');
         process.exit(4);
     }
     const passTimeoutMs = Number(argValue(args, '--pass-timeout-ms=') ?? 6 * 3600 * 1000);
@@ -120,6 +120,8 @@ async function main() {
     const runArgs = [`--problem=${problem}`, `--statement-file=${statementFile}`, `--recipe=${recipe}`, `--max-tactics=${maxTactics}`];
     if (concurrency) runArgs.push(`--concurrency=${concurrency}`);
     if (args.includes('--premises')) runArgs.push('--premises');
+    const checkTimeoutArg = argValue(args, '--check-timeout=');
+    if (checkTimeoutArg) runArgs.push(`--check-timeout=${checkTimeoutArg}`);
 
     const start = Date.now();
     let passIdx = 0;
