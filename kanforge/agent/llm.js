@@ -115,9 +115,12 @@ export class LLMClient {
         mkdirSync(scratch, { recursive: true });
         const modelRef = req.model.includes('/') ? req.model : `opencode/${req.model}`;
         const args = ['run', '-m', modelRef, '--format', 'json', '--pure', '--dir', scratch, req.prompt];
+        // Per-call timeout override: big-completion callers (skeleton/refine decompositions)
+        // budget a longer kill timer than the global default, which is sized for tactic calls.
+        const effectiveConfig = opts.timeoutMs ? { ...this.config, timeoutMs: opts.timeoutMs } : this.config;
         let out;
         try {
-            out = await runOpenCodeProcess(this.config, args, opts.signal);
+            out = await runOpenCodeProcess(effectiveConfig, args, opts.signal);
         } catch (cause) {
             if (cause.kind === 'timeout') {
                 throw new LLMError(`opencode CLI timed out after ${this.config.timeoutMs}ms`, { kind: 'timeout', cause });
@@ -281,8 +284,7 @@ function runOpenCodeProcess(config, args, signal) {
             settled = true;
             killTree();
             reject({ kind: 'timeout', stderr });
-        }, config.timeoutMs);
-        const onAbort = () => {
+        }, config.timeoutMs);        const onAbort = () => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);

@@ -158,7 +158,10 @@ export class SkeletonGenerator {
         let response;
         try {
             const t0 = Date.now();
-            response = await this.llm.complete(buildSkeletonPrompt(rootStatement, { ...opts, falsifiedExamples: opts.falsifiedEvidence ?? [] }));
+            // Decomposition completions are large (a full lemma DAG JSON) — they legitimately
+            // run far longer than tactic proposals. A 30-minute kill budget replaces the global
+            // default so a slow-but-productive generation is not killed mid-stream.
+            response = await this.llm.complete(buildSkeletonPrompt(rootStatement, { ...opts, falsifiedExamples: opts.falsifiedEvidence ?? [] }), { timeoutMs: 1800000 });
             const ms = Date.now() - t0;
             if (ms > 20000) console.log(`[skeleton] slow LLM call: ${(ms/1000).toFixed(1)}s`);
         } catch (err) {
