@@ -10,8 +10,7 @@ import { hashStatement } from '../lean/pin.js';
 import { LemmaStore } from '../growth/lemmaStore.js';
 import { TrainingDataset } from '../growth/dataset.js';
 
-const THM = 'theorem thm : P := by sorry';
-const H1 = 'theorem h1 : P := by sorry';
+const THM = 'theorem thm : P ∧ P := by sorry';
 
 class MockBackend {
     async extractGoals(statement) {
@@ -38,13 +37,6 @@ class MockBackend {
 
 class LLM {
     async complete(messages) {
-        const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
-        if (user.includes('Decompose this theorem into')) {
-            return { text: JSON.stringify({
-                lemmas: [{ name: 'h1', statement: H1, deps: [] }],
-                rootDeps: ['h1']
-            }) };
-        }
         return { text: 'rfl' };
     }
 }
@@ -69,9 +61,9 @@ test('runBlueprintTheorem drives skeleton → refine and persists everything', a
         assert.strictEqual(r.ok, true);
         assert.strictEqual(r.stage, 'refine');
         assert.strictEqual(r.refined.ok, true);
-        assert.strictEqual(r.refined.proved.length, 2);
-        assert.strictEqual(r.refined.stored.lemmas, 2);
-        assert.ok(r.refined.stored.samples >= 2);
+        assert.strictEqual(r.refined.proved.length, 3);
+        assert.strictEqual(r.refined.stored.lemmas, 3);
+        assert.ok(r.refined.stored.samples >= 3);
 
         // artifact layout under the work dir
         assert.ok(fs.existsSync(path.join(outDir, 'blueprint.json')));
@@ -84,7 +76,7 @@ test('runBlueprintTheorem drives skeleton → refine and persists everything', a
         // the on-disk blueprint pins and DAGs match the refined result
         const blueprint = JSON.parse(fs.readFileSync(path.join(outDir, 'blueprint.json'), 'utf8'));
         assert.strictEqual(blueprint.theorem, normalizeStub(THM));
-        assert.strictEqual(blueprint.lemmas.length, 2);
+        assert.strictEqual(blueprint.lemmas.length, 3);
     } finally {
         fs.rmSync(outDir, { recursive: true, force: true });
         fs.rmSync(storeDir, { recursive: true, force: true });

@@ -57,39 +57,31 @@ test('falsifyCandidate reports unfalsified when no instance verifies', async () 
     assert.strictEqual(r.falsified, false);
 });
 
-test('skeleton retries the decomposition when a candidate is kernel-falsified', async () => {
-    let calls = 0;
+test('skeleton drops a kernel-falsified child from the deterministic split', async () => {
+    // The deterministic seed unfolds the statement's own syntax (here a top-level iff); the
+    // falsification gate drops any falsified child. There is no plan retry: growth is
+    // kernel-verified artifacts only.
     const FALSE_CHILD = 'theorem bad_bridge : ∀ k : Nat, 2 ^ k ≠ 2 ^ k := by sorry';
-    const GOOD_CHILD = 'theorem good_bridge (n : Nat) : n + 0 = n := by sorry';
     const llm = {
-        async complete(messages) {
-            const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
-            if (user.includes('Decompose this theorem into')) {
-                calls++;
-                if (calls === 1) {
-                    return { text: JSON.stringify({ lemmas: [{ name: 'bad_bridge', statement: FALSE_CHILD, deps: [] }], rootDeps: ['bad_bridge'] }) };
-                }
-                assert.ok(user.includes('FALSIFIED'), 'retry prompt must carry the falsification evidence');
-                return { text: JSON.stringify({ lemmas: [{ name: 'good_bridge', statement: GOOD_CHILD, deps: [] }], rootDeps: ['good_bridge'] }) };
-            }
+        async complete() {
             return { text: 'example : (0 : Nat) = 0 ^ 0 := by decide' };
         }
     };
     const backend = {
         async check(src) {
-            // The falsification probe verifies the counterexample instance for bad_bridge.
+            // The falsification probe verifies the counterexample instance.
             if (src.includes('example') && src.includes('0 ^ 0')) return { status: 'verified' };
             // Skeleton typechecks: every stub passes.
             return { status: 'verified', goals: [] };
         },
         pin() { return { toolchain: 'mock', normVersion: 1 }; }
     };
-    const skeleton = new SkeletonGenerator({ llm, backend });
-    const result = await skeleton.generate('theorem thm : P := by sorry', {
-        falsify: { enabled: (stmt) => stmt.includes('bad_bridge') ? falsifyCandidate(stmt, { llm, backend }) : { falsified: false } }
+    const skeleton = new SkeletonGenerator({ backend });
+    const result = await skeleton.generate('theorem thm : (∀ k : Nat, 2 ^ k ≠ 2 ^ k) \u2194 (∀ k : Nat, 2 ^ k ≠ 2 ^ k) := by sorry', {
+        falsify: { enabled: (stmt) => stmt.includes('2 ^ k ≠ 2 ^ k') ? falsifyCandidate(stmt, { llm, backend }) : { falsified: false } }
     });
     assert.strictEqual(result.ok, true);
-    assert.ok(result.blueprint.lemmas.some(l => l.statement.includes('good_bridge')), 'retry must carry the good child');
-    assert.ok(!result.blueprint.lemmas.some(l => l.statement.includes('bad_bridge')), 'the falsified child must be dropped');
-    assert.strictEqual(calls, 2);
+    const nonRoot = result.blueprint.lemmas.filter(l => l.statement !== result.blueprint.theorem);
+    assert.ok(!nonRoot.some(l => l.statement.includes('2 ^ k ≠ 2 ^ k')), 'the falsified children must be dropped');
+    assert.ok(result.warnings.some(w => w.includes('FALSIFIED')));
 });

@@ -1,7 +1,7 @@
 // Live blueprint suite (build_order.md §4.1/§4.2) — driven against the REAL
-// `leanprover-community/repl` binary. Verifies that skeleton stubs typecheck under the real
-// kernel and that a small development refines end-to-end with no `sorry` remaining.
-// Gated on KANFORGE_REPL_BIN pointing to an existing file; skipped automatically otherwise.
+// `leanprover-community/repl` binary. Verifies that the deterministic seed's stubs typecheck
+// under the real kernel and that a small development refines end-to-end with no `sorry`
+// remaining. Gated on KANFORGE_REPL_BIN pointing to an existing file; skipped otherwise.
 // No mocks, stubs, or facsimiles in this file.
 import test from 'node:test';
 import assert from 'node:assert';
@@ -27,39 +27,26 @@ function makeBackend() {
     });
 }
 
-// Skeleton prompt → fixed JSON; tactic prompt → inspect the goal type in the prompt.
+// The seed never asks the LLM to plan; tactic prompts inspect the goal type.
 class LiveLLM {
-    constructor(decompose) {
-        this.decompose = decompose;
+    constructor() {
         this.tacticCalls = 0;
     }
     async complete(messages) {
         const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
-        if (user.includes('Decompose this theorem into')) {
-            const theorem = user.slice(user.indexOf(':\n\n') + 3).split('\n\nReturn the JSON')[0].trim();
-            return { text: this.decompose[theorem] ?? JSON.stringify({ lemmas: [], rootDeps: [] }) };
-        }
         this.tacticCalls++;
-        if (user.includes('∧')) return { text: 'constructor' };
+        if (user.includes('\u2227')) return { text: 'constructor' };
         return { text: 'rfl' };
     }
 }
 
-const TRANS_THM = 'theorem trans_lt (a b c : Nat) (h : a < b) (h2 : b < c) : a < c := by sorry';
+const TRANS_THM = 'theorem trans_lt (a b c : Nat) (h : a < b) (h2 : b < c) : a < c \u2227 a \u2264 c := by sorry';
 
-test('live: skeleton stubs typecheck under the real Lean kernel', { skip: SKIP_LIVE, timeout: 240000 }, async () => {
+test('live: seed stubs typecheck under the real Lean kernel', { skip: SKIP_LIVE, timeout: 240000 }, async () => {
     const backend = makeBackend();
     try {
-        const llm = new LiveLLM({
-            [TRANS_THM]: JSON.stringify({
-                lemmas: [
-                    { name: 'lt_irrefl_step', statement: 'theorem lt_irrefl_step (a b : Nat) (h : a < b) : ¬ b < a := by sorry', deps: [] },
-                    { name: 'lt_step', statement: 'theorem lt_step (a b c : Nat) : a < b → b < c → a < c := by sorry', deps: [] }
-                ],
-                rootDeps: ['lt_irrefl_step', 'lt_step']
-            })
-        });
-        const gen = new SkeletonGenerator({ llm, backend });
+        const llm = new LiveLLM();
+        const gen = new SkeletonGenerator({ backend });
         const result = await gen.generate(TRANS_THM);
 
         assert.strictEqual(result.ok, true);
@@ -93,18 +80,8 @@ test('live: end-to-end skeleton → refine proves a development with no sorry re
         const { TrainingDataset } = await import('../growth/dataset.js');
         const lemmaStore = new LemmaStore({ dir: path.join(storeDir, 'lemma-store') });
         const dataset = new TrainingDataset({ dir: path.join(storeDir, 'training-dataset') });
-        const theorem = 'example : 1 = 1 ∧ 2 = 2 := by sorry';
-        const h1 = 'example : 1 = 1 := by sorry';
-        const h2 = 'example : 2 = 2 := by sorry';
-        const llm = new LiveLLM({
-            [theorem]: JSON.stringify({
-                lemmas: [
-                    { name: 'h1', statement: h1, deps: [] },
-                    { name: 'h2', statement: h2, deps: [] }
-                ],
-                rootDeps: ['h1', 'h2']
-            })
-        });
+        const theorem = 'example : 1 = 1 \u2227 2 = 2 := by sorry';
+        const llm = new LiveLLM();
 
         const r = await runBlueprintTheorem({ backend, llm, theorem, outDir, loopOptions: { maxTacticsPerGoal: 3, maxGoalsPerLemma: 20 }, lemmaStore, dataset });
         assert.strictEqual(r.ok, true);

@@ -23,7 +23,7 @@ const idOf = s => hashStatement(s);
 
 class MockBackend {
     async extractGoals(statement) {
-        const hard = statement.includes('hard');
+        const hard = statement.includes('hard_helper :');
         return [{ type: hard ? 'Q' : 'P', context: [], sessionKey: idOf(statement) }];
     }
     async applyTactic(goal, tactic) {
@@ -39,22 +39,14 @@ class MockBackend {
     getInfos() { return { backends: ['mock'] }; }
 }
 
-// Records every prompt so the test can assert budget + deepening behavior. The decompose
-// key is the theorem text between the header and the first blank line (robust to the
-// deepen block the retry prompt appends).
+// Records every prompt so the test can assert the retry-lane budget behavior.
 class RecordingLLM {
-    constructor(decompose = {}) {
-        this.decompose = decompose;
+    constructor() {
         this.prompts = [];
     }
     async complete(messages) {
         const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
         this.prompts.push(user);
-        if (user.includes('Decompose this theorem into')) {
-            const body = user.slice(user.indexOf('stubs:\n\n') + 8);
-            const theorem = body.split('\n\n')[0].trim();
-            return { text: this.decompose[theorem] ?? JSON.stringify({ lemmas: [], rootDeps: [] }) };
-        }
         return { text: 'rfl' };
     }
 }
@@ -80,16 +72,14 @@ test('parallel lanes prove independent ready lemmas in one batch, merge serially
     assert.deepStrictEqual(res.rounds.map(r => r.id), [idOf(H1), idOf(H2), idOf(THM)]);
 });
 
-test('deadlock-release retries stalled lemmas with reduced budget and deepened re-split', async () => {
+test('deadlock-release retries stalled lemmas with the reduced budget; no invented children', async () => {
     const bp = makeBlueprint(THM, [
         { statement: HARD, deps: [] },
         { statement: THM, deps: [idOf(HARD)] }
     ]);
-    // HARD's re-split always returns the same child: first time it is NEW (progress), later
-    // it is a repeat (0 new -> stall). The stall-release retry then runs deepened + budget-capped.
-    const llm = new RecordingLLM({
-        [HARD]: JSON.stringify({ lemmas: [{ name: 'helper_child', statement: CHILD, deps: [] }], rootDeps: ['helper_child'] })
-    });
+    // HARD is atomic (no mechanical split): the deterministic seed adds nothing. The
+    // deadlock-release lane must still retry it with the reduced tactic budget.
+    const llm = new RecordingLLM({});
     const refiner = new BlueprintRefiner({
         llm, backend: new MockBackend(),
         loopOptions: { maxTacticsPerGoal: 8, concurrency: 2 }
@@ -97,15 +87,14 @@ test('deadlock-release retries stalled lemmas with reduced budget and deepened r
     const res = await refiner.refine(bp);
     assert.strictEqual(res.ok, false);
     assert.strictEqual(res.stopReason, 'no-ready-lemma');
-    // HARD was attempted multiple times: initial, post-child, and the deadlock-release retry.
+    // HARD was attempted multiple times: initial and the deadlock-release retry.
     const hardAttempts = res.rounds.filter(r => r.id === idOf(HARD)).length;
-    assert.ok(hardAttempts >= 3, `expected >=3 attempts on HARD, got ${hardAttempts}`);
+    assert.ok(hardAttempts >= 2, `expected >=2 attempts on HARD, got ${hardAttempts}`);
     // The retry ran with the reduced budget: a proposal prompt asked for attempt k/4 (or less).
     const reducedBudgetPrompt = llm.prompts.some(p => /Propose ONE tactic \(attempt \d+\/([1-4])\)/.test(p));
     assert.ok(reducedBudgetPrompt, 'retry lane should cap the tactic budget at 4');
-    // The retry's re-split was deepened: prior children were fed to the skeleton prompt.
-    const deepenedPrompt = llm.prompts.some(p => p.includes('A previous decomposition into the following lemmas did not suffice'));
-    assert.ok(deepenedPrompt, 'stalled retry re-split should feed prior children back');
+    // No planning essay: the stalled stub gained no children.
+    assert.strictEqual(res.refined.lemmas.length, 2);
 });
 
 test('a lane crash degrades to a failed round without re-split or DAG corruption', async () => {

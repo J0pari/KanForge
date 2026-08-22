@@ -24,11 +24,6 @@ import { falsifyCandidate, isFalsifiableStatement } from './falsify.js';
 // Cycle repair: repeatedly find a dependency cycle and remove the NEWEST UNPROVED lemma in
 // it (children are appended to the array, so array position is the recency proxy). Proved
 // lemmas are never pruned — only unproved, newest-first. Returns the pruned ids.
-function declNameOf(statement) {
-    const m = String(statement ?? "").match(/^(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_.']*)/m);
-    return m ? m[1] : null;
-}
-
 export function repairCycles(lemmas) {
     const working = lemmas; // mutated in place
     const pruned = [];
@@ -97,7 +92,7 @@ export class BlueprintRefiner {
         this.outDir = outDir;
         this.loopOptions = { concurrency: 1, maxTacticsPerGoal: 8, maxGoalsPerLemma: 100, onEvent: () => {}, ...loopOptions };
         this.maxRounds = maxRounds;
-        this.skeleton = new SkeletonGenerator({ llm, backend, maxRetries: this.loopOptions.skeletonMaxRetries ?? 2 });
+        this.skeleton = new SkeletonGenerator({ backend });
         this.lemmaStore = lemmaStore ?? null;
         this.dataset = dataset ?? null;
         this.checkpoint = checkpoint ?? (outDir ? new RunCheckpoint(outDir) : null);
@@ -322,14 +317,12 @@ export class BlueprintRefiner {
                     }
                 }
                 if (r.falsified) {
-                    this._falsifiedEvidence = this._falsifiedEvidence ?? [];
-                    this._falsifiedEvidence.push({ name: declNameOf(stub.statement), statement: stub.statement, counterexample: r.counterexample });
                     const idx = working.lemmas.indexOf(stub);
                     if (idx !== -1) working.lemmas.splice(idx, 1);
                     for (const l of working.lemmas) {
                         l.deps = (l.deps ?? []).filter(d => d !== stub.id);
                     }
-                    console.log(`[refine]   pruned falsified stub ${stub.id.slice(0, 10)}…; evidence recorded for parent re-splits`);
+                    console.log(`[refine]   pruned falsified stub ${stub.id.slice(0, 10)}…`);
                 }
                 const addedNow = Math.max(0, working.lemmas.length - before);
                 // DAG reachability hygiene: old children whose dependency edges this re-split
@@ -530,19 +523,17 @@ export class BlueprintRefiner {
             return { proved: false, resplit: false, added: 0, children: [], error: loopError };
         }
 
-        // Re-split: decompose the failed stub into child stubs via the skeleton generator.
-        // The stub statement itself is never edited; only child stubs are added (by the merge).
-        // Retry lanes deepen: the stub's existing children are fed back so the decomposition is
-        // structurally DIFFERENT instead of repeating the dead end.
-        const priorChildren = (stub.deps ?? [])
-            .map(d => working.lemmas.find(w => w.id === d)?.statement)
-            .filter(Boolean);
+        // Re-split: derive child stubs MECHANICALLY from the failed stub's own syntax (the
+        // deterministic structural seed — conjuncts, iff directions, quantifier bodies,
+        // membership unfoldings). The stub statement itself is never edited; only kernel-
+        // checked children are added (by the merge). No planning essay: growth comes from the
+        // statement's structure or from the search's kernel-verified artifacts.
         const oldDeps = [...(stub.deps ?? [])];
         const falsifyGate = this.loopOptions.falsify
             ? { enabled: (stmt) => falsifyCandidate(stmt, { llm: this.llm, backend: this.backend, maxInstances: this.loopOptions.falsifyMaxInstances ?? 6 }) }
             : null;
         const sub = opts.resplitAllowed !== false
-            ? await this.skeleton.generate(stub.statement, { priorChildren, falsify: falsifyGate, falsifiedEvidence: (this._falsifiedEvidence ?? []).slice(-8) })
+            ? await this.skeleton.generate(stub.statement, { falsify: falsifyGate })
             : null;
         if (!sub) {
             // resplitAllowed=false (parked stub) or the skeleton call failed: prove-or-stall,

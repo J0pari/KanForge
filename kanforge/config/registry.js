@@ -46,7 +46,6 @@ export const COMPONENTS = {
     rewarmDebounceMs: { kind: 'slider', min: 500, max: 10000, step: 500, default: 1500, recommended: null, label: 'Background re-warm debounce (ms)' },
     spawnRetryDelayMs: { kind: 'slider', min: 1000, max: 60000, step: 1000, default: 15000, recommended: null, label: 'Worker spawn retry delay (ms)' },
     harvestCandidateLimit: { kind: 'slider', min: 0, max: 20, step: 1, default: 5, recommended: null, label: 'Premise harvest #check candidates per proof' },
-    skeletonMaxRetries: { kind: 'slider', min: 0, max: 6, step: 1, default: 2, recommended: null, label: 'Skeleton decomposition retries' },
     predictorExploration: { kind: 'slider', min: 0, max: 0.2, step: 0.01, default: 0.02, recommended: null, label: 'Predictor counterfactual re-test rate' },
     reuseMaxInline: { kind: 'slider', min: 1, max: 100, step: 1, default: 24, recommended: null, label: 'Max inlined declarations per reuse source' },
     falsify: { kind: 'toggle', default: true, recommended: null, label: 'Falsification gate (bounded counterexample search on candidate lemmas)' },

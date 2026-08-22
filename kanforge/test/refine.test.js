@@ -12,8 +12,8 @@ import { MATHLIB_PRESENT } from './mathlibEnv.js';
 const THM = 'theorem thm : P := by sorry';
 const H1 = 'theorem h1 : P := by sorry';
 const H2 = 'theorem h2 : P := by sorry';
-const HARD = 'theorem hard_helper : P := by sorry';
-const EASY = 'theorem easy_child : P := by sorry';
+const HARD = 'theorem hard_helper : P ∧ P := by sorry';
+const EASY = 'theorem hard_helper_conj0 : P := by sorry';
 
 // Re-split children are emitted with the canonical tactic imports prepended.
 // Hermeticity: with the Mathlib tree absent, fall back to the raw (stable) module names so
@@ -30,7 +30,7 @@ class RefineMockBackend {
         this.verified = [];
     }
     async extractGoals(statement) {
-        const hard = statement.includes('hard');
+        const hard = statement.includes('hard_helper :');
         return [{ type: hard ? 'Q' : 'P', context: [], sessionKey: idOf(statement) }];
     }
     async applyTactic(goal, tactic) {
@@ -55,22 +55,13 @@ class RefineMockBackend {
     }
 }
 
-// Dispatches by prompt: skeleton prompts get the JSON decomposition for that theorem,
-// tactic prompts get 'rfl' (the mock solves 'P' goals with it).
+// The deterministic seed never asks the LLM to plan; tactic prompts get 'rfl'
+// (the mock solves 'P' goals with it).
 class DispatchLLM {
-    constructor(decompose = {}) {
-        this.decompose = decompose;
+    constructor() {
         this.tacticCalls = 0;
     }
     async complete(messages) {
-        const user = (messages.find(m => m.role === 'user') ?? { content: '' }).content ?? '';
-        if (user.includes('Decompose this theorem into')) {
-            // The theorem text sits between the prompt header and the first blank line — robust
-            // to the deepened re-split block (prior children) the retry prompt appends.
-            const body = user.slice(user.indexOf('stubs:\n\n') + 8);
-            const theorem = body.split('\n\n')[0].trim();
-            return { text: this.decompose[theorem] ?? JSON.stringify({ lemmas: [], rootDeps: [] }) };
-        }
         this.tacticCalls++;
         return { text: 'rfl' };
     }
@@ -100,32 +91,26 @@ test('re-splits a stuck stub into children, never editing existing statements', 
         { statement: HARD, deps: [] },
         { statement: THM, deps: [idOf(HARD)] }
     ]);
-    const decompose = {
-        [HARD]: JSON.stringify({
-            lemmas: [{ name: 'easy_child', statement: EASY, deps: [] }],
-            rootDeps: ['easy_child']
-        })
-    };
-    const refiner = new BlueprintRefiner({ llm: new DispatchLLM(decompose), backend: new RefineMockBackend(), loopOptions: { maxTacticsPerGoal: 1 } });
+    // The deterministic seed splits HARD (a conjunction) into its conjuncts; no LLM planning.
+    const refiner = new BlueprintRefiner({ llm: new DispatchLLM({}), backend: new RefineMockBackend(), loopOptions: { maxTacticsPerGoal: 1 } });
     const res = await refiner.refine(bp);
 
     assert.strictEqual(res.ok, false);
     assert.ok(res.unproved.includes(idOf(HARD)));
     assert.ok(res.unproved.includes(idOf(THM)));
 
-    // child was added and proved
+    // the conjunct child was added and proved
     const child = res.refined.lemmas.find(l => l.statement === stubOf(EASY));
-    assert.ok(child, 'easy_child should have been added');
-    assert.ok(child.proof, 'easy_child should have been proved');
+    assert.ok(child, 'the conjunct child should have been added');
+    assert.ok(child.proof, 'the conjunct child should have been proved');
 
     // existing statements are untouched (statement set invariant)
-    const original = new Set([H1 ? '' : '', HARD, THM].filter(Boolean));
     const onDisk = new Set(res.refined.lemmas.map(l => l.statement));
     for (const s of [HARD, THM]) assert.ok(onDisk.has(s), `statement should be unchanged: ${s}`);
 
-    // hard stub's deps now point at its child
+    // hard stub's deps now point at its conjunct children
     const hard = res.refined.lemmas.find(l => l.statement === HARD);
-    assert.deepStrictEqual(hard.deps, [idOf(stubOf(EASY))]);
+    assert.deepStrictEqual(hard.deps, [idOf(stubOf(EASY)), idOf(stubOf('theorem hard_helper_conj1 : P := by sorry'))]);
 
     // terminated by no-progress, not by the round cap
     assert.strictEqual(res.maxRoundsReached, false);

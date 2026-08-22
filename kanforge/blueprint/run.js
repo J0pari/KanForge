@@ -98,7 +98,7 @@ export async function runBlueprintTheorem({ backend, llm, theorem, outDir = null
         } catch { /* corrupt blueprint.json — fall through to fresh skeleton */ }
     }
     if (!generated) {
-        const skeleton = new SkeletonGenerator({ llm, backend, outDir: workDir, maxRetries: loopOptions.skeletonMaxRetries ?? 2 });
+        const skeleton = new SkeletonGenerator({ backend, outDir: workDir });
         generated = await skeleton.generate(theorem, loopOptions.falsify
             ? { falsify: { enabled: (stmt) => falsifyCandidate(stmt, { llm, backend, maxInstances: loopOptions.falsifyMaxInstances ?? 6 }) } }
             : {});
@@ -396,7 +396,6 @@ async function main() {
     const reSplitBaseBudget = Number(reg.effectiveValue('reSplitBaseBudget'));
     const reSplitProveBonus = Number(reg.effectiveValue('reSplitProveBonus'));
     const harvestCandidateLimit = Number(reg.effectiveValue('harvestCandidateLimit'));
-    const skeletonMaxRetries = Number(reg.effectiveValue('skeletonMaxRetries'));
     const predictorExploration = Number(reg.effectiveValue('predictorExploration'));
     const reuseMaxInline = Number(reg.effectiveValue('reuseMaxInline'));
     const coldCheckRecycleThreshold = Number(reg.effectiveValue('coldCheckRecycleThreshold'));
@@ -434,7 +433,7 @@ async function main() {
                 exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory,
                 rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps,
                 retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus,
-                harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline,
+                harvestCandidateLimit, predictorExploration, reuseMaxInline,
                 falsify, falsifyMaxInstances,
                 coldCheckRecycleThreshold, warmupTimeoutMs, rewarmDebounceMs, spawnRetryDelayMs,
                 checkTimeoutMs, concurrency
@@ -481,7 +480,7 @@ async function main() {
             llm,
             theorem,
             outDir,
-            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, compressionMetrics: reg.effectiveValue('compressionMetrics') !== false, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, skeletonMaxRetries, predictorExploration, reuseMaxInline, falsify, falsifyMaxInstances, premisesEnabled: premises },
+            loopOptions: { concurrency, maxTacticsPerGoal: maxTactics, maxGoalsPerLemma: maxGoals, searchRecipe: recipe ?? undefined, useSwiss, swissN, repulsion, menu, exemplars, ttrl, monitor, repair, searchStructure, safeLadder, campaignMemory, compressionMetrics: reg.effectiveValue('compressionMetrics') !== false, rankedReuse, reuseRankLimit, reuseRankedChecks, reuseTransfer, maxTransferOps, retryTacticBudget, stallRetryFraction, dependencyIdleThreshold, reSplitBaseBudget, reSplitProveBonus, harvestCandidateLimit, predictorExploration, reuseMaxInline, falsify, falsifyMaxInstances, premisesEnabled: premises },
             maxRounds,
             provenance
         });
